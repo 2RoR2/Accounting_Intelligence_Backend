@@ -1,5 +1,5 @@
 from pydantic import ValidationError
-from validation_models import Invoice
+from validation.models import Invoice
 
 
 VALID_INVOICE = {

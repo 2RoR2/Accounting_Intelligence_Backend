@@ -89,6 +89,21 @@ If `due_date` is earlier than `invoice_date`, the invoice fails validation.
 
 ---
 
+### EX-007 Duplicate Invoice
+
+The same supplier/vendor and invoice number are detected across multiple documents.
+
+---
+
+### EX-008 Vendor Matching Requires Review
+
+The extracted vendor name is similar to a known vendor but cannot be safely accepted as an exact match, or no suitable known vendor match is available.
+
+This exception requires human review before the vendor is assigned to the accounting record.
+
+---
+
+
 ## 3. Exception Handling Levels
 
 ### Level 1 — Validation Failure
@@ -129,7 +144,7 @@ The AI layer should not replace deterministic accounting controls.
 
 ## 5. Current Sprint 1 Scope
 
-The following exception categories are implemented or represented in the Sprint 1 validation fixtures:
+The following exception categories are implemented and covered by the current validation tests:
 
 - Missing required fields
 - Invalid field types/formats
@@ -137,14 +152,12 @@ The following exception categories are implemented or represented in the Sprint 
 - Subtotal arithmetic mismatch
 - Total arithmetic mismatch
 - Invalid due date relationship
-
-Advanced exception categories for future iterations may include:
-
 - Duplicate invoice detection
-- Vendor validation failure
+- Vendor matching requiring review
+
+The following exception categories are planned for future iterations:
+
 - PO/GRN matching failure
 - Bank matching failure
 - Reconciliation variance
 - Low OCR/extraction confidence
-
-These are not part of the current Sprint 1 deterministic validation implementation.
