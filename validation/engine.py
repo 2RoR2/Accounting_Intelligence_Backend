@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Optional
 from validation.models import validate_invoice
 from validation.duplicate import find_duplicate_invoices
 from validation.vendor_matching import find_vendor_match
+from validation.po_matching import match_invoice_to_po
 
 
 EXCEPTION_SEVERITY = {
@@ -14,6 +15,7 @@ EXCEPTION_SEVERITY = {
     "EX-006": "medium",
     "EX-007": "high",
     "EX-008": "medium",
+    "EX-009": "high",
 }
 
 
@@ -21,7 +23,9 @@ def validate_invoice_document(
     invoice_data: Dict[str, Any],
     known_vendors: Optional[List[Dict[str, Any]]] = None,
     existing_invoices: Optional[List[Dict[str, Any]]] = None,
+    purchase_order: Optional[Dict[str, Any]] = None,
 ) -> dict:
+    
     """
     Run the complete validation flow for one invoice.
 
@@ -90,7 +94,29 @@ def validate_invoice_document(
         })
 
     # ---------------------------------------------------------
-    # 4. Final decision
+    # 4. Purchase order matching
+    # ---------------------------------------------------------
+    po_match = None
+
+    if purchase_order is not None:
+        po_match = match_invoice_to_po(
+            invoice_data,
+            purchase_order,
+        )
+
+        if po_match["status"] != "MATCHED":
+            errors.append({
+                "code": "EX-009",
+                "severity": EXCEPTION_SEVERITY["EX-009"],
+                "field": "purchase_order",
+                "message": (
+                    "Purchase order matching requires review."
+                ),
+                "po_match": po_match,
+            })
+
+    # ---------------------------------------------------------
+    # 5. Final decision
     # ---------------------------------------------------------
     status = "VALID" if not errors else "REVIEW_REQUIRED"
 
@@ -98,5 +124,6 @@ def validate_invoice_document(
         "status": status,
         "invoice": invoice_result["invoice"],
         "vendor_match": vendor_match,
+        "po_match": po_match,
         "errors": errors,
     }
