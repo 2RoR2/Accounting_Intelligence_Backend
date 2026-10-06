@@ -380,7 +380,7 @@ def company_request(data: CompanyInput):
 def forgot_password(data: EmailInput, response: Response):
     signing_secret = secret()
     rate_limit("reset-minute:" + data.email, 1, 60)
-    rate_limit("reset-hour:" + data.email, 5, 3600)
+    rate_limit("reset-window:" + data.email, 5, 900)
     response.delete_cookie(RESET, path="/api/auth")
     with connect() as db:
         user = user_by_email(db, data.email)
