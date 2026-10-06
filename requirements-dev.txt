@@ -1,0 +1,3 @@
+# Install after requirements.txt when running tests locally.
+-r requirements.txt
+pytest>=8,<10

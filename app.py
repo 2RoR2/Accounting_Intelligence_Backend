@@ -467,6 +467,47 @@ def change_password(data: NewPassword, request: Request):
     return public_user(user)
 
 
+@app.post("/api/auth/mfa-recovery-requests")
+def request_mfa_recovery(data: dict, request: Request):
+    reason = str(data.get("reason", "")).strip()[:500]
+    if not reason:
+        raise HTTPException(400, "A recovery reason is required.")
+    with connect() as db:
+        requester = session_user(db, request)
+        target = user_by_email(db, str(data.get("email", "")).strip().lower())
+        if not target or target["role"] not in PRIVILEGED_ROLES:
+            raise HTTPException(404, "Privileged account not found.")
+        if requester["id"] != target["id"] and requester["role"] != "super_admin":
+            raise HTTPException(403, "Only the affected user or a Super Admin can request MFA recovery.")
+        row = db.execute("""INSERT INTO mfa_recovery_requests(requester_id,target_user_id,reason)
+            VALUES (%s,%s,%s) ON CONFLICT (target_user_id,status) DO UPDATE SET reason=EXCLUDED.reason,created_at=now()
+            RETURNING id,status,created_at""", (requester["id"], target["id"], reason)).fetchone()
+    return {"id": str(row["id"]), "status": row["status"], "createdAt": str(row["created_at"])}
+
+
+@app.get("/api/admin/mfa-recovery-requests")
+def list_mfa_recovery_requests(request: Request):
+    with connect() as db:
+        admin = session_user(db, request)
+        if admin["role"] != "super_admin": raise HTTPException(403, "Super Admin approval required.")
+        rows = db.execute("""SELECT r.*,u.email AS target_email,u.name AS target_name
+            FROM mfa_recovery_requests r JOIN users u ON u.id=r.target_user_id
+            ORDER BY r.created_at DESC""").fetchall()
+    return [{**dict(row), "id": str(row["id"]), "requester_id": str(row["requester_id"]), "target_user_id": str(row["target_user_id"])} for row in rows]
+
+
+@app.post("/api/admin/mfa-recovery-requests/{request_id}/approve")
+def approve_mfa_recovery(request_id: str, request: Request):
+    with connect() as db:
+        admin = session_user(db, request)
+        if admin["role"] != "super_admin": raise HTTPException(403, "Super Admin approval required.")
+        row = db.execute("SELECT * FROM mfa_recovery_requests WHERE id=%s AND status='pending' FOR UPDATE", (request_id,)).fetchone()
+        if not row: raise HTTPException(404, "Pending recovery request not found.")
+        db.execute("UPDATE users SET totp_enabled=false,totp_secret_enc=NULL WHERE id=%s", (row["target_user_id"],))
+        db.execute("UPDATE mfa_recovery_requests SET status='approved',reviewed_at=now(),reviewed_by=%s WHERE id=%s", (admin["id"], request_id))
+    return {"success": True}
+
+
 @app.post("/api/auth/activate")
 def activate(data: ActivationInput):
     data.validate_password()

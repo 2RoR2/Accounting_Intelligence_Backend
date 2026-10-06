@@ -6,6 +6,9 @@
 -- codes (INVOICE_100001, REC-10021, TENANT_001), exceptions, validation rules for each company,
 -- confidence and corrections for each extracted field, locked standardised records, and a
 -- general audit log.
+
+-- Authentication and MFA tables are defined here so a clean schema build has
+-- the same structure as an installation created through the migrations.
 --
 -- Run this ONE file to reset and rebuild everything from scratch.
 -- Notes for the API layer are in comments next to the relevant columns.
@@ -451,3 +454,57 @@ CREATE INDEX idx_exceptions_tenant_status ON exceptions(tenant_id, status);
 CREATE INDEX idx_records_tenant_created ON standardised_records(tenant_id, created_at);
 CREATE INDEX idx_records_duplicate_lookup ON standardised_records(tenant_id, supplier_name, invoice_number);
 CREATE INDEX idx_audit_tenant_created ON audit_logs(tenant_id, created_at);
+
+-- ---------------------------------------------------------------------------
+-- Authentication, MFA, and recovery
+-- ---------------------------------------------------------------------------
+ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret_enc TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+
+CREATE TABLE IF NOT EXISTS web_sessions (
+    token_hash TEXT PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at TIMESTAMPTZ NOT NULL,
+    session_id UUID NOT NULL DEFAULT gen_random_uuid()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_web_sessions_session_id ON web_sessions(session_id);
+CREATE INDEX IF NOT EXISTS idx_web_sessions_expiry ON web_sessions(expires_at);
+
+CREATE TABLE IF NOT EXISTS password_challenges (
+    email TEXT PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    code_hash TEXT NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    sent_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    attempts INTEGER NOT NULL DEFAULT 0,
+    grant_hash TEXT,
+    grant_expires_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS auth_rate_limits (
+    key TEXT PRIMARY KEY,
+    window_start TIMESTAMPTZ NOT NULL DEFAULT now(),
+    hits INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS auth_challenges (
+    challenge_hash TEXT PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    pending_totp_secret_enc TEXT,
+    email_code_hash TEXT,
+    method TEXT NOT NULL DEFAULT 'totp',
+    expires_at TIMESTAMPTZ NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS mfa_recovery_requests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    requester_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    target_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected')),
+    reason TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    reviewed_at TIMESTAMPTZ,
+    reviewed_by UUID REFERENCES users(id),
+    UNIQUE (target_user_id, status)
+);

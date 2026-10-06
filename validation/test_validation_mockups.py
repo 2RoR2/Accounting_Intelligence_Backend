@@ -12,7 +12,7 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from validation_models import Invoice
+from validation.validation_models import Invoice
 
 # ---------------------------------------------------------------------------
 # 1. VALID mockup - should be accepted

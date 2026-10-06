@@ -1,4 +1,4 @@
-﻿"""Run with TEST_DATABASE_URL set; creates and removes only a unique test schema."""
+"""Run with TEST_DATABASE_URL set; creates and removes only a unique test schema."""
 import os
 import hashlib
 from pathlib import Path
@@ -76,11 +76,9 @@ class AccountTests(unittest.TestCase):
         cls.db_patch.start()
         with cls.connect() as db:
             base = Path(__file__).resolve().parents[1]
-            schema = (base / "database" / "schema.sql").read_text(encoding="utf-8-sig")
+            schema = (base / "database/PostgreSQL Database schema.sql").read_text(encoding="utf-8-sig")
             # Omit the destructive reset preamble. All objects live in our unique schema.
             db.execute(schema[schema.index("CREATE TABLE tenants ("):])
-            db.execute((base / "database" / "migrations" / "001_auth.sql").read_text())
-            db.execute((base / "database" / "migrations" / "002_auth_hardening.sql").read_text())
         cls.env_patch = patch.dict(os.environ, {"AUTH_SECRET": "test-secret-" * 5, "COOKIE_SECURE": "false", "FRONTEND_ORIGIN": "http://localhost:3000"})
         cls.env_patch.start()
 

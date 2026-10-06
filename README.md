@@ -15,7 +15,7 @@ The backend is a FastAPI service backed by PostgreSQL. It owns identity, authent
 - Password-reset OTP expiry of 10 minutes with a 60-second resend interval.
 - Company registration and approval workflow.
 - Tenant and role-aware workspace authorization.
-- Administrative CLI commands for migrations, demo accounts, approvals, and MFA reset.
+- Administrative CLI commands for database setup, demo accounts, approvals, and MFA reset.
 - Structured API errors and no password, OTP, or token values in responses or logs.
 
 ## Project structure
@@ -31,7 +31,7 @@ Accounting_Intelligence_Backend/
 ¦   +-- __init__.py
 +-- database/
 ¦   +-- connection.py         # PostgreSQL connection helper
-¦   +-- schema.sql             # Base schema
+¦   +-- database/PostgreSQL Database schema.sql # Complete database schema
 ¦   +-- migrations/            # Ordered database migrations
 +-- notifications/
 ¦   +-- mailer.py             # SMTP OTP and reset email delivery
@@ -90,4 +90,9 @@ python manage.py reset-mfa --email user@example.com
 ```powershell
 python -m unittest discover -s tests -v
 ```
+
+
+
+
+
 
