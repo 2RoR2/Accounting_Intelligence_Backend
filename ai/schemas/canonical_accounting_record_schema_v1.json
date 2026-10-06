@@ -1,0 +1,273 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "canonical_accounting_record_schema_v1.json",
+  "title": "Canonical Accounting Record v1",
+  "description": "The shared data contract every part of the system produces or reads: the AI extraction, the validation engine, the database, the API and the frontend. When a standardised record is created, this whole object is saved in standardised_records.snapshot and is never changed afterwards. Enumerated values are UPPERCASE here and lowercase in the database (extraction_method is uppercase in both). Confidence is 0 to 1. Money is sent as numbers with at most 2 decimals.",
+  "type": "object",
+  "required": ["document", "parties", "invoice", "totals", "line_items", "workflow"],
+  "properties": {
+    "document": {
+      "type": "object",
+      "required": [
+        "document_id", "document_code", "tenant_id", "tenant_code", "document_type", "accounting_category",
+        "original_filename", "mime_type", "file_size_bytes", "file_hash_sha256",
+        "uploaded_at", "uploaded_by"
+      ],
+      "properties": {
+        "document_id": { "type": "string", "format": "uuid" },
+        "document_code": {
+          "type": "string",
+          "pattern": "^(INVOICE|BILL|RECEIPT)_[0-9]{6,}$",
+          "description": "The readable ID shown in the interface, for example INVOICE_100001. Made by the database."
+        },
+        "tenant_id": { "type": "string", "format": "uuid", "description": "The company that owns the document." },
+        "tenant_code": {
+          "type": "string",
+          "pattern": "^TENANT_[0-9]{3,}$",
+          "description": "The readable company ID the frontend shows as Tenant ID, for example TENANT_001."
+        },
+        "document_type": { "type": "string", "enum": ["INVOICE", "BILL", "RECEIPT"], "description": "Documents the classifier decides are not accounting documents are not stored." },
+        "accounting_category": {
+          "type": "string",
+          "enum": ["ACCOUNTS_PAYABLE", "ACCOUNTS_RECEIVABLE"],
+          "description": "Equivalent to accounting_direction in the Handoff Pack. MONEY_OUT is ACCOUNTS_PAYABLE and MONEY_IN is ACCOUNTS_RECEIVABLE."
+        },
+        "original_filename": { "type": "string" },
+        "mime_type": { "type": "string" },
+        "file_size_bytes": { "type": "integer", "minimum": 1, "maximum": 20971520 },
+        "file_hash_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "page_count": { "type": "integer", "minimum": 1 },
+        "uploaded_at": { "type": "string", "format": "date-time" },
+        "uploaded_by": { "type": "string", "format": "uuid" },
+        "assigned_to": { "type": ["string", "null"], "format": "uuid" },
+        "source_channel": { "type": "string", "enum": ["UPLOAD", "CAMERA"] },
+        "document_quality_score": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "parties": {
+      "type": "object",
+      "properties": {
+        "supplier": {
+          "type": "object",
+          "properties": {
+            "supplier_raw_name": { "type": "string" },
+            "supplier_id": { "type": ["string", "null"], "format": "uuid" },
+            "supplier_canonical_name": { "type": ["string", "null"] },
+            "supplier_match_confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+            "supplier_registration_number": { "type": "string" },
+            "supplier_tin": { "type": "string" },
+            "supplier_tax_registration": { "type": "string" },
+            "supplier_address": { "type": "string" },
+            "supplier_email": { "type": "string" },
+            "supplier_phone": { "type": "string" }
+          }
+        },
+        "buyer": {
+          "type": "object",
+          "properties": {
+            "buyer_raw_name": { "type": "string" },
+            "customer_id": { "type": ["string", "null"], "format": "uuid" },
+            "buyer_canonical_name": { "type": ["string", "null"] },
+            "buyer_registration_number": { "type": "string" },
+            "buyer_tin": { "type": "string" },
+            "buyer_address": { "type": "string" },
+            "buyer_email": { "type": "string" }
+          }
+        }
+      }
+    },
+    "invoice": {
+      "type": "object",
+      "required": ["invoice_number", "document_currency"],
+      "properties": {
+        "invoice_number": { "type": "string", "description": "Can be an empty string if the company has switched the Invoice Number Required rule off." },
+        "invoice_date": { "type": ["string", "null"], "format": "date", "description": "Can be empty if the company has switched the date rule off." },
+        "issuance_datetime": { "type": "string", "format": "date-time" },
+        "due_date": { "type": ["string", "null"], "format": "date" },
+        "document_currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+        "purchase_order_reference": { "type": "string" },
+        "document_reference": { "type": "string" },
+        "exchange_rate": { "type": "number" }
+      }
+    },
+    "payment": {
+      "type": "object",
+      "properties": {
+        "payment_terms": { "type": "string" },
+        "payment_mode": { "type": "string" },
+        "payment_reference": { "type": "string" },
+        "payment_details": { "type": "string", "description": "Free text such as bank transfer, bank name, account and reference." },
+        "billing_period_start": { "type": "string", "format": "date" },
+        "billing_period_end": { "type": "string", "format": "date" }
+      }
+    },
+    "totals": {
+      "type": "object",
+      "description": "Each amount can be empty if the company has switched the total rule off. The frontend rule is subtotal plus total_tax minus total_discount equals total_payable, within 0.01. The fuller rule from the Handoff Pack, which also uses charges, prepayments and rounding, applies once those fields are extracted.",
+      "properties": {
+        "subtotal": { "type": ["number", "null"], "minimum": 0 },
+        "total_discount": { "type": ["number", "null"], "minimum": 0 },
+        "total_charges": { "type": "number" },
+        "total_tax": { "type": ["number", "null"], "minimum": 0 },
+        "prepaid_amount": { "type": "number" },
+        "rounding_amount": { "type": "number" },
+        "total_including_tax": { "type": "number" },
+        "total_payable": { "type": ["number", "null"], "minimum": 0 },
+        "amount_due": { "type": "number" }
+      }
+    },
+    "tax": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "tax_type": { "type": "string" },
+          "tax_rate": { "type": "number" },
+          "taxable_amount": { "type": "number" },
+          "tax_amount": { "type": "number" },
+          "tax_exemption_reason": { "type": "string" }
+        }
+      }
+    },
+    "line_items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["line_number", "description", "quantity", "unit_price", "line_total"],
+        "properties": {
+          "line_id": { "type": "string", "format": "uuid" },
+          "line_number": { "type": "integer", "minimum": 1 },
+          "description": { "type": "string" },
+          "item_code": { "type": "string" },
+          "classification": { "type": "string" },
+          "quantity": { "type": "number" },
+          "unit_of_measure": { "type": "string" },
+          "unit_price": { "type": "number" },
+          "line_discount": { "type": "number" },
+          "line_charge": { "type": "number" },
+          "tax_type": { "type": "string" },
+          "tax_rate": { "type": "number" },
+          "tax_amount": { "type": "number" },
+          "line_total": { "type": "number", "description": "Called amount in the frontend and the database." }
+        }
+      }
+    },
+    "accounting": {
+      "type": "object",
+      "description": "P1. Not stored in the database yet. Needs the GL accounts and cost centres tables.",
+      "properties": {
+        "transaction_category": { "type": "string" },
+        "suggested_gl_account_id": { "type": "string", "format": "uuid" },
+        "suggested_gl_account_name": { "type": "string" },
+        "gl_prediction_confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "cost_centre_id": { "type": "string", "format": "uuid" },
+        "department_id": { "type": "string", "format": "uuid" },
+        "project_id": { "type": "string", "format": "uuid" },
+        "coding_reason": { "type": "string" },
+        "historical_pattern_score": { "type": "number" }
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "description": "One entry per extracted field. Each is one row in field_predictions.",
+      "items": { "$ref": "ai_evidence_structure_v1.json" }
+    },
+    "validation": {
+      "type": "object",
+      "description": "Results are calculated each time from the current values and the company rules, so they are not stored. Exceptions are stored in the exceptions table.",
+      "properties": {
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["rule", "result", "message"],
+            "properties": {
+              "rule": { "type": "string" },
+              "result": { "type": "string", "enum": ["PASS", "WARNING", "FAIL"] },
+              "message": { "type": "string" }
+            }
+          }
+        },
+        "exceptions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["exception_id", "type", "severity", "status", "message"],
+            "properties": {
+              "exception_id": { "type": "string", "format": "uuid" },
+              "type": {
+                "type": "string",
+                "description": "Not restricted. In use today: TOTAL_MISMATCH, MISSING_INVOICE, DUPLICATE_INVOICE, LOW_CONFIDENCE."
+              },
+              "severity": { "type": "string", "enum": ["LOW", "MEDIUM", "HIGH"] },
+              "status": { "type": "string", "enum": ["OPEN", "ASSIGNED", "IN_REVIEW", "RESOLVED"] },
+              "assigned_to": { "type": ["string", "null"], "format": "uuid" },
+              "message": { "type": "string" },
+              "note": { "type": ["string", "null"], "description": "The correction note entered on Save and revalidate." }
+            }
+          }
+        },
+        "duplicate_candidate_id": { "type": ["string", "null"], "format": "uuid" },
+        "duplicate_score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "vendor_resolution_status": { "type": "string" }
+      }
+    },
+    "matching": {
+      "type": "object",
+      "description": "P1 and P2. Not stored in the database yet. Needs the purchase orders and goods receipts tables.",
+      "properties": {
+        "matched_po_id": { "type": "string", "format": "uuid" },
+        "po_match_score": { "type": "number" },
+        "po_amount_variance": { "type": "number" },
+        "matched_goods_receipt_id": { "type": "string", "format": "uuid" },
+        "quantity_variance": { "type": "number" }
+      }
+    },
+    "reconciliation": {
+      "type": "object",
+      "description": "P1. Not stored in the database yet. Needs the bank transactions table.",
+      "properties": {
+        "matched_bank_transaction_id": { "type": "string", "format": "uuid" },
+        "bank_match_score": { "type": "number" },
+        "reconciliation_difference": { "type": "number" },
+        "reconciliation_status": {
+          "type": "string",
+          "enum": ["NOT_APPLICABLE", "UNMATCHED", "MATCH_SUGGESTED", "MATCHED", "RECONCILED"]
+        }
+      }
+    },
+    "workflow": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "UPLOADED", "QUEUED", "PROCESSING", "EXTRACTED", "VALIDATING", "EXCEPTION",
+            "IN_REVIEW", "CORRECTED", "VALIDATED", "STANDARDISED", "COMPLETED", "FAILED"
+          ],
+          "description": "The 12 statuses the frontend uses. VALIDATING and STANDARDISED are defined but not set by the frontend today. Creating a record sets COMPLETED."
+        },
+        "processing_seconds": { "type": "number", "minimum": 0 },
+        "validated_at": { "type": "string", "format": "date-time" },
+        "anomaly_score": { "type": "number" }
+      }
+    },
+    "record": {
+      "type": "object",
+      "description": "Present once the record has been standardised.",
+      "required": ["record_id", "record_code", "created_at"],
+      "properties": {
+        "record_id": { "type": "string", "format": "uuid" },
+        "record_code": {
+          "type": "string",
+          "pattern": "^REC-[0-9]{5,}$",
+          "description": "The readable record ID the frontend shows as Record ID and writes in the CSV export, for example REC-10021."
+        },
+        "created_at": { "type": "string", "format": "date-time" },
+        "created_by": { "type": ["string", "null"], "format": "uuid" },
+        "vendor_id": { "type": ["string", "null"], "format": "uuid" }
+      }
+    }
+  }
+}
