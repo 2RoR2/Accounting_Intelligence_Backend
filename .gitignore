@@ -1,0 +1,6 @@
+.env
+kaggle.json
+.venv/
+__pycache__/
+.pytest_cache/
+*.py[cod]

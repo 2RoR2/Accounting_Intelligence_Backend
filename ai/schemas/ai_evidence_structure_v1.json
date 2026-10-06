@@ -1,0 +1,87 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "ai_evidence_structure_v1.json",
+  "title": "AI Evidence and Confidence Structure v1",
+  "description": "One entry per extracted field, not one score for the whole document. Each entry is stored as one row in the field_predictions table. Three values are kept apart: raw_value is the text exactly as the model read it, normalized_value is the cleaned value from the AI, and current_value is the value now in use after any human correction. A correction never changes raw_value, normalized_value, confidence or extraction_method. It sets current_value, corrected_by and corrected_at. Confidence is 0 to 1 here and in the database. The frontend shows it as 0 to 100.",
+  "type": "object",
+  "required": [
+    "field_key", "raw_value", "normalized_value", "confidence",
+    "extraction_method", "model_name", "model_version", "schema_version"
+  ],
+  "properties": {
+    "field_key": {
+      "description": "Which field this evidence belongs to. Use the key from the Key column of the Field Dictionary v1. These are the same keys the frontend reads. A line item field uses the form lineItems[2].unitPrice.",
+      "anyOf": [
+        {
+          "enum": [
+            "type", "accountingCategory", "supplier", "supplierAddress", "registration",
+            "invoice", "date", "issuanceDateTime", "submissionDateTime", "validationDateTime",
+            "due", "reference", "customer", "buyerAddress", "currency",
+            "subtotal", "tax", "discount", "total", "paymentDetails"
+          ]
+        },
+        {
+          "type": "string",
+          "pattern": "^lineItems\\[[0-9]+\\]\\.(description|quantity|unitPrice|amount)$"
+        }
+      ]
+    },
+    "field_label": {
+      "type": "string",
+      "description": "The label shown to the reviewer, for example Total Payable Amount."
+    },
+    "raw_value": {
+      "type": ["string", "null"],
+      "description": "The text exactly as the model read it, for example RM 4,500.00. Null for values that are worked out and not read from the page."
+    },
+    "normalized_value": {
+      "type": ["string", "number", "boolean", "null"],
+      "description": "The cleaned value from the AI, for example 4500.00. The database stores it as text. The frontend calls it original."
+    },
+    "current_value": {
+      "type": ["string", "number", "boolean", "null"],
+      "description": "The value now in use. Equal to normalized_value until a reviewer corrects the field. The frontend calls it value."
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "The model's confidence in this one field, from 0 to 1."
+    },
+    "page_number": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The page of the source document the value came from."
+    },
+    "bounding_box": {
+      "type": "array",
+      "items": { "type": "number" },
+      "minItems": 4,
+      "maxItems": 4,
+      "description": "x, y, width, height on the page, when the extraction method can provide it. Leave it out when unavailable, do not send zeros."
+    },
+    "extraction_method": {
+      "type": "string",
+      "enum": ["VLM", "OCR", "PARSER", "MANUAL_CORRECTION"],
+      "description": "PARSER is the deterministic spreadsheet path. MANUAL_CORRECTION is reserved and not used by the frontend today, because a correction keeps the original method."
+    },
+    "model_name": {
+      "type": "string",
+      "description": "For example qwen2-vl-7b, gemini-flash-lite or pandas-parser."
+    },
+    "model_version": { "type": "string" },
+    "schema_version": {
+      "type": "string",
+      "description": "Version of this evidence structure, so older records stay readable as the format changes."
+    },
+    "corrected_by": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "The user who corrected the value, or null if it has not been corrected."
+    },
+    "corrected_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    }
+  }
+}
