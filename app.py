@@ -385,18 +385,19 @@ def forgot_password(data: EmailInput, response: Response):
     response.delete_cookie(RESET, path="/api/auth")
     with connect() as db:
         user = user_by_email(db, data.email)
-        if active(user):
-            code = f"{secrets.randbelow(1000000):06d}"
-            db.execute("""INSERT INTO password_challenges(email,user_id,code_hash,expires_at)
-                VALUES (%s,%s,%s,%s) ON CONFLICT(email) DO UPDATE SET
-                code_hash=excluded.code_hash, expires_at=excluded.expires_at, sent_at=now(),
-                attempts=0, grant_hash=NULL, grant_expires_at=NULL""",
-                (data.email, user["id"], otp_hash(signing_secret, data.email, code), utcnow() + timedelta(minutes=10)))
-            try:
-                send_reset_code(data.email, code)
-            except Exception as exc:
-                log.error("Reset email delivery failed: %s", type(exc).__name__)
-                raise HTTPException(503, "Unable to send email. Please try again later or contact support.")
+        if not active(user):
+            raise HTTPException(404, "You do not have an active account yet. Return to the home screen or request company access.")
+        code = f"{secrets.randbelow(1000000):06d}"
+        db.execute("""INSERT INTO password_challenges(email,user_id,code_hash,expires_at)
+            VALUES (%s,%s,%s,%s) ON CONFLICT(email) DO UPDATE SET
+            code_hash=excluded.code_hash, expires_at=excluded.expires_at, sent_at=now(),
+            attempts=0, grant_hash=NULL, grant_expires_at=NULL""",
+            (data.email, user["id"], otp_hash(signing_secret, data.email, code), utcnow() + timedelta(minutes=10)))
+        try:
+            send_reset_code(data.email, code)
+        except Exception as exc:
+            log.error("Reset email delivery failed: %s", type(exc).__name__)
+            raise HTTPException(503, "Unable to send email. Please try again later or contact support.")
     return {"message": "If this email belongs to an active account, a reset code has been sent."}
 
 
