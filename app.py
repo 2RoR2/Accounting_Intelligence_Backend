@@ -70,8 +70,9 @@ def secret():
 async def protect_requests(request: Request, call_next):
     if request.method not in ("GET", "HEAD", "OPTIONS"):
         origin = request.headers.get("origin")
-        allowed = os.getenv("FRONTEND_ORIGIN", "http://localhost:3000").rstrip("/")
-        if request.headers.get("x-requested-with") != "AccountingIntelligence" or (origin and origin != allowed):
+        configured_origins = os.getenv("FRONTEND_ORIGINS") or os.getenv("FRONTEND_ORIGIN", "http://localhost:3000")
+        allowed_origins = {value.strip().rstrip("/") for value in configured_origins.split(",") if value.strip()}
+        if request.headers.get("x-requested-with") != "AccountingIntelligence" or (origin and origin.rstrip("/") not in allowed_origins):
             return JSONResponse({"detail": "Request origin is not allowed."}, status_code=403)
     response = await call_next(request)
     response.headers["Cache-Control"] = "no-store"
