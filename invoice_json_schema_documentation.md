@@ -38,7 +38,7 @@ This defines the exact field names, types, and rules that Module 2 (Extraction E
 
 ```json
 {
-  "invoice_id": "INV-2026-0091",
+  "invoice_number": "INV-2026-0091",
   "vendor_name": "Sinar Trading Sdn Bhd",
   "invoice_date": "2026-09-01",
   "due_date": "2026-09-30",

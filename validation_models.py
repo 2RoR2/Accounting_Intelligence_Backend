@@ -19,7 +19,7 @@ AMOUNT_TOLERANCE = Decimal("0.01")
 
 
 class LineItem(BaseModel):
-    description: str
+    description: str = Field(min_length=1)
     quantity: float = Field(gt=0)
     unit_price: Decimal = Field(gt=0)
     amount: Decimal = Field(gt=0)
@@ -48,15 +48,20 @@ class LineItem(BaseModel):
 class Invoice(BaseModel):
     # NOTE: renamed from invoice_id -> invoice_number to match both
     # Jonathan's extraction output and Aleeya's DB column (standardised_records.invoice_number)
-    invoice_number: str
-    vendor_name: str
+    invoice_number: str = Field(min_length=1)
+    vendor_name: str = Field(min_length=1)
     invoice_date: date
     due_date: Optional[date] = None
     line_items: List[LineItem] = Field(min_length=1)
     subtotal: Decimal = Field(gt=0)
     tax_amount: Decimal = Field(ge=0)
     total_amount: Decimal = Field(gt=0)
-    currency: str = Field(default="MYR", min_length=3, max_length=3)
+    currency: str = Field(
+    default="MYR",
+    min_length=3,
+    max_length=3,
+    pattern=r"^[A-Za-z]{3}$"
+)
 
     # ---------------------------------------------------------------
     # Field-level type checking (FCG1-16)

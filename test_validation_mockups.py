@@ -50,6 +50,20 @@ INVALID_LINE_ITEM_MATH = {
 INVALID_MISSING_FIELD = {k: v for k, v in VALID_INVOICE.items() if k != "vendor_name"}
 INVALID_EMPTY_LINE_ITEMS = {**VALID_INVOICE, "line_items": []}
 
+INVALID_EMPTY_INVOICE_NUMBER = {**VALID_INVOICE, "invoice_number": ""}
+INVALID_EMPTY_VENDOR_NAME = {**VALID_INVOICE, "vendor_name": ""}
+INVALID_EMPTY_DESCRIPTION = {
+    **VALID_INVOICE,
+    "line_items": [
+        {
+            "description": "",
+            "quantity": 10,
+            "unit_price": "12.50",
+            "amount": "125.00",
+        },
+    ],
+}
+
 
 def test_valid_invoice_is_accepted():
     invoice = Invoice(**VALID_INVOICE)
@@ -83,6 +97,9 @@ def test_comma_formatted_amounts_from_extraction_engine_are_accepted():
         (INVALID_LINE_ITEM_MATH, "line item amount != quantity * unit_price"),
         (INVALID_MISSING_FIELD, "required field missing"),
         (INVALID_EMPTY_LINE_ITEMS, "no line items"),
+        (INVALID_EMPTY_INVOICE_NUMBER, "empty invoice number"),
+        (INVALID_EMPTY_VENDOR_NAME, "empty vendor name"),
+        (INVALID_EMPTY_DESCRIPTION, "empty line item description"),
     ],
 )
 def test_invalid_invoice_is_rejected(bad_payload, reason):
