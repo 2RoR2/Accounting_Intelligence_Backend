@@ -1,0 +1,86 @@
+{
+  "verified_date": "2026-10-07",
+  "timezone": "Asia/Kuala_Lumpur",
+  "branch": "module2-baseline",
+  "starting_commit": "22daed2f20cf8bf46cb88efcb9ec49a019193d25",
+  "manifest_files_verified": 32,
+  "original_tests": {
+    "failed": 0,
+    "skipped": 0,
+    "passed": 63
+  },
+  "python": "3.12.14",
+  "historical_python": "3.12.3",
+  "parser_packages": {
+    "docling": "2.132.0",
+    "docling-core": "2.99.0",
+    "pydantic": "2.13.5",
+    "pypdfium2": "5.13.0",
+    "torch": "2.14.1+cpu",
+    "torchvision": "0.29.1+cpu"
+  },
+  "live_qwen_inference": false,
+  "ssd_files_unchanged": true,
+  "ssd_files_checked": 119,
+  "cases": [
+    {
+      "name": "original",
+      "pdf": "data/development/synthetic_invoice_001.pdf",
+      "expected": "data/expected_answers/SYN-001.json",
+      "historical_parser_run": "docling-20261006T040248Z-aa188350",
+      "historical_mapper_run": "mapped-20261006T040403Z-a1b5f47e",
+      "source_sha256": "f0b658bbc6df334c14d2254d420281eb88d4b456efb77c3afff26b304fe824bb",
+      "comparisons_passed": 12,
+      "comparisons_total": 12,
+      "historical_document_sha256": "75808d32adf558d8cf6b629c7578f934c780ee1487a8ecba8670d7621af02ca9",
+      "fresh_document_sha256": "75808d32adf558d8cf6b629c7578f934c780ee1487a8ecba8670d7621af02ca9",
+      "parser_json_byte_identical": true,
+      "fields_candidates_evidence_issues_equal": true,
+      "route": "parser_only",
+      "requested_fields": [],
+      "selective_status": "skipped_parser_only",
+      "provider": "mock",
+      "input_extraction_unchanged": true
+    },
+    {
+      "name": "changed",
+      "pdf": "data/development/changed_values.pdf",
+      "expected": "lab_ready/samples/changed_values.expected.json",
+      "historical_parser_run": "docling-20261006T044241Z-1979abf7",
+      "historical_mapper_run": "mapped-20261006T044322Z-72d3b621",
+      "source_sha256": "0508b672a477772f1bcb864e54cb65dd03bdb58d49e2f9841aa01ce89b654789",
+      "comparisons_passed": 16,
+      "comparisons_total": 16,
+      "historical_document_sha256": "70952f5f1d96830a174cfa884760e9cae6bde6388c2be92fcb9697bb74e90baa",
+      "fresh_document_sha256": "70952f5f1d96830a174cfa884760e9cae6bde6388c2be92fcb9697bb74e90baa",
+      "parser_json_byte_identical": true,
+      "fields_candidates_evidence_issues_equal": true,
+      "route": "parser_only",
+      "requested_fields": [],
+      "selective_status": "skipped_parser_only",
+      "provider": "mock",
+      "input_extraction_unchanged": true
+    },
+    {
+      "name": "missing",
+      "pdf": "data/development/missing_number.pdf",
+      "expected": "lab_ready/samples/missing_number.expected.json",
+      "historical_parser_run": "docling-20261006T044400Z-9657230b",
+      "historical_mapper_run": "mapped-20261006T044436Z-1c553773",
+      "source_sha256": "6fb574f704c6ac8a0d3cb57336b7e5eccfcc1483fac747c2335493a46819e0d3",
+      "comparisons_passed": 12,
+      "comparisons_total": 12,
+      "historical_document_sha256": "f784fbe58e8241755e7307d59d4832c45056f8c2bf620c598c2926ab5bdbbedb",
+      "fresh_document_sha256": "f784fbe58e8241755e7307d59d4832c45056f8c2bf620c598c2926ab5bdbbedb",
+      "parser_json_byte_identical": true,
+      "fields_candidates_evidence_issues_equal": true,
+      "route": "vlm_candidate",
+      "requested_fields": [
+        "invoice_number"
+      ],
+      "selective_status": "response_structure_valid_needs_review",
+      "provider": "mock",
+      "input_extraction_unchanged": true
+    }
+  ]
+}

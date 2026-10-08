@@ -1,0 +1,12 @@
+# Runtime artifacts and machine-specific verification evidence stay local.
+.local/
+models/
+runs/
+cache/
+temporary/
+.venv/
+__pycache__/
+*.py[cod]
+.env
+.env.*
+!.env.example

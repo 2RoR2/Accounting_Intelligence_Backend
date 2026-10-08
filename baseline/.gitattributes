@@ -1,0 +1,5 @@
+# Preserve imported bytes across checkouts, including original line endings.
+/project/** -text
+/data/** -text
+/lab_ready/samples/** -text
+/parse-samples.sh text eol=lf

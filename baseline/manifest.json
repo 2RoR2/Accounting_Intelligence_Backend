@@ -1,0 +1,168 @@
+{
+  "format_version": 1,
+  "purpose": "Unchanged M2 baseline snapshot before refactoring",
+  "source_layout": "AccountingIntelligence_SSD_Starter/AccountingIntelligence",
+  "expected_test_count": 63,
+  "files": [
+    {
+      "path": "data/development/changed_values.pdf",
+      "bytes": 54272,
+      "sha256": "0508b672a477772f1bcb864e54cb65dd03bdb58d49e2f9841aa01ce89b654789"
+    },
+    {
+      "path": "data/development/missing_number.pdf",
+      "bytes": 52088,
+      "sha256": "6fb574f704c6ac8a0d3cb57336b7e5eccfcc1483fac747c2335493a46819e0d3"
+    },
+    {
+      "path": "data/development/synthetic_invoice_001.html",
+      "bytes": 818,
+      "sha256": "f2fef2c8f39832fe257cc48234894586a191e0c4f99a7cc12efab51ac1e16fd1"
+    },
+    {
+      "path": "data/development/synthetic_invoice_001.pdf",
+      "bytes": 50434,
+      "sha256": "f0b658bbc6df334c14d2254d420281eb88d4b456efb77c3afff26b304fe824bb"
+    },
+    {
+      "path": "data/expected_answers/SYN-001.json",
+      "bytes": 464,
+      "sha256": "09f4039d4f941bb7f515fcf46fc3231e31edf94f227e2f211acdba15a1141af0"
+    },
+    {
+      "path": "lab_ready/samples/changed_values.expected.json",
+      "bytes": 570,
+      "sha256": "e7e1596b21b101e7069136d229b3b2a5e9cf7ec39237ebe8b6c099b9924f67ee"
+    },
+    {
+      "path": "lab_ready/samples/changed_values.html",
+      "bytes": 773,
+      "sha256": "809b09bbec7e9faafd7fbf16331672e92b89ec09c77982676b64d171415818ba"
+    },
+    {
+      "path": "lab_ready/samples/missing_number.expected.json",
+      "bytes": 450,
+      "sha256": "a50cfdbd23b5257df65aa85854f661cbcdc84d53e7f62a41819c5c5da8d82d69"
+    },
+    {
+      "path": "lab_ready/samples/missing_number.html",
+      "bytes": 690,
+      "sha256": "5299cb3c24ed6ade13257e7e079ee8c305aac8dd242212af71070fcba69de423"
+    },
+    {
+      "path": "project/contracts/CONTRACT.md",
+      "bytes": 1617,
+      "sha256": "b01878bbeb6d5959e419535745ba2ed44c707e98659c7d169f0f4e2548f5c3a1"
+    },
+    {
+      "path": "project/contracts/EXTRACTION_RESULT_V1_PROPOSED.md",
+      "bytes": 3310,
+      "sha256": "68ada8d5ad5137183dfa1fd162b8962307c6a5de633ce7c37f9499306499115e"
+    },
+    {
+      "path": "project/docs/ARCHITECTURE.md",
+      "bytes": 3141,
+      "sha256": "b8b9b0ad09761da976eb9e0076b401471402782dcacd1fd020905ad3671cab16"
+    },
+    {
+      "path": "project/docs/SOURCES.md",
+      "bytes": 529,
+      "sha256": "841333d66c7706137d85a24d5637c73522a2381d546ffb1be0cb28c662e0b006"
+    },
+    {
+      "path": "project/fixtures/missing.json",
+      "bytes": 3281,
+      "sha256": "73648782c67f6f1e68a447371c297fb7593ab88f1fbbea01f9ca9361da55d9b9"
+    },
+    {
+      "path": "project/fixtures/normal.json",
+      "bytes": 3257,
+      "sha256": "de763db8acac1b85b6352e91a0166f36692166437b3cc2193306a2f0012c6399"
+    },
+    {
+      "path": "project/fixtures/unsupported.json",
+      "bytes": 424,
+      "sha256": "67e009994d2b8932459fa492fd1e053215d98052d0ac1755ff15a516d480b301"
+    },
+    {
+      "path": "project/requirements-lab.in",
+      "bytes": 162,
+      "sha256": "edf2ae4d2f628cf375ef6ab5ee28bbb5a4d294a59010b69aa42427863b3c7b72"
+    },
+    {
+      "path": "project/scripts/baseline_parser.py",
+      "bytes": 4088,
+      "sha256": "debbb193451df692fe284da8dad7b34376a4ca80310186e398300d838b372e92"
+    },
+    {
+      "path": "project/scripts/check_storage.py",
+      "bytes": 721,
+      "sha256": "abaf46df5e93e92df26f2e50115be3e158d0a5cfd31b508676f7d4aa3ab6e86e"
+    },
+    {
+      "path": "project/scripts/classify_document.py",
+      "bytes": 3955,
+      "sha256": "f8d09bc3b51460d0d7c12b00c87b555502226378fa4f3ef9a651b767ee329d9b"
+    },
+    {
+      "path": "project/scripts/combine_extraction.py",
+      "bytes": 5961,
+      "sha256": "2a9a3506aab90ae55a38a6d7b3088b4c0dc29ec4868355877ef9b1d607da9c46"
+    },
+    {
+      "path": "project/scripts/extraction_v1.py",
+      "bytes": 7024,
+      "sha256": "3c9151609ad17c10af9fa9bef683842f263fe763cd8448dfa5ae4b336cdb497b"
+    },
+    {
+      "path": "project/scripts/map_invoice.py",
+      "bytes": 11724,
+      "sha256": "9c62fa46e48ea5575eee10fd8a449d79d6b9822b764e8f066e2b2bd3e25de6eb"
+    },
+    {
+      "path": "project/scripts/mock_extract.py",
+      "bytes": 999,
+      "sha256": "38e584ff4b9d3c90ab6aedec90a4b90eb7ff80092fbfaa54ffa9bfc9101a0cd1"
+    },
+    {
+      "path": "project/scripts/qwen_provider.py",
+      "bytes": 3575,
+      "sha256": "4d1f3223a083d5c9fa82538bd999a1abe46c044d500b1cb139ee3db24de01eb6"
+    },
+    {
+      "path": "project/scripts/route_extraction.py",
+      "bytes": 4655,
+      "sha256": "a634ca6d5c43ca3fbcee3fc5908b801bdd7d6f783006064af1e922d6a2462fef"
+    },
+    {
+      "path": "project/scripts/run_selective_qwen.py",
+      "bytes": 7196,
+      "sha256": "92b4bc5d9cdedcf01b45d1f1d3cc2764c5218af09e11fd617aee23d1809be007"
+    },
+    {
+      "path": "project/tests/test_classify_document.py",
+      "bytes": 3147,
+      "sha256": "a606c73f31ff8988b36f44d52a3e9fa2ff2d234f5dde057502e4ed6121ba28f3"
+    },
+    {
+      "path": "project/tests/test_combine_extraction.py",
+      "bytes": 6134,
+      "sha256": "50aa3f22dbe81e75f6bff72d84c299c1e093b39f6956f060bb260e1a3ece13fe"
+    },
+    {
+      "path": "project/tests/test_extraction_v1.py",
+      "bytes": 4996,
+      "sha256": "779e2628677668cd559416f444e4628bb323d57959b8ca1708baf27b7d62d7df"
+    },
+    {
+      "path": "project/tests/test_route_extraction.py",
+      "bytes": 5442,
+      "sha256": "88ce007d39a5b87e5b890e6c8d1bea19ad8bdf57d6287123858f26f0be54435f"
+    },
+    {
+      "path": "project/tests/test_selective_qwen.py",
+      "bytes": 7643,
+      "sha256": "9a085948161011307cfac88f981ee2445658a90381fb9a5dcbdb30812de69d8e"
+    }
+  ]
+}

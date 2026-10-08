@@ -1,0 +1,20 @@
+{
+  "schema_version": "draft-0.1",
+  "document_id": "SYN-UNSUPPORTED-001",
+  "run_id": null,
+  "mode": "mock",
+  "status": "unsupported",
+  "fields": {},
+  "line_items": [],
+  "issues": [
+    {
+      "code": "UNSUPPORTED_DOCUMENT",
+      "detail": "Simulated unsupported document; no source file included."
+    }
+  ],
+  "provenance": {
+    "path": "mock",
+    "model": null,
+    "elapsed_ms": null
+  }
+}

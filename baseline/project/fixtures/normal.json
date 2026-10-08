@@ -1,0 +1,156 @@
+{
+  "schema_version": "draft-0.1",
+  "document_id": "SYN-001",
+  "run_id": null,
+  "mode": "mock",
+  "status": "needs_review",
+  "fields": {
+    "supplier_name": {
+      "raw_text": "Example Stationery (Synthetic)",
+      "value": "Example Stationery (Synthetic)",
+      "evidence": [
+        {
+          "page": 1,
+          "text": "Example Stationery (Synthetic)",
+          "bbox": null
+        }
+      ],
+      "review_required": true
+    },
+    "invoice_number": {
+      "raw_text": "SYN-001",
+      "value": "SYN-001",
+      "evidence": [
+        {
+          "page": 1,
+          "text": "SYN-001",
+          "bbox": null
+        }
+      ],
+      "review_required": true
+    },
+    "invoice_date": {
+      "raw_text": "2026-10-01",
+      "value": "2026-10-01",
+      "evidence": [
+        {
+          "page": 1,
+          "text": "2026-10-01",
+          "bbox": null
+        }
+      ],
+      "review_required": true
+    },
+    "currency": {
+      "raw_text": "MYR",
+      "value": "MYR",
+      "evidence": [
+        {
+          "page": 1,
+          "text": "MYR",
+          "bbox": null
+        }
+      ],
+      "review_required": true
+    },
+    "subtotal": {
+      "raw_text": "50.00",
+      "value": "50.00",
+      "evidence": [
+        {
+          "page": 1,
+          "text": "50.00",
+          "bbox": null
+        }
+      ],
+      "review_required": true
+    },
+    "tax_amount": {
+      "raw_text": "0.00",
+      "value": "0.00",
+      "evidence": [
+        {
+          "page": 1,
+          "text": "0.00",
+          "bbox": null
+        }
+      ],
+      "review_required": true
+    },
+    "total_amount": {
+      "raw_text": "50.00",
+      "value": "50.00",
+      "evidence": [
+        {
+          "page": 1,
+          "text": "50.00",
+          "bbox": null
+        }
+      ],
+      "review_required": true
+    }
+  },
+  "line_items": [
+    {
+      "description": {
+        "raw_text": "Notebook",
+        "value": "Notebook",
+        "evidence": [
+          {
+            "page": 1,
+            "text": "Notebook",
+            "bbox": null
+          }
+        ],
+        "review_required": true
+      },
+      "quantity": {
+        "raw_text": "2",
+        "value": "2",
+        "evidence": [
+          {
+            "page": 1,
+            "text": "2",
+            "bbox": null
+          }
+        ],
+        "review_required": true
+      },
+      "unit_price": {
+        "raw_text": "25.00",
+        "value": "25.00",
+        "evidence": [
+          {
+            "page": 1,
+            "text": "25.00",
+            "bbox": null
+          }
+        ],
+        "review_required": true
+      },
+      "line_total": {
+        "raw_text": "50.00",
+        "value": "50.00",
+        "evidence": [
+          {
+            "page": 1,
+            "text": "50.00",
+            "bbox": null
+          }
+        ],
+        "review_required": true
+      }
+    }
+  ],
+  "issues": [
+    {
+      "code": "SYNTHETIC_MOCK",
+      "detail": "Hand-authored values and evidence; not an extraction result."
+    }
+  ],
+  "provenance": {
+    "path": "mock",
+    "model": null,
+    "elapsed_ms": null
+  }
+}
