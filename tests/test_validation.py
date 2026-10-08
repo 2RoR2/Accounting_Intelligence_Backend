@@ -286,3 +286,56 @@ def test_validation_engine_assigns_duplicate_exception_severity():
     )
 
     assert duplicate_error["severity"] == "high"
+
+def test_validation_engine_assigns_po_exception():
+    invoice = {
+        "invoice_number": "INV-PO-001",
+        "vendor_name": "ABC Supplies",
+        "invoice_date": "2026-01-15",
+        "due_date": "2026-02-15",
+        "line_items": [
+            {
+                "description": "Office Paper",
+                "quantity": 10,
+                "unit_price": "6.00",
+                "amount": "60.00",
+            }
+        ],
+        "subtotal": "60.00",
+        "tax_amount": "0.00",
+        "total_amount": "60.00",
+        "currency": "MYR",
+    }
+
+    purchase_order = {
+        "po_number": "PO-001",
+        "vendor_name": "ABC Supplies",
+        "line_items": [
+            {
+                "description": "Office Paper",
+                "quantity": 10,
+                "unit_price": "5.00",
+            }
+        ],
+        "total_amount": "50.00",
+    }
+
+    result = validate_invoice_document(
+        invoice,
+        known_vendors=[
+            {"vendor_name": "ABC Supplies"}
+        ],
+        purchase_order=purchase_order,
+    )
+
+    assert result["status"] == "REVIEW_REQUIRED"
+    assert result["po_match"]["status"] == "REVIEW_REQUIRED"
+
+    po_errors = [
+        error
+        for error in result["errors"]
+        if error["code"] == "EX-009"
+    ]
+
+    assert len(po_errors) == 1
+    assert po_errors[0]["severity"] == "high"

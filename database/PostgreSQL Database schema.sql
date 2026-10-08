@@ -17,6 +17,7 @@ DROP TABLE IF EXISTS
     audit_logs, workspace_settings, validation_rules, standardised_records,
     vendors, exceptions, line_items, field_predictions, raw_extractions,
     documents, auth_tokens, account_limit_requests, company_requests,
+    mfa_recovery_requests, auth_challenges, password_challenges, auth_rate_limits, web_sessions,
     users, tenants
 CASCADE;
 DROP SEQUENCE IF EXISTS document_invoice_seq, document_bill_seq, document_receipt_seq,

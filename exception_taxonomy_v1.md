@@ -89,22 +89,66 @@ If `due_date` is earlier than `invoice_date`, the invoice fails validation.
 
 ---
 
-### EX-007 Duplicate Invoice
+### EX-007 — Duplicate Invoice
 
 The same supplier/vendor and invoice number are detected across multiple documents.
 
----
-
-### EX-008 Vendor Matching Requires Review
-
-The extracted vendor name is similar to a known vendor but cannot be safely accepted as an exact match, or no suitable known vendor match is available.
-
-This exception requires human review before the vendor is assigned to the accounting record.
+This exception requires review to determine whether the invoice is a true
+duplicate or a legitimate repeated document.
 
 ---
 
+### EX-008 — Vendor Matching Requires Review
 
-## 3. Exception Handling Levels
+The extracted vendor name is similar to a known vendor but cannot be safely
+accepted as an exact match, or no suitable known vendor match is available.
+
+This exception requires human review before the vendor is assigned to the
+accounting record.
+
+---
+
+### EX-009 — Purchase Order Matching Requires Review
+
+The invoice cannot be safely matched to the supplied purchase order.
+
+Possible causes include:
+
+- Supplier/vendor mismatch.
+- Line-item description mismatch.
+- Quantity variance.
+- Unit-price variance.
+- PO amount variance.
+
+A successful PO comparison returns `MATCHED`.
+
+A mismatch returns `REVIEW_REQUIRED` so that the invoice can be reviewed
+before being accepted as consistent with the purchase order.
+
+---
+
+## 3. Exception Severity
+
+Exceptions are assigned a severity level by the validation engine.
+
+| Exception | Severity |
+|---|---|
+| EX-001 — Missing Required Field | Medium |
+| EX-002 — Invalid Field Type or Format | Medium |
+| EX-003 — Line Item Arithmetic Mismatch | High |
+| EX-004 — Subtotal Arithmetic Mismatch | High |
+| EX-005 — Total Arithmetic Mismatch | High |
+| EX-006 — Invalid Date Relationship | Medium |
+| EX-007 — Duplicate Invoice | High |
+| EX-008 — Vendor Matching Requires Review | Medium |
+| EX-009 — Purchase Order Matching Requires Review | High |
+
+Severity helps prioritise exceptions for human review.
+
+---
+
+
+## 4. Exception Handling Levels
 
 ### Level 1 — Validation Failure
 
@@ -122,7 +166,7 @@ The invoice has passed the required validation rules and can continue to downstr
 
 ---
 
-## 4. AI vs Deterministic Boundary
+## 5. AI vs Deterministic Boundary
 
 Deterministic accounting rules should be used for:
 
@@ -142,9 +186,10 @@ The AI layer should not replace deterministic accounting controls.
 
 ---
 
-## 5. Current Sprint 1 Scope
+## 6. Current Sprint 1 Scope
 
-The following exception categories are implemented and covered by the current validation tests:
+The following exception categories are implemented and covered by the
+current validation and PO matching tests:
 
 - Missing required fields
 - Invalid field types/formats
@@ -154,10 +199,10 @@ The following exception categories are implemented and covered by the current va
 - Invalid due date relationship
 - Duplicate invoice detection
 - Vendor matching requiring review
+- Purchase order matching requiring review
 
-The following exception categories are planned for future iterations:
+The following exception categories remain planned for future iterations:
 
-- PO/GRN matching failure
 - Bank matching failure
 - Reconciliation variance
 - Low OCR/extraction confidence

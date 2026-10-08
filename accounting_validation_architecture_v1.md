@@ -34,29 +34,31 @@ Module 3 - Validation Engine
        +-----------------------------+
        |                             |
        v                             v
-Schema / Type Validation       Accounting Validation
+Core Invoice Validation       Additional Validation
        |                             |
-       |                       +-----+-----+---------+
-       |                       |           |         |
-       |                       v           v         v
-       |                  Line Item    Subtotal    Total
-       |                  Arithmetic   Validation  Validation
-       |                       |
-       |                       v
-       |                  Date Validation
-       |                             |
-       +-------------+---------------+
+       |                    +--------+--------+--------+
+       |                    |        |        |        |
+       v                    v        v        v        v
+Schema / Type          Duplicate  Vendor     PO     Exception
+Validation             Detection  Matching  Matching  Handling
+       |
+       +-----------------------------+
                      |
-              VALID / INVALID
-                 /         \
-                /           \
-               v             v
-        Downstream        Exception
-        Accounting        Handling
-        Workflow
+                     v
+              VALID / REVIEW_REQUIRED
+                 /             \
+                /               \
+               v                 v
+        Downstream          Human Review /
+        Workflow            Correction
 ```
 
-The validation engine acts as a control boundary between extracted invoice data and downstream accounting processes.
+The validation engine acts as a deterministic control boundary between
+AI-extracted invoice data and downstream accounting processes.
+
+Validation does not replace AI extraction. Instead, it checks whether
+the extracted information is structurally, mathematically, and
+operationally acceptable before the data proceeds downstream.
 
 ---
 
@@ -83,7 +85,8 @@ The Extraction Engine does not determine whether the extracted accounting values
 
 ### 3.2 Module 3 - Validation Engine
 
-The Validation Engine is responsible for deterministic validation of the structured invoice data.
+The Validation Engine is responsible for deterministic validation and
+matching checks on structured invoice data.
 
 Its responsibilities include:
 
@@ -93,26 +96,38 @@ Its responsibilities include:
 - Validating invoice subtotal arithmetic.
 - Validating invoice total arithmetic.
 - Validating date relationships.
-- Returning a validation result.
+- Detecting duplicate invoices.
+- Matching extracted vendors against known vendors.
+- Matching invoices against supplied purchase-order data.
+- Assigning exception severity.
+- Returning a consolidated validation result.
 
-The validation rules should produce predictable results for the same input.
-
+The validation rules should produce predictable and explainable
+results for the same input.
 ---
 
 ### 3.3 Exception Handling
 
-When validation fails, the failure should be recorded as an accounting validation exception.
+When a validation or matching check cannot be safely accepted, the
+engine creates a review-required exception.
 
-Examples include:
+Current exception categories include:
 
-- Missing required field.
-- Invalid field type or format.
-- Line item arithmetic mismatch.
-- Subtotal arithmetic mismatch.
-- Total arithmetic mismatch.
-- Invalid date relationship.
+- EX-001 — Missing Required Field.
+- EX-002 — Invalid Field Type or Format.
+- EX-003 — Line Item Arithmetic Mismatch.
+- EX-004 — Subtotal Arithmetic Mismatch.
+- EX-005 — Total Arithmetic Mismatch.
+- EX-006 — Invalid Date Relationship.
+- EX-007 — Duplicate Invoice.
+- EX-008 — Vendor Matching Requires Review.
+- EX-009 — Purchase Order Matching Requires Review.
 
-The exception taxonomy is defined separately in `exception_taxonomy_v1.md`.
+Exceptions are assigned a severity level and returned as part of the
+consolidated validation result.
+
+The exception taxonomy is defined separately in
+`exception_taxonomy_v1.md`.
 
 ---
 
@@ -203,6 +218,58 @@ A due date earlier than the invoice date is treated as a validation failure.
 
 ---
 
+### Layer 5 - Duplicate Detection
+
+The validation engine checks whether the invoice appears to duplicate
+an existing invoice.
+
+Duplicate detection considers invoice information such as the vendor
+and invoice number and returns a review exception when a duplicate is
+identified.
+
+A detected duplicate is classified as:
+
+EX-007 — Duplicate Invoice
+
+---
+
+### Layer 6 - Vendor Matching
+
+The extracted vendor name is compared against the known vendor list.
+
+Exact matches can be accepted automatically. Fuzzy or unresolved
+matches require review rather than being silently accepted.
+
+A vendor matching issue is classified as:
+
+EX-008 — Vendor Matching Requires Review
+
+---
+
+### Layer 7 - Purchase Order Matching
+
+When purchase-order data is available, the invoice can be compared
+against the purchase order.
+
+The current PO matching component checks:
+
+- Supplier/vendor match.
+- Line-item description match.
+- Line-item quantity variance.
+- Unit-price variance.
+- PO amount variance.
+
+A successful comparison returns `MATCHED`.
+
+A mismatch returns `REVIEW_REQUIRED` and is classified as:
+
+EX-009 — Purchase Order Matching Requires Review.
+
+The current implementation is a standalone matching component. It does
+not create or depend on purchase-order database tables yet.
+
+---
+
 ## 5. AI vs Deterministic Boundary
 
 The architecture separates interpretation from accounting control.
@@ -240,25 +307,33 @@ This separation reduces the risk of relying on probabilistic AI output for finan
 
 ## 6. Validation Result Flow
 
-The validation engine produces two main outcomes:
+The validation engine produces a consolidated result.
 
 ### VALID
 
-The extracted invoice data satisfies the required validation rules.
+The invoice passes the applicable validation and matching checks.
 
 The data can proceed to the next accounting workflow stage.
 
-### INVALID
+### REVIEW_REQUIRED
 
-One or more validation rules fail.
+One or more validation or matching checks require human review.
 
-The invoice should not be trusted as a valid accounting record and the corresponding validation failure should be recorded for exception handling.
+Examples include:
+
+- Duplicate invoice detected.
+- Vendor cannot be safely resolved.
+- Purchase order mismatch.
+- Arithmetic or date validation failure.
+
+The relevant exception code, severity, field, and message are returned
+so that the issue can be reviewed and corrected.
 
 ---
 
 ## 7. Current Sprint 1 Scope
 
-The Sprint 1 architecture covers:
+The current validation implementation covers:
 
 - Accounting validation architecture.
 - Schema and basic type validation.
@@ -266,11 +341,19 @@ The Sprint 1 architecture covers:
 - Subtotal validation.
 - Total validation.
 - Date relationship validation.
-- Validation test fixtures.
-- Validation workflow definition.
-- Exception taxonomy definition.
+- Duplicate invoice detection.
+- Vendor matching.
+- Purchase order matching.
+- Exception severity classification.
+- Validation and PO matching test coverage.
 
-Advanced accounting matching and reconciliation are outside the current Sprint 1 validation architecture and can be developed in later stages.
+Bank transaction matching and full bank reconciliation are not yet
+implemented because the required transaction data layer is not yet
+available.
+
+Purchase-order database integration and goods-receipt database
+integration are also outside the current implementation because the
+required database tables are not yet available.
 
 ---
 
