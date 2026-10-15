@@ -52,6 +52,8 @@ class AIAssistance(StrictModel):
     status: Literal["skipped_parser_only", "skipped_human_review", "failed",
                     "response_structure_valid_needs_review"]
     prediction: dict[str, str | None] | None
+    model: str | None = None
+    route_decision: str | None = None
 
 
 class ReconciliationSummary(StrictModel):
@@ -359,7 +361,8 @@ def build_public_result(
             "Routing refers to a different extraction path.")
     require({key: route.get(key) for key in service["routing"]} == service["routing"],
             "Service routing summary differs from its artifact.")
-    expected_route = decide_route(extraction)
+    allow_vlm = service.get("routing", {}).get("decision") == "vlm_candidate"
+    expected_route = decide_route(extraction, allow_vlm_inference=allow_vlm)
     require({key: expected_route[key] for key in service["routing"]} == service["routing"],
             "Service routing contradicts the classified extraction and current policy.")
 

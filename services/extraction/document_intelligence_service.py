@@ -52,7 +52,12 @@ def write_json(path: Path, value) -> None:
 class DocumentIntelligenceService:
     """Public Module 2 orchestration interface."""
 
-    def __init__(self, project_root: Path | None = None):
+    def __init__(
+        self,
+        project_root: Path | None = None,
+        parser=None,
+        allow_vlm_inference: bool = False,
+    ):
         self.project_root = (
             Path(project_root)
             if project_root is not None
@@ -60,6 +65,8 @@ class DocumentIntelligenceService:
         ).resolve()
 
         self.runs_dir = self.project_root / "runs"
+        self._parser = parser
+        self.allow_vlm_inference = allow_vlm_inference
 
     def _checked_path(self, path: Path, label: str) -> Path:
         resolved = Path(path).expanduser().resolve()
@@ -242,6 +249,7 @@ class DocumentIntelligenceService:
     def _save_routing(
         self,
         classified_extraction_path: Path,
+        allow_vlm_inference: bool = False,
     ):
         source = self._checked_path(
             classified_extraction_path,
@@ -251,7 +259,8 @@ class DocumentIntelligenceService:
         raw = source.read_bytes()
 
         decision = decide_route(
-            json.loads(raw)
+            json.loads(raw),
+            allow_vlm_inference=allow_vlm_inference,
         )
 
         decision["source_result_path"] = str(source)
@@ -284,6 +293,8 @@ class DocumentIntelligenceService:
         document_id: str,
         file_path: Path,
         verbose: bool = False,
+        parser=None,
+        allow_vlm_inference: bool | None = None,
     ):
         """Process one PDF through the current Module 2 pipeline.
 
@@ -304,6 +315,12 @@ class DocumentIntelligenceService:
         source_pdf = self._checked_path(
             file_path,
             "Input PDF",
+        )
+
+        vlm_allowed = (
+            allow_vlm_inference
+            if allow_vlm_inference is not None
+            else self.allow_vlm_inference
         )
 
         started = time.perf_counter()
@@ -354,8 +371,14 @@ class DocumentIntelligenceService:
             #
             # 1. DOCLING PARSER
             #
+            parser_fn = (
+                parser
+                if parser is not None
+                else (self._parser if self._parser is not None else parse_document)
+            )
+
             parser_run_dir, parser_record = (
-                parse_document(
+                parser_fn(
                     input_pdf=source_pdf,
                     output_parent=self.runs_dir,
                     project_root=self.project_root,
@@ -454,7 +477,8 @@ class DocumentIntelligenceService:
             #
             routing_path, decision = (
                 self._save_routing(
-                    combined_result_path
+                    combined_result_path,
+                    allow_vlm_inference=vlm_allowed,
                 )
             )
 
@@ -491,6 +515,8 @@ class DocumentIntelligenceService:
                     "attempted": False,
                     "response_received": False,
                     "status": "skipped_parser_only",
+                    "model": None,
+                    "route_decision": "parser_only",
                     "prediction": None,
                 }
 
@@ -508,6 +534,8 @@ class DocumentIntelligenceService:
                     "status": (
                         "skipped_human_review"
                     ),
+                    "model": None,
+                    "route_decision": "human_review",
                     "prediction": None,
                 }
 
@@ -515,106 +543,144 @@ class DocumentIntelligenceService:
             # 7C. SELECTIVE VLM PATH
             #
             elif decision["decision"] == "vlm_candidate":
-                selective_dir, selective_record = (
-                    run_attempt(
-                        combined_result_path,
-                        self.project_root,
-                    )
-                )
-
-                summary["artifacts"][
-                    "selective_run"
-                ] = str(
-                    selective_dir
-                )
-
-                summary["ai_assistance"][
-                    "attempted"
-                ] = selective_record.get(
-                    "ai_request_attempted",
-                    False,
-                )
-
-                summary["ai_assistance"][
-                    "response_received"
-                ] = selective_record.get(
-                    "ai_response_received",
-                    False,
-                )
-
-                summary["ai_assistance"][
-                    "status"
-                ] = selective_record.get(
-                    "status"
-                )
-
-                if (
-                    selective_record.get(
-                        "status"
-                    )
-                    == "response_structure_valid_needs_review"
-                ):
-                    prediction_path = (
-                        selective_dir
-                        / "prediction.json"
+                if not vlm_allowed:
+                    summary["status"] = (
+                        "human_review_required"
                     )
 
-                    prediction = json.loads(
-                        prediction_path.read_text(
-                            encoding="utf-8"
-                        )
-                    )
+                    summary["routing"][
+                        "decision"
+                    ] = "human_review"
+                    summary["routing"][
+                        "requested_fields"
+                    ] = []
 
-                    summary["ai_assistance"][
-                        "prediction"
-                    ] = prediction
+                    blocker = {
+                        "code": "VLM_INFERENCE_DISABLED",
+                        "field": None,
+                    }
+                    if (
+                        blocker
+                        not in summary[
+                            "routing"
+                        ]["blocking_reasons"]
+                    ):
+                        summary["routing"][
+                            "blocking_reasons"
+                        ].append(blocker)
 
-                    reconciliation_path, reconciliation_result = (
-                        reconcile(
+                    summary["ai_assistance"] = {
+                        "attempted": False,
+                        "response_received": False,
+                        "status": (
+                            "skipped_human_review"
+                        ),
+                        "model": None,
+                        "route_decision": "human_review",
+                        "prediction": None,
+                    }
+
+                else:
+                    selective_dir, selective_record = (
+                        run_attempt(
                             combined_result_path,
-                            selective_dir,
-                            self.runs_dir,
+                            self.project_root,
                         )
                     )
 
                     summary["artifacts"][
-                        "reconciliation_result"
+                        "selective_run"
                     ] = str(
-                        reconciliation_path
+                        selective_dir
                     )
 
-                    summary["reconciliation"] = {
-                        "status": (
+                    summary["ai_assistance"][
+                        "attempted"
+                    ] = selective_record.get(
+                        "ai_request_attempted",
+                        False,
+                    )
+
+                    summary["ai_assistance"][
+                        "response_received"
+                    ] = selective_record.get(
+                        "ai_response_received",
+                        False,
+                    )
+
+                    summary["ai_assistance"][
+                        "status"
+                    ] = selective_record.get(
+                        "status"
+                    )
+
+                    if (
+                        selective_record.get(
+                            "status"
+                        )
+                        == "response_structure_valid_needs_review"
+                    ):
+                        prediction_path = (
+                            selective_dir
+                            / "prediction.json"
+                        )
+
+                        prediction = json.loads(
+                            prediction_path.read_text(
+                                encoding="utf-8"
+                            )
+                        )
+
+                        summary["ai_assistance"][
+                            "prediction"
+                        ] = prediction
+
+                        reconciliation_path, reconciliation_result = (
+                            reconcile(
+                                combined_result_path,
+                                selective_dir,
+                                self.runs_dir,
+                            )
+                        )
+
+                        summary["artifacts"][
+                            "reconciliation_result"
+                        ] = str(
+                            reconciliation_path
+                        )
+
+                        summary["reconciliation"] = {
+                            "status": (
+                                reconciliation_result[
+                                    "status"
+                                ]
+                            ),
+                            "review_required": (
+                                reconciliation_result[
+                                    "review_required"
+                                ]
+                            ),
+                            "fields": (
+                                reconciliation_result[
+                                    "fields"
+                                ]
+                            ),
+                        }
+
+                        summary["status"] = (
                             reconciliation_result[
                                 "status"
                             ]
-                        ),
-                        "review_required": (
-                            reconciliation_result[
-                                "review_required"
-                            ]
-                        ),
-                        "fields": (
-                            reconciliation_result[
-                                "fields"
-                            ]
-                        ),
-                    }
+                        )
 
-                    summary["status"] = (
-                        reconciliation_result[
-                            "status"
-                        ]
-                    )
-
-                else:
-                    #
-                    # Provider/model/response failure must not
-                    # silently become an approved result.
-                    #
-                    summary["status"] = (
-                        "ai_attempt_failed_needs_review"
-                    )
+                    else:
+                        #
+                        # Provider/model/response failure must not
+                        # silently become an approved result.
+                        #
+                        summary["status"] = (
+                            "ai_attempt_failed_needs_review"
+                        )
 
             else:
                 raise ValueError(

@@ -10,7 +10,7 @@ from services.extraction.combine_extraction import ClassifiedExtractionResult
 REQUIRED_HEADERS = ('supplier_name', 'invoice_number', 'invoice_date', 'currency', 'total_amount')
 POLICY_VERSION = '0.1.0-proposed'
 
-def decide_route(payload):
+def decide_route(payload, allow_vlm_inference: bool = True):
     result = ClassifiedExtractionResult.model_validate(payload)
     reasons, targets, blockers = [], [], []
 
@@ -54,6 +54,9 @@ def decide_route(payload):
         block('SOURCE_ISSUE_REQUIRES_REVIEW:' + str(code), name or None)
     if not result.line_items:
         block('NO_SUPPORTED_LINE_ITEMS')
+
+    if targets and not allow_vlm_inference:
+        block('VLM_INFERENCE_DISABLED')
 
     if blockers:
         decision = 'human_review'

@@ -272,6 +272,7 @@ class DocumentIntelligenceServiceTests(unittest.TestCase):
             _, result = self.service.process_document(
                 document_id="DOC-RECOVERY",
                 file_path=self.pdf,
+                allow_vlm_inference=True,
             )
 
         self.assertEqual(
@@ -351,6 +352,7 @@ class DocumentIntelligenceServiceTests(unittest.TestCase):
             _, result = self.service.process_document(
                 document_id="DOC-AI-FAIL",
                 file_path=self.pdf,
+                allow_vlm_inference=True,
             )
 
         self.assertEqual(
