@@ -25,6 +25,7 @@ def execute_document_extraction(
     parser: Optional[Callable] = None,
     verbose: bool = False,
     allow_vlm_inference: bool = False,
+    models_dir: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Execute extraction and strict public-result publication for one trusted document.
 
@@ -57,6 +58,7 @@ def execute_document_extraction(
         project_root=project_root,
         parser=parser,
         allow_vlm_inference=allow_vlm_inference,
+        models_dir=models_dir,
     )
 
     # 1. Run DocumentIntelligenceService
@@ -66,6 +68,7 @@ def execute_document_extraction(
             file_path=path,
             verbose=verbose,
             allow_vlm_inference=allow_vlm_inference,
+            models_dir=models_dir,
         )
     except Exception as exc:
         return {

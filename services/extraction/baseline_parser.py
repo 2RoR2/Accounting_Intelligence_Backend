@@ -64,6 +64,7 @@ def parse_document(
     input_pdf: Path,
     output_parent: Path,
     project_root: Path = PROJECT_ROOT,
+    models_dir: Path | None = None,
     verbose: bool = False,
 ):
     """Parse one local PDF with Docling and write immutable run artifacts.
@@ -97,7 +98,12 @@ def parse_document(
         "Output",
     )
 
-    models = root / "models" / "docling"
+    if models_dir is not None:
+        models = Path(models_dir).expanduser().resolve()
+    elif os.getenv("DOCLING_MODELS_DIR"):
+        models = Path(os.environ["DOCLING_MODELS_DIR"]).expanduser().resolve()
+    else:
+        models = (root / "models" / "docling").resolve()
 
     if not source.is_file():
         raise ValueError(f"PDF not found: {source}")
@@ -310,6 +316,13 @@ def main():
         ),
     )
 
+    parser.add_argument(
+        "--models-dir",
+        type=Path,
+        default=None,
+        help="Custom local directory containing Docling models.",
+    )
+
     args = parser.parse_args()
 
     try:
@@ -317,6 +330,7 @@ def main():
             input_pdf=args.input_pdf,
             output_parent=args.output_dir,
             project_root=PROJECT_ROOT,
+            models_dir=args.models_dir,
             verbose=True,
         )
 

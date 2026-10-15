@@ -19,6 +19,7 @@ Important:
 """
 
 import hashlib
+import inspect
 import json
 import time
 from datetime import datetime, timezone
@@ -57,6 +58,7 @@ class DocumentIntelligenceService:
         project_root: Path | None = None,
         parser=None,
         allow_vlm_inference: bool = False,
+        models_dir: Path | None = None,
     ):
         self.project_root = (
             Path(project_root)
@@ -67,6 +69,11 @@ class DocumentIntelligenceService:
         self.runs_dir = self.project_root / "runs"
         self._parser = parser
         self.allow_vlm_inference = allow_vlm_inference
+        self.models_dir = (
+            Path(models_dir).resolve()
+            if models_dir is not None
+            else None
+        )
 
     def _checked_path(self, path: Path, label: str) -> Path:
         resolved = Path(path).expanduser().resolve()
@@ -295,6 +302,7 @@ class DocumentIntelligenceService:
         verbose: bool = False,
         parser=None,
         allow_vlm_inference: bool | None = None,
+        models_dir: Path | None = None,
     ):
         """Process one PDF through the current Module 2 pipeline.
 
@@ -377,14 +385,35 @@ class DocumentIntelligenceService:
                 else (self._parser if self._parser is not None else parse_document)
             )
 
-            parser_run_dir, parser_record = (
-                parser_fn(
-                    input_pdf=source_pdf,
-                    output_parent=self.runs_dir,
-                    project_root=self.project_root,
-                    verbose=verbose,
-                )
+            effective_models_dir = (
+                Path(models_dir).resolve()
+                if models_dir is not None
+                else self.models_dir
             )
+
+            parser_kwargs = {
+                "input_pdf": source_pdf,
+                "output_parent": self.runs_dir,
+                "project_root": self.project_root,
+                "verbose": verbose,
+            }
+            if effective_models_dir is not None:
+                parser_kwargs["models_dir"] = effective_models_dir
+
+            # If a custom/mock parser is used, only pass models_dir if supported
+            if parser is not None or self._parser is not None:
+                if effective_models_dir is not None:
+                    try:
+                        sig = inspect.signature(parser_fn)
+                        if "models_dir" not in sig.parameters and not any(
+                            p.kind == inspect.Parameter.VAR_KEYWORD
+                            for p in sig.parameters.values()
+                        ):
+                            parser_kwargs.pop("models_dir", None)
+                    except (ValueError, TypeError):
+                        pass
+
+            parser_run_dir, parser_record = parser_fn(**parser_kwargs)
 
             document_json_path = (
                 parser_run_dir

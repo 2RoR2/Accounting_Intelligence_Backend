@@ -333,3 +333,55 @@ class TestExtractionExecutionBoundary(unittest.TestCase):
         self.assertIsNone(blocked["m3_input"])
         issue_fields = [iss["field"] for iss in blocked["structural_issues"]]
         self.assertIn("invoice_number", issue_fields)
+
+    def test_case_l1_custom_models_dir_fails_closed_when_missing(self):
+        """Case L1: Providing a non-existent models_dir fails closed with clear error."""
+        missing_models = self.root / "nonexistent_models_dir"
+        result = execute_document_extraction(
+            document_id="DOC-FAIL-MODELS",
+            file_path=self.pdf_path,
+            project_root=self.root,
+            models_dir=missing_models,
+        )
+        self.assertEqual(result["execution_status"], "INFRASTRUCTURE_ERROR")
+        self.assertIn("Docling model directory not found", result["error"])
+
+    def test_case_l2_models_dir_forwarding(self):
+        """Case L2: models_dir parameter is forwarded through execution boundary to parser."""
+        received_kwargs = {}
+
+        def mock_parser_with_models(
+            input_pdf, output_parent, project_root=None, verbose=False, models_dir=None
+        ):
+            received_kwargs["models_dir"] = models_dir
+            output = output_parent / f"docling-test-{Path(input_pdf).stem}"
+            output.mkdir(parents=True, exist_ok=True)
+            (output / "document.json").write_text(
+                json.dumps(self.doc_dict), encoding="utf-8"
+            )
+            (output / "run.json").write_text(
+                json.dumps({
+                    "status": "success",
+                    "mode": "test_injected_parser",
+                    "source": str(input_pdf),
+                    "source_sha256": "0" * 64,
+                }),
+                encoding="utf-8",
+            )
+            return output, {"status": "success"}
+
+        custom_models = self.root / "custom_models"
+        custom_models.mkdir()
+
+        result = execute_document_extraction(
+            document_id="DOC-MODELS-FWD",
+            file_path=self.pdf_path,
+            project_root=self.root,
+            parser=mock_parser_with_models,
+            models_dir=custom_models,
+        )
+        self.assertEqual(result["execution_status"], "EXTRACTED")
+        self.assertEqual(
+            received_kwargs.get("models_dir"),
+            custom_models.resolve(),
+        )
