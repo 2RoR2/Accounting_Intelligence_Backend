@@ -1,4 +1,4 @@
-﻿"""Public account API. Run: uvicorn app:app --host 127.0.0.1 --port 8000."""
+"""Public account API. Run: uvicorn app:app --host 127.0.0.1 --port 8000."""
 import hmac
 import logging
 import os
@@ -526,3 +526,7 @@ def activate(data: ActivationInput):
                    (hash_password(data.password), user["id"]))
         db.execute("UPDATE auth_tokens SET used_at=now() WHERE user_id=%s AND purpose='activation'", (user["id"],))
     return {"success": True}
+
+
+from routers.documents import router as documents_router
+app.include_router(documents_router)

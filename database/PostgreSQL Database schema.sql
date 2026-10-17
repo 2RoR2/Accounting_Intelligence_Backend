@@ -1,11 +1,12 @@
 -- PostgreSQL Database schema
 -- Accounting Intelligence (Group 14)
 --
--- Built to match the data model used by the frontend: company access requests, seat limit
+--  company access requests, seat limit
 -- requests, the account lifecycle with forced password change, document kinds and readable
 -- codes (INVOICE_100001, REC-10021, TENANT_001), exceptions, validation rules for each company,
--- confidence and corrections for each extracted field, locked standardised records, and a
--- general audit log.
+-- a record of every document processing job, extraction runs with the state, evidence and
+-- candidates of each extracted field, a history of every correction, locked standardised
+-- records, and a general audit log.
 
 -- Authentication and MFA tables are defined here so a clean schema build has
 -- the same structure as an installation created through the migrations.
@@ -16,7 +17,7 @@
 DROP TABLE IF EXISTS
     audit_logs, workspace_settings, validation_rules, standardised_records,
     vendors, exceptions, line_items, field_predictions, raw_extractions,
-    documents, auth_tokens, account_limit_requests, company_requests,
+    field_corrections, pending_jobs, documents, auth_tokens, account_limit_requests, company_requests,
     mfa_recovery_requests, auth_challenges, password_challenges, auth_rate_limits, web_sessions,
     users, tenants
 CASCADE;
@@ -24,6 +25,10 @@ DROP SEQUENCE IF EXISTS document_invoice_seq, document_bill_seq, document_receip
     tenant_code_seq, record_code_seq;
 DROP FUNCTION IF EXISTS set_document_code() CASCADE;
 DROP FUNCTION IF EXISTS set_tenant_code() CASCADE;
+DROP FUNCTION IF EXISTS protect_field_predictions() CASCADE;
+DROP FUNCTION IF EXISTS log_field_correction() CASCADE;
+DROP FUNCTION IF EXISTS prevent_correction_change() CASCADE;
+DROP FUNCTION IF EXISTS switch_current_extraction(UUID) CASCADE;
 DROP FUNCTION IF EXISTS set_record_code() CASCADE;
 DROP FUNCTION IF EXISTS prevent_record_update() CASCADE;
 
@@ -201,7 +206,8 @@ CREATE TABLE documents (
     uploaded_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
     processing_started_at     TIMESTAMPTZ,
     processing_completed_at   TIMESTAMPTZ,
-    updated_at                TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at                TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (id, tenant_id)   -- lets pending_jobs refer to a document and its company together
 );
 
 CREATE FUNCTION set_document_code() RETURNS trigger AS $$
@@ -224,41 +230,139 @@ CREATE TRIGGER trg_set_document_code
     FOR EACH ROW EXECUTE FUNCTION set_document_code();
 
 -- ---------------------------------------------------------------------------
--- Raw output from whichever extraction path was used (A, B, or C).
--- Kept for audit; the editable per field data lives in field_predictions.
+-- Pending jobs: the database keeps the written record of every document processing job.
+-- Redis only carries a message saying "try job X". This table decides who may run it.
+-- The Redis job id is dispatch_token, a fresh value for every dispatch, never reused.
+-- attempt_count goes up only when a worker claims the job. dispatch_count goes up on every send to Redis.
+-- A document with job history cannot be hard deleted (ON DELETE RESTRICT).
+-- The statements the dispatcher, workers and recovery are meant to run, and the rollback steps,
+-- are in pending_jobs_usage.sql.
 -- ---------------------------------------------------------------------------
-CREATE TABLE raw_extractions (
-    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    document_id      UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-    raw_json         JSONB NOT NULL,
-    extraction_path  TEXT NOT NULL CHECK (extraction_path IN ('A', 'B', 'C')),
-    model_name       TEXT,
-    created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+CREATE TABLE pending_jobs (
+    id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id              UUID NOT NULL,
+    document_id            UUID NOT NULL,
+    status                 TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'dispatched', 'processing', 'succeeded', 'failed', 'cancelled')),
+
+    -- attempts: attempt_count counts worker claims only. dispatch_count counts sends to Redis.
+    attempt_count          INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+    max_attempts           INTEGER NOT NULL DEFAULT 3 CHECK (max_attempts >= 1),
+    dispatch_count         INTEGER NOT NULL DEFAULT 0 CHECK (dispatch_count >= 0),
+    next_attempt_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    -- dispatch lease: the job was handed to Redis and nobody has claimed it yet
+    dispatch_token         UUID,           -- also the Redis job id for this dispatch
+    dispatched_at          TIMESTAMPTZ,
+    dispatch_expires_at    TIMESTAMPTZ,
+
+    -- processing lease: a worker owns the job until processing_expires_at
+    claim_token            UUID,           -- the worker ownership token, checked on every guarded write
+    claimed_at             TIMESTAMPTZ,
+    heartbeat_at           TIMESTAMPTZ,
+    processing_expires_at  TIMESTAMPTZ,
+
+    -- outcome
+    last_error             TEXT,
+    finished_at            TIMESTAMPTZ,
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT now(),   -- set by the code that changes the row
+
+    -- the document must belong to the same company as the job
+    FOREIGN KEY (document_id, tenant_id) REFERENCES documents (id, tenant_id) ON DELETE RESTRICT,
+
+    CHECK (attempt_count <= max_attempts),
+    CHECK (status <> 'dispatched' OR (dispatch_token IS NOT NULL AND dispatch_expires_at IS NOT NULL)),
+    CHECK (status <> 'processing' OR (claim_token IS NOT NULL AND processing_expires_at IS NOT NULL)),
+    CHECK (status NOT IN ('succeeded', 'failed', 'cancelled') OR finished_at IS NOT NULL)
 );
 
+-- A document can have only one open job at a time. A finished job does not block a later reprocess.
+CREATE UNIQUE INDEX uq_pending_jobs_open_document
+    ON pending_jobs (document_id) WHERE status IN ('pending', 'dispatched', 'processing');
+
+-- The dispatcher looks for jobs that are due.
+CREATE INDEX idx_pending_jobs_due
+    ON pending_jobs (next_attempt_at) WHERE status = 'pending';
+-- Recovery looks for leases that have run out.
+CREATE INDEX idx_pending_jobs_dispatch_expiry
+    ON pending_jobs (dispatch_expires_at) WHERE status = 'dispatched';
+CREATE INDEX idx_pending_jobs_processing_expiry
+    ON pending_jobs (processing_expires_at) WHERE status = 'processing';
+-- Lists for one company.
+CREATE INDEX idx_pending_jobs_tenant_status
+    ON pending_jobs (tenant_id, status);
+
 -- ---------------------------------------------------------------------------
--- Per field extraction result (what the review screen shows and edits).
--- field_key matches the frontend keys: supplier, invoice, date, due, reference,
--- customer, currency, subtotal, tax, discount, total, supplierAddress, and so on.
+-- One row for each extraction run of a document. A rerun adds a row and never changes an old one.
+-- raw_json holds the complete M2 public result exactly as published, including the original method
+-- names, the inference attempt status and the model information.
+-- routing_decision is the route M2 chose. It does not prove that a model ran. For example, a
+-- vlm_candidate route can end as human_review when inference is disabled.
+-- is_current marks the run the screens show. Never set it by hand: call switch_current_extraction(run_id),
+-- which moves is_current and carries the accountant's corrections forward in ONE transaction.
+-- service_run_id is unique, so saving the same M2 run twice cannot create a duplicate.
+-- ---------------------------------------------------------------------------
+CREATE TABLE raw_extractions (
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    document_id       UUID NOT NULL REFERENCES documents(id) ON DELETE RESTRICT,
+    run_number        INTEGER NOT NULL CHECK (run_number >= 1),
+    is_current        BOOLEAN NOT NULL DEFAULT FALSE,
+    routing_decision  TEXT NOT NULL
+        CHECK (routing_decision IN ('parser_only', 'vlm_candidate', 'human_review')),
+    service_run_id    TEXT UNIQUE,
+    schema_version    TEXT,
+    pending_job_id    UUID REFERENCES pending_jobs(id) ON DELETE RESTRICT,
+    raw_json          JSONB NOT NULL,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (document_id, run_number),
+    UNIQUE (id, document_id)
+);
+
+-- At most one current run for each document.
+CREATE UNIQUE INDEX uq_raw_extractions_current ON raw_extractions (document_id) WHERE is_current;
+
+
+-- ---------------------------------------------------------------------------
+-- Per field extraction result, for one extraction run. Rows are never overwritten by a rerun.
+-- field_key matches the frontend keys: supplier, invoice, date, due, reference, customer, currency,
+-- subtotal, tax, discount, total, and so on. The M2 names map to them in the adapter:
+--   supplier_name > supplier, invoice_number > invoice, invoice_date > date, currency > currency,
+--   subtotal > subtotal, tax_amount > tax, total_amount > total.
 -- Three values are kept separately, as the Handoff Pack asks:
---   raw_value        = the text exactly as the model read it, for example RM 4,500.00
---   normalized_value = the cleaned value from the AI (frontend field: original)
+--   raw_value        = the text exactly as the extractor read it (M2 raw_text)
+--   normalized_value = the cleaned value from the extractor (M2 value, frontend field: original)
 --   current_value    = the value now in use, after any human correction (frontend field: value)
--- confidence is stored as 0 to 1. The API multiplies by 100 for the frontend.
+-- extraction_state is the M2 state of the field. confidence is NULL when the extractor gives no
+-- numeric score. NULL is not zero, and no artificial score is ever generated.
+-- resolution is the M2 reconciliation outcome. An AI candidate never replaces the parser value:
+-- while resolution is candidate_for_review, current_value stays NULL until a person corrects it.
+-- evidence is a JSON array that keeps the full M2 evidence objects (page, bbox, bbox_original,
+-- page_size, source_ref, coordinate_units, text). The API converts bbox to x, y, width, height for
+-- the frontend if it needs them.
+-- candidates is a JSON array of candidates, each marked with source parser or ai and auto_accepted
+-- false. Extracted values cannot be edited after saving: only current_value, corrected_by and
+-- corrected_at can change, and every change to current_value is written to field_corrections.
+-- confidence, when present, is 0 to 1. The API multiplies by 100 for the frontend.
 -- ---------------------------------------------------------------------------
 CREATE TABLE field_predictions (
     id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    document_id        UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    extraction_id      UUID NOT NULL,
+    document_id        UUID NOT NULL,
     field_key          TEXT NOT NULL,
     field_label        TEXT NOT NULL,
+    extraction_state   TEXT NOT NULL
+        CHECK (extraction_state IN ('resolved', 'missing', 'ambiguous', 'conflict', 'unsupported', 'unreadable')),
+    resolution         TEXT
+        CHECK (resolution IN ('parser_preserved', 'candidate_for_review', 'unresolved_missing')),
     raw_value          TEXT,
     normalized_value   TEXT,
     current_value      TEXT,
-    confidence         NUMERIC(4,3) NOT NULL
-        CHECK (confidence >= 0 AND confidence <= 1),
-    page_number        INTEGER,
-    bounding_box       NUMERIC[],
-    extraction_method  TEXT NOT NULL DEFAULT 'VLM'
+    confidence         NUMERIC(4,3)
+        CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1)),
+    evidence           JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(evidence) = 'array'),
+    candidates         JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(candidates) = 'array'),
+    extraction_method  TEXT NOT NULL DEFAULT 'PARSER'
         CHECK (extraction_method IN ('VLM', 'OCR', 'PARSER', 'MANUAL_CORRECTION')),
     model_name         TEXT,
     model_version      TEXT,
@@ -266,22 +370,138 @@ CREATE TABLE field_predictions (
     corrected_by       UUID REFERENCES users(id) ON DELETE SET NULL,
     corrected_at       TIMESTAMPTZ,
     created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (document_id, field_key)
+    FOREIGN KEY (extraction_id, document_id) REFERENCES raw_extractions (id, document_id) ON DELETE RESTRICT,
+    UNIQUE (extraction_id, field_key),
+    CHECK (resolution IS DISTINCT FROM 'candidate_for_review' OR current_value IS NULL OR corrected_at IS NOT NULL)
 );
 
+CREATE FUNCTION protect_field_predictions() RETURNS trigger AS $$
+BEGIN
+    IF NEW.extraction_id IS DISTINCT FROM OLD.extraction_id
+       OR NEW.document_id IS DISTINCT FROM OLD.document_id
+       OR NEW.field_key IS DISTINCT FROM OLD.field_key
+       OR NEW.field_label IS DISTINCT FROM OLD.field_label
+       OR NEW.extraction_state IS DISTINCT FROM OLD.extraction_state
+       OR NEW.resolution IS DISTINCT FROM OLD.resolution
+       OR NEW.raw_value IS DISTINCT FROM OLD.raw_value
+       OR NEW.normalized_value IS DISTINCT FROM OLD.normalized_value
+       OR NEW.confidence IS DISTINCT FROM OLD.confidence
+       OR NEW.evidence IS DISTINCT FROM OLD.evidence
+       OR NEW.candidates IS DISTINCT FROM OLD.candidates
+       OR NEW.extraction_method IS DISTINCT FROM OLD.extraction_method
+       OR NEW.model_name IS DISTINCT FROM OLD.model_name
+       OR NEW.model_version IS DISTINCT FROM OLD.model_version
+       OR NEW.schema_version IS DISTINCT FROM OLD.schema_version
+       OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+        RAISE EXCEPTION 'Extracted values are read only. Only current_value, corrected_by and corrected_at can change.';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_field_predictions_protect
+    BEFORE UPDATE ON field_predictions
+    FOR EACH ROW EXECUTE FUNCTION protect_field_predictions();
+
 -- ---------------------------------------------------------------------------
--- Line items belong to the document, so they can be shown and corrected
--- before a standardised record exists.
+-- Correction history. One row for every change to a current_value, written by a trigger so the
+-- API cannot forget it. Rows can never be changed or deleted.
+-- ---------------------------------------------------------------------------
+CREATE TABLE field_corrections (
+    id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    field_prediction_id  UUID NOT NULL REFERENCES field_predictions(id) ON DELETE RESTRICT,
+    old_value            TEXT,
+    new_value            TEXT,
+    corrected_by         UUID REFERENCES users(id),
+    corrected_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE FUNCTION log_field_correction() RETURNS trigger AS $$
+BEGIN
+    IF NEW.current_value IS DISTINCT FROM OLD.current_value THEN
+        INSERT INTO field_corrections (field_prediction_id, old_value, new_value, corrected_by, corrected_at)
+        VALUES (NEW.id, OLD.current_value, NEW.current_value, NEW.corrected_by, COALESCE(NEW.corrected_at, clock_timestamp()));
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_field_predictions_log
+    AFTER UPDATE ON field_predictions
+    FOR EACH ROW EXECUTE FUNCTION log_field_correction();
+
+CREATE FUNCTION prevent_correction_change() RETURNS trigger AS $$
+BEGIN
+    RAISE EXCEPTION 'The correction history cannot be changed or deleted.';
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_field_corrections_append_only
+    BEFORE UPDATE OR DELETE ON field_corrections
+    FOR EACH ROW EXECUTE FUNCTION prevent_correction_change();
+
+
+-- ---------------------------------------------------------------------------
+-- Rerun policy, in one place. Call this once after saving all the rows of a rerun:
+--   SELECT switch_current_extraction(:new_run_id);
+-- In ONE transaction it makes the rerun the current run and carries every accountant correction from the
+-- previous current run into the rerun, so a rerun never replaces a corrected value. The fresh prediction stays
+-- visible in normalized_value. Every expected field must have a row in every run (state missing when the
+-- extractor does not return it), so a correction always has a row to be carried to. The carry forward is
+-- written to field_corrections by the trigger, with the original correction time. It returns how many
+-- corrected values were carried forward. The document row is locked, so two reruns cannot interleave.
+-- ---------------------------------------------------------------------------
+CREATE FUNCTION switch_current_extraction(new_extraction UUID) RETURNS INTEGER AS $$
+DECLARE
+    doc            UUID;
+    old_extraction UUID;
+    carried        INTEGER := 0;
+BEGIN
+    SELECT document_id INTO doc FROM raw_extractions WHERE id = new_extraction;
+    IF doc IS NULL THEN
+        RAISE EXCEPTION 'Unknown extraction run.';
+    END IF;
+    PERFORM 1 FROM documents WHERE id = doc FOR UPDATE;
+    SELECT id INTO old_extraction FROM raw_extractions WHERE document_id = doc AND is_current;
+    IF old_extraction IS NOT NULL AND old_extraction <> new_extraction THEN
+        UPDATE raw_extractions SET is_current = FALSE WHERE id = old_extraction;
+    END IF;
+    UPDATE raw_extractions SET is_current = TRUE WHERE id = new_extraction;
+    IF old_extraction IS NOT NULL AND old_extraction <> new_extraction THEN
+        UPDATE field_predictions np
+        SET current_value = op.current_value, corrected_by = op.corrected_by, corrected_at = op.corrected_at
+        FROM field_predictions op
+        WHERE np.extraction_id = new_extraction
+          AND op.extraction_id = old_extraction
+          AND op.field_key = np.field_key
+          AND op.corrected_at IS NOT NULL;
+        GET DIAGNOSTICS carried = ROW_COUNT;
+    END IF;
+    RETURN carried;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ---------------------------------------------------------------------------
+-- Line items belong to an extraction run, so a rerun adds its own rows and keeps the old ones.
+-- The frontend shows them and does not edit them.
+-- A cell the extractor could not resolve is saved as NULL, so one unclear cell never stops the whole
+-- save. field_states, evidence and candidates are JSON objects keyed by cell name (description,
+-- quantity, unit_price, amount) and keep the M2 state, evidence and candidates of each cell.
 -- ---------------------------------------------------------------------------
 CREATE TABLE line_items (
-    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    document_id  UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-    line_number  INTEGER NOT NULL,
-    description  TEXT NOT NULL,
-    quantity     NUMERIC(14,3) NOT NULL,
-    unit_price   NUMERIC(14,4) NOT NULL,
-    amount       NUMERIC(14,2) NOT NULL,
-    UNIQUE (document_id, line_number)
+    id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    extraction_id  UUID NOT NULL,
+    document_id    UUID NOT NULL,
+    line_number    INTEGER NOT NULL,
+    description    TEXT,
+    quantity       NUMERIC(14,3),
+    unit_price     NUMERIC(14,4),
+    amount         NUMERIC(14,2),
+    field_states   JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(field_states) = 'object'),
+    evidence       JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(evidence) = 'object'),
+    candidates     JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(candidates) = 'object'),
+    FOREIGN KEY (extraction_id, document_id) REFERENCES raw_extractions (id, document_id) ON DELETE RESTRICT,
+    UNIQUE (extraction_id, line_number)
 );
 
 -- ---------------------------------------------------------------------------
@@ -447,6 +667,8 @@ CREATE INDEX idx_documents_file_hash ON documents(tenant_id, file_hash_sha256);
 CREATE INDEX idx_documents_assigned ON documents(assigned_to);
 CREATE INDEX idx_raw_extractions_document ON raw_extractions(document_id);
 CREATE INDEX idx_field_predictions_document ON field_predictions(document_id);
+CREATE INDEX idx_field_predictions_extraction ON field_predictions(extraction_id);
+CREATE INDEX idx_field_corrections_prediction ON field_corrections(field_prediction_id);
 -- Duplicate invoice check: find other documents with the same invoice or supplier value.
 CREATE INDEX idx_field_predictions_key_value ON field_predictions(field_key, current_value);
 CREATE INDEX idx_line_items_document ON line_items(document_id);

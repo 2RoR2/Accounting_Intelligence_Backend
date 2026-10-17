@@ -1,4 +1,4 @@
-﻿"""Administrative setup. Credentials are read from backend .env, never from the browser."""
+"""Administrative setup. Credentials are read from backend .env, never from the browser."""
 import argparse
 import getpass
 import os
@@ -21,6 +21,10 @@ def main():
     parser = argparse.ArgumentParser()
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("migrate")
+    commands.add_parser("rollback")
+    dispatch_cmd = commands.add_parser("dispatch")
+    dispatch_cmd.add_argument("--batch-size", type=int, default=10)
+    commands.add_parser("sweep")
     commands.add_parser("seed-demo-accounts")
     create = commands.add_parser("create-admin")
     create.add_argument("--email", required=True)
@@ -53,18 +57,36 @@ def main():
             )
     with connect() as db:
         if args.command == "migrate":
-            migrations = Path(__file__).parent / "database" / "migrations"
-            db.execute("""CREATE TABLE IF NOT EXISTS schema_migrations (
-                name TEXT PRIMARY KEY,
-                applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
-            )""")
-            for migration in sorted(migrations.glob("*.sql")):
-                applied = db.execute("SELECT 1 FROM schema_migrations WHERE name=%s",
-                                     (migration.name,)).fetchone()
-                if not applied:
-                    db.execute(migration.read_text(encoding="utf-8-sig"))
-                    db.execute("INSERT INTO schema_migrations(name) VALUES (%s)", (migration.name,))
-                    print(f"Applied {migration.name}.")
+            from database.migrations import apply_migrations
+            newly_applied = apply_migrations(db)
+            if newly_applied:
+                for name in newly_applied:
+                    print(f"Applied {name}.")
+            else:
+                print("Database schema is up to date.")
+        elif args.command == "rollback":
+            from database.migrations import rollback_latest_migration
+            rolled_back = rollback_latest_migration(db)
+            if rolled_back:
+                print(f"Rolled back {rolled_back}.")
+            else:
+                print("No migrations to rollback.")
+        elif args.command == "dispatch":
+            from infrastructure.queue.config import get_queue
+            from infrastructure.queue.dispatcher import dispatch_pending_jobs
+            try:
+                queue = get_queue()
+            except Exception as exc:
+                print(f"Notice: Redis connection unavailable ({exc}); dispatching with queue=None.")
+                queue = None
+            dispatched = dispatch_pending_jobs(db, queue=queue, batch_size=args.batch_size)
+            print(f"Dispatched {len(dispatched)} job(s).")
+            for item in dispatched:
+                print(f"  Job {item['job_id']} -> Doc {item['document_id']} (Token: {item['dispatch_token']})")
+        elif args.command == "sweep":
+            from infrastructure.queue.dispatcher import sweep_stale_jobs
+            swept_count = sweep_stale_jobs(db)
+            print(f"Swept and recovered {swept_count} stale/crashed job lease(s).")
         elif args.command == "create-admin":
             password = getpass.getpass("New administrator password: ")
             if not strong_password(password) or password != getpass.getpass("Confirm password: "):
