@@ -1,0 +1,22 @@
+# Keep FastAPI and Starlette on the stable TestClient-compatible line.
+fastapi>=0.115,<0.116
+starlette>=0.40,<0.42
+anyio>=3.7,<4
+uvicorn>=0.30,<1
+psycopg[binary]>=3.2,<4
+python-dotenv>=1,<2
+# Starlette's TestClient uses the stable httpx 0.x API on this pinned line.
+httpx>=0.27,<0.29
+python-multipart>=0.0.9,<1
+openpyxl>=3.1,<4
+pandas>=2.2,<3
+argon2-cffi>=23.1,<26
+PyJWT>=2.10,<3
+cryptography>=44,<47
+
+rq==2.12.0
+redis==5.2.0
+
+# Development and test dependencies
+pytest>=8,<10
+fakeredis==2.39.0
