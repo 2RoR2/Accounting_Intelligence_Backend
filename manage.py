@@ -54,11 +54,18 @@ def main():
     with connect() as db:
         if args.command == "migrate":
             migrations = Path(__file__).parent / "database" / "migrations"
+            schema = Path(__file__).parent / "database" / "PostgreSQL Database schema.sql"
+            schema_exists = db.execute("SELECT to_regclass('public.tenants') AS table_name").fetchone()["table_name"]
+            if schema_exists is None:
+                if not schema.is_file():
+                    parser.error(f"Database schema file not found: {schema}")
+                db.execute(schema.read_text(encoding="utf-8-sig"))
+                print("Applied the full PostgreSQL schema to the empty database.")
             db.execute("""CREATE TABLE IF NOT EXISTS schema_migrations (
                 name TEXT PRIMARY KEY,
                 applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
             )""")
-            for migration in sorted(migrations.glob("*.sql")):
+            for migration in sorted(migrations.glob("*.sql")) if migrations.is_dir() else []:
                 applied = db.execute("SELECT 1 FROM schema_migrations WHERE name=%s",
                                      (migration.name,)).fetchone()
                 if not applied:
