@@ -67,7 +67,7 @@ $env:PYTHONPATH=(Get-Location).Path
 
 ## Environment
 
-Configure `DATABASE_URL`, `AUTH_SECRET`, `FRONTEND_ORIGIN`, cookie settings, and SMTP settings in `.env`. Gmail SMTP requires an App Password:
+Configure `DATABASE_URL`, `AUTH_SECRET`, `FRONTEND_ORIGINS`, cookie settings, and SMTP settings in `.env`. For the deployed frontend, use `FRONTEND_ORIGINS=https://accounting-intelligence-frontend.vercel.app` (add comma-separated custom domains when needed). Gmail SMTP requires an App Password:
 
 ```env
 SMTP_HOST=smtp.gmail.com

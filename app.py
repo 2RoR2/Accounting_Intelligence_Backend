@@ -60,7 +60,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 log = logging.getLogger(__name__)
-_frontend_origins = [value.strip().rstrip("/") for value in (os.getenv("FRONTEND_ORIGINS") or os.getenv("FRONTEND_ORIGIN", "http://localhost:3000,http://127.0.0.1:3000")).split(",") if value.strip()]
+_frontend_origins = [value.strip().rstrip("/") for value in (os.getenv("FRONTEND_ORIGINS") or os.getenv("FRONTEND_ORIGIN", "http://localhost:3000,http://127.0.0.1:3000,https://accounting-intelligence-frontend.vercel.app")).split(",") if value.strip()]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_frontend_origins,
