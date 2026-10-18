@@ -1,9 +1,12 @@
 import os
+import logging
 import smtplib
 import ssl
 from email.message import EmailMessage
 
 from services.email.resend_sender import send_email as send_resend_email
+
+log = logging.getLogger(__name__)
 
 def _send_code(recipient: str, code: str, subject: str, label: str, expiry: str):
     resend_key = os.environ.get("RESEND_API_KEY", "").strip()
@@ -14,9 +17,10 @@ def _send_code(recipient: str, code: str, subject: str, label: str, expiry: str)
         try:
             send_resend_email(recipient=recipient, subject=subject, text=text, html=html)
             return
-        except Exception:
+        except Exception as exc:
             # Resend is preferred, but a transient provider or TLS failure
             # should not prevent OTP delivery when SMTP is configured.
+            log.warning("Resend OTP delivery failed: %s: %s", type(exc).__name__, str(exc)[:300])
             pass
     username = os.environ.get("SMTP_USER", "").strip()
     # Gmail displays App Passwords in groups separated by spaces; normalize them
