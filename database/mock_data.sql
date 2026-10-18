@@ -23,6 +23,13 @@ INSERT INTO users (id, tenant_id, name, email, password_hash, role, status, must
 ('00000000-0000-4000-8000-001000000002', '00000000-0000-4000-8000-000100000001', 'Demo Local Admin', 'reviewer.demo@saic.example', 'scrypt$mock-salt-2026$d0da1f0a7dbdf504be03a70dd2cdeb37807890588917a8f342ed5fe0a82c6c377d4f9a580c91a387feed98c56ab1314a185e1c83fb43f77f7ca77a9b86d989a8', 'local_admin', 'active', FALSE),
 ('00000000-0000-4000-8000-001000000003', NULL, 'Demo Platform Admin', 'platform.demo@saic.example', 'scrypt$mock-salt-2026$d0da1f0a7dbdf504be03a70dd2cdeb37807890588917a8f342ed5fe0a82c6c377d4f9a580c91a387feed98c56ab1314a185e1c83fb43f77f7ca77a9b86d989a8', 'super_admin', 'active', FALSE);
 
+-- Resend OTP test account. Password: DemoPass!2026
+INSERT INTO tenants (id, tenant_code, name, registration_number, admin_email, seat_limit, status) VALUES
+('00000000-0000-4000-8000-000100000002', 'TENANT_SWIN_001', 'ABC Sdn Bhd', 'SWIN-ABC-001', '102784694@students.swinburne.edu.my', 10, 'active');
+
+INSERT INTO users (id, tenant_id, name, email, password_hash, role, status, must_change_password) VALUES
+('00000000-0000-4000-8000-001000000004', '00000000-0000-4000-8000-000100000002', 'Swinburne Accountant', '102784694@students.swinburne.edu.my', '$argon2id$v=19$m=65536,t=3,p=2$saG536sug6m5NQuw2P9few$yrjPaMrmODe6AhGeqNqyRVYZCM2Y1Mbli3p0SwI0GcE', 'accountant', 'active', FALSE);
+
 INSERT INTO validation_rules (tenant_id) VALUES ('00000000-0000-4000-8000-000100000001');
 
 INSERT INTO vendors (id, tenant_id, vendor_name, registration_number, address) VALUES
