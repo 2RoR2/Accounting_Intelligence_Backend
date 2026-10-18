@@ -1326,7 +1326,7 @@ def login(data: Credentials, request: Request, response: Response):
             try:
                 send_login_code(data.email, code)
             except Exception as exc:
-                log.error("Login OTP delivery failed: %s", type(exc).__name__)
+                log.error("Login OTP delivery failed: %s: %s", type(exc).__name__, str(exc)[:300])
                 raise HTTPException(503, "Unable to send sign-in code. Please try again later.")
         else:
             db.execute("DELETE FROM auth_challenges WHERE challenge_hash=%s",
@@ -1396,7 +1396,7 @@ def resend_mfa(request: Request, response: Response):
         try:
             send_login_code(row["email"], code)
         except Exception as exc:
-            log.error("MFA resend delivery failed: %s", type(exc).__name__)
+                log.error("MFA resend delivery failed: %s: %s", type(exc).__name__, str(exc)[:300])
             raise HTTPException(503, "Unable to send a new sign-in code. Please try again.")
     response.set_cookie(MFA, new_challenge, max_age=600, httponly=True,
                         secure=os.getenv("COOKIE_SECURE", "false").lower() == "true",
