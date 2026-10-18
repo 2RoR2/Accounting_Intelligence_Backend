@@ -11,8 +11,13 @@ def _send_code(recipient: str, code: str, subject: str, label: str, expiry: str)
         text = f"Your {label} is {code}.\n\nIt expires in {expiry}. Do not share this code."
         html = (f"<p>Your {label} is:</p><p><strong style='font-size:32px;letter-spacing:8px'>{code}</strong></p>"
                 f"<p>This code expires in <strong>{expiry}</strong>. Never share it.</p>")
-        send_resend_email(recipient=recipient, subject=subject, text=text, html=html)
-        return
+        try:
+            send_resend_email(recipient=recipient, subject=subject, text=text, html=html)
+            return
+        except Exception:
+            # Resend is preferred, but a transient provider or TLS failure
+            # should not prevent OTP delivery when SMTP is configured.
+            pass
     username = os.environ.get("SMTP_USER", "").strip()
     # Gmail displays App Passwords in groups separated by spaces; normalize them
     # so either the grouped or ungrouped form works in .env.
