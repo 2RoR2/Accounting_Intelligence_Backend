@@ -3,14 +3,23 @@ import smtplib
 import ssl
 from email.message import EmailMessage
 
+from services.email.resend_sender import send_email as send_resend_email
+
 def _send_code(recipient: str, code: str, subject: str, label: str, expiry: str):
+    resend_key = os.environ.get("RESEND_API_KEY", "").strip()
+    if resend_key:
+        text = f"Your {label} is {code}.\n\nIt expires in {expiry}. Do not share this code."
+        html = (f"<p>Your {label} is:</p><p><strong style='font-size:32px;letter-spacing:8px'>{code}</strong></p>"
+                f"<p>This code expires in <strong>{expiry}</strong>. Never share it.</p>")
+        send_resend_email(recipient=recipient, subject=subject, text=text, html=html)
+        return
     username = os.environ.get("SMTP_USER", "").strip()
     # Gmail displays App Passwords in groups separated by spaces; normalize them
     # so either the grouped or ungrouped form works in .env.
     password = os.environ.get("SMTP_PASSWORD", "").replace(" ", "").strip()
     sender = os.environ.get("SMTP_FROM", username).strip()
     if not username or not password or "@" not in sender:
-        raise RuntimeError("Configure SMTP_USER, SMTP_PASSWORD, and SMTP_FROM.")
+        raise RuntimeError("Configure RESEND_API_KEY and EMAIL_FROM, or SMTP settings.")
     message = EmailMessage()
     message["From"] = f"Accounting Intelligence <{sender}>"
     message["To"] = recipient

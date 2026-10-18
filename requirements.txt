@@ -13,6 +13,7 @@ pandas>=2.2,<3
 argon2-cffi>=23.1,<26
 PyJWT>=2.10,<3
 cryptography>=44,<47
+resend[async]>=2,<3
 rq==2.12.0
 redis==5.2.0
 
