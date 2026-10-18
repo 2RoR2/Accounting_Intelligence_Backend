@@ -67,14 +67,10 @@ $env:PYTHONPATH=(Get-Location).Path
 
 ## Environment
 
-Configure `DATABASE_URL`, `AUTH_SECRET`, `FRONTEND_ORIGINS`, cookie settings, and email settings in the deployment environment. Production email uses Resend:
+Configure `DATABASE_URL`, `AUTH_SECRET`, `FRONTEND_ORIGINS`, cookie settings, and SMTP email settings in the deployment environment:
 
 ```env
-RESEND_API_KEY=re_...
-EMAIL_FROM=verified-sender@example.com
-```
-
-The `EMAIL_FROM` domain must be verified in Resend. SMTP remains a local-development fallback when `RESEND_API_KEY` is absent. For the deployed frontend, use `FRONTEND_ORIGINS=https://accounting-intelligence-frontend.vercel.app` (add comma-separated custom domains when needed). Gmail SMTP requires an App Password:
+For the deployed frontend, use `FRONTEND_ORIGINS=https://accounting-intelligence-frontend.vercel.app` (add comma-separated custom domains when needed). Gmail SMTP requires an App Password:
 
 ```env
 SMTP_HOST=smtp.gmail.com
