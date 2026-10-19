@@ -3,6 +3,7 @@ from fastapi import HTTPException
 from services.extraction.accounting_contract import FIELD_KEYS, record_values
 from validation.engine import EXCEPTION_SEVERITY, validate_invoice_document
 from validation.references import invoice_references
+from validation.financial_documents import evaluate_financial_document
 
 
 def evaluate_invoice(document, extraction, fields, items, db=None):
@@ -62,7 +63,7 @@ def evaluate_invoice(document, extraction, fields, items, db=None):
 
 
 def evaluate_document(document, extraction, fields, items, db=None):
-    """Keep the verified invoice rules; explicitly defer other kind policies."""
+    """Route effective values by source-verified kind, preserving invoice rules."""
     raw = extraction.get('raw_json') or {}
     classification = raw.get('document_type') or {}
     is_m2 = raw.get('mode') == 'module2_public_result'
@@ -74,6 +75,8 @@ def evaluate_document(document, extraction, fields, items, db=None):
             classification.get('status') != 'classified' or kind != document['kind'])):
         errors.append({'code': 'EX-002', 'field': 'document_type', 'severity': 'high',
                        'message': 'Source document kind is unknown, ambiguous or disagrees with intake; review the source.'})
+    if not errors:
+        return evaluate_financial_document(kind, extraction, fields, items)
     # No invoice number/vendor/line requirements are imposed on receipts/bills.
     # Parsing a total is not proof that all arithmetic or required-field rules passed.
     checks = [{'rule': f'{str(kind).upper()}_{scope}', 'result': 'WARNING', 'checkStatus': 'NOT_CHECKED',
@@ -114,7 +117,7 @@ def validate_document(db, document_id, user=None):
     for error in result['errors']:
         db.execute("""INSERT INTO exceptions(document_id,tenant_id,type,severity,message)
             VALUES (%s,%s,%s,%s,%s)""", (document_id, document['tenant_id'],
-                'VALIDATION:' + error['code'], error.get('severity', EXCEPTION_SEVERITY[error['code']]),
+                'VALIDATION:' + error['code'], error.get('severity', EXCEPTION_SEVERITY.get(error['code'], 'high')),
                 error['field'] + ': ' + error['message']))
     blocking = db.execute("""SELECT 1 FROM exceptions WHERE document_id=%s AND tenant_id=%s
         AND status <> 'resolved' AND severity='high' LIMIT 1""", (document_id, document['tenant_id'])).fetchone()

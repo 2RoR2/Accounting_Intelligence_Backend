@@ -38,9 +38,9 @@ class MultiDocumentTests(unittest.TestCase):
         self.assertIsNone(fields['currency']['current_value'])
         self.assertNotIn('invoice', fields)
         check = evaluate_document({'kind': 'bill'}, {'raw_json': raw}, mapped['fields'], [])
-        self.assertEqual(check['errors'], [])
+        self.assertEqual({e['code'] for e in check['errors']}, {'BILL-REQUIRED'})
         self.assertFalse(check['coverage_complete'])
-        self.assertTrue(all(c['checkStatus'] == 'NOT_CHECKED' for c in check['checks']))
+        self.assertTrue(any(c['rule'] == 'BILL-AMOUNT_DUE' and c['checkStatus'] == 'NOT_CHECKED' for c in check['checks']))
 
     def test_receipt_payment_method_is_evidenced_text_not_paid_status(self):
         raw, mapped = contract(source('Receipt', 'Merchant: Synthetic Retail', 'Total: 10.60',

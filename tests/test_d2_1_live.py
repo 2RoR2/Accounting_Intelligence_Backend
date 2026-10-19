@@ -23,7 +23,7 @@ class D21LiveTests(baseline.D1ALiveTests):
         expected = {
             'invoice_b.pdf': ('invoice', 'EXTRACTED', 'PASS', '48.00', 'Synthetic Services B'),
             'utility_bill.pdf': ('bill', 'EXTRACTED', 'REVIEW_REQUIRED', '80.00', 'Synthetic Utilities'),
-            'retail_receipt.pdf': ('receipt', 'EXTRACTED', 'REVIEW_REQUIRED', '10.60', 'Synthetic Retail'),
+            'retail_receipt.pdf': ('receipt', 'EXTRACTED', 'PASS', '10.60', 'Synthetic Retail'),
             'unknown.pdf': ('unknown', 'EXCEPTION', 'REVIEW_REQUIRED', None, None),
         }
         from database.connection import connect
@@ -56,10 +56,12 @@ class D21LiveTests(baseline.D1ALiveTests):
                             self.assertIsNotNone(field['evidence'][0]['bbox'])
                     self.assertEqual(len(extraction['lineItems']), 1)
                 if kind in {'bill', 'receipt'}:
-                    self.assertEqual(validation['passed'], 0)
-                    self.assertFalse(validation['coverageComplete'])
-                    self.assertTrue(all(r['checkStatus'] == 'NOT_CHECKED' for r in validation['results']))
                     self.assertNotIn('invoice', fields)
+                    self.assertTrue(any(r['checkStatus'] == 'CHECKED' for r in validation['results']))
+                    self.assertEqual(validation['coverageComplete'], kind == 'receipt')
+                    self.assertEqual(validation['passed'], int(kind == 'receipt'))
+                    if kind == 'bill':
+                        self.assertTrue(any(r['rule'] == 'BILL-AMOUNT_DUE' and r['checkStatus'] == 'NOT_CHECKED' for r in validation['results']))
                 if kind == 'bill':
                     self.assertEqual(fields['reference']['value'], 'SYN-BILL-001')
                     self.assertEqual(fields['account_number']['value'], 'SYN-ACC-001')

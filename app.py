@@ -1140,6 +1140,8 @@ def standardise_document(document_id: str, request: Request):
             raise HTTPException(422, str(exc)) from exc
         if (extraction.get('raw_json') or {}).get('mode') == 'module2_public_result':
             coverage = evaluate_document(doc, extraction, fields, items, db)
+            if coverage['errors']:
+                raise HTTPException(422, {'message': 'Document validation requires correction.', 'errors': coverage['errors']})
             if not coverage['coverage_complete']:
                 raise HTTPException(422, 'Type-specific validation is NOT_CHECKED; standardisation is unavailable.')
         if doc['kind'] == 'invoice':
