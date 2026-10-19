@@ -68,6 +68,7 @@ class ContractDatabase:
           document_id TEXT, line_number INTEGER, description TEXT, quantity TEXT, unit_price TEXT, amount TEXT,
           field_states TEXT, evidence TEXT, candidates TEXT);
         CREATE TABLE line_item_corrections (document_id TEXT);
+        CREATE TABLE vendors (id TEXT, tenant_id TEXT, vendor_name TEXT);
         CREATE TABLE review_decisions (document_id TEXT, tenant_id TEXT, decision TEXT, approved_content_revision INTEGER);
         CREATE TABLE validation_rules (tenant_id TEXT, require_supplier BOOLEAN, require_invoice_number_for_invoice BOOLEAN,
           require_reference_for_bill BOOLEAN, require_receipt_identifier BOOLEAN);

@@ -54,12 +54,15 @@ def incorrect_pdf():
 
 @unittest.skipUnless(os.getenv('D1A_LIVE') == '1', 'Opt-in isolated D1A services required')
 class D1ALiveTests(unittest.TestCase):
+    # A caller may supply newly provisioned isolated synthetic tenants when
+    # business-duplicate detection makes repeated invoices intentionally fail.
+    account_path = RESOURCE/'accounts.json'
     @classmethod
     def setUpClass(cls):
         from scripts.d1a import configure
         configure()
         from auth.security import totp_code
-        cls.accounts = json.loads((RESOURCE/'accounts.json').read_text())
+        cls.accounts = json.loads(cls.account_path.read_text())
         cls.evidence = {'authentication': [], 'documents': {}, 'security': {}, 'human_approval_performed': False}
         cls.clients = []
         for account in cls.accounts:
@@ -72,7 +75,7 @@ class D1ALiveTests(unittest.TestCase):
             login = response.json()
             if login.get('enrollmentRequired'):
                 account['totp_secret'] = login['totpSecret']
-                (RESOURCE/'accounts.json').write_text(json.dumps(cls.accounts, indent=2))
+                cls.account_path.write_text(json.dumps(cls.accounts, indent=2))
             response = client.post('/api/auth/verify-mfa', json={'code':totp_code(account['totp_secret'])})
             if response.status_code != 200:
                 raise AssertionError(f'MFA failed: HTTP {response.status_code}')

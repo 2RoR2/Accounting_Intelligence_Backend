@@ -82,12 +82,14 @@ class Invoice(BaseModel):
             return value
         if isinstance(value, str):
             try:
+                if not re.fullmatch(r'[0-9]{4}-[0-9]{2}-[0-9]{2}', value):
+                    raise ValueError
                 return date.fromisoformat(value)
             except ValueError:
                 raise ValueError(
                     f"Date '{value}' is not in valid ISO format (YYYY-MM-DD)"
                 )
-        raise TypeError("Date must be a string in YYYY-MM-DD format")
+        raise ValueError("Date must be a string in YYYY-MM-DD format")
 
     @field_validator("total_amount", "subtotal", "tax_amount", "discount", mode="before")
     @classmethod
@@ -161,29 +163,23 @@ def validate_invoice(invoice_data: Dict[str, Any]) -> dict:
 
                 error_type = error.get("type", "")
 
-                if error_type == "missing":
+                if (error_type == 'missing' or error.get('input') is None
+                        or error.get('input') == '' or (field == 'line_items' and error.get('input') == [])):
                     code = "EX-001"
-
-                elif field in {"invoice_date", "due_date"}:
-                    code = "EX-002"
-
-                elif field in {"subtotal", "tax_amount", "total_amount", "currency"}:
-                    code = "EX-002"
-
-                elif "line_items" in field:
+                elif 'does not match quantity * unit_price' in message:
                     code = "EX-003"
-
-                elif "total_amount" in message:
+                elif not field and "total_amount" in message:
                     code = "EX-005"
-
-                elif "sum(line_items.amount)" in message:
+                elif not field and "sum(line_items.amount)" in message:
                     code = "EX-004"
-
-                elif "due_date" in message:
+                elif not field and "due_date" in message:
                     code = "EX-006"
 
                 else:
                     code = "EX-002"
+
+                if not field:
+                    field = {'EX-004': 'subtotal', 'EX-005': 'total_amount', 'EX-006': 'due_date'}.get(code, 'fields')
 
                 errors.append({
                     "code": code,
@@ -193,9 +189,9 @@ def validate_invoice(invoice_data: Dict[str, Any]) -> dict:
 
         else:
             errors.append({
-                "code": "VALIDATION_ERROR",
+                "code": "EX-002",
                 "field": "",
-                "message": str(exc),
+                "message": 'Unsupported invoice value or structure.',
             })
 
         return {

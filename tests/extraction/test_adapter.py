@@ -295,8 +295,9 @@ class TestM2ToM3Adapter(unittest.TestCase):
         # No vendor context passed
         res = integrate_m2_with_m3(m2_res)
         self.assertEqual(res["workflow_status"], "M3_VALIDATION_COMPLETE")
-        self.assertEqual(res["m3_validation_result"]["status"], "REVIEW_REQUIRED")
-        self.assertEqual(res["m3_validation_result"]["errors"][0]["code"], "EX-008")
+        self.assertEqual(res["m3_validation_result"]["status"], "VALID")
+        self.assertEqual(res["m3_validation_result"]["errors"], [])
+        self.assertEqual(res["m3_validation_result"]["vendor_match"]["status"], "NOT_CHECKED")
 
     def test_unexpected_downstream_validation_errors(self):
         # Mock M3 engine to throw a wild exception

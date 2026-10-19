@@ -1139,11 +1139,11 @@ def standardise_document(document_id: str, request: Request):
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
         if (extraction.get('raw_json') or {}).get('mode') == 'module2_public_result':
-            coverage = evaluate_document(doc, extraction, fields, items)
+            coverage = evaluate_document(doc, extraction, fields, items, db)
             if not coverage['coverage_complete']:
                 raise HTTPException(422, 'Type-specific validation is NOT_CHECKED; standardisation is unavailable.')
         if doc['kind'] == 'invoice':
-            validation = evaluate_invoice(doc, extraction, fields, items)
+            validation = evaluate_invoice(doc, extraction, fields, items, db)
             if validation['errors']:
                 raise HTTPException(422, {'message': 'Invoice validation requires correction.', 'errors': validation['errors']})
         required_by_kind = {
@@ -1234,19 +1234,20 @@ def get_document_validation(document_id: str, request: Request):
     user = _authorised_document(request, document_id)
     with connect() as db:
         doc, extraction, fields, items = load_current(db, document_id, user)
-        validation = evaluate_document(doc, extraction, fields, items)
+        validation = evaluate_document(doc, extraction, fields, items, db)
         exceptions = db.execute("SELECT id,type,severity,status,message,note,created_at,resolved_at FROM exceptions WHERE document_id=%s AND tenant_id=%s ORDER BY created_at", (document_id, user["tenant_id"])).fetchall()
-    results = [{'rule': e['code'], 'field': e['field'], 'result': 'FAIL', 'message': e['message']} for e in validation['errors']]
+    results = [{**e, 'rule': e['code'], 'result': 'FAIL' if e.get('severity', 'high') == 'high' else 'WARNING',
+                'checkStatus': 'CHECKED'} for e in validation['errors']]
     results.extend(validation['checks'])
     external = [r for r in exceptions if not r['type'].startswith('VALIDATION:') and r['status'] != 'resolved']
     results.extend({'id': str(r['id']), 'rule': r['type'], 'result': 'FAIL' if r['severity'] == 'high' else 'WARNING', 'message': r['message']} for r in external)
     blocking = any(r['result'] == 'FAIL' for r in results)
     return {'documentId': document_id, 'contentRevision': doc['content_revision'], 'status': doc['status'].upper(),
-            'validationStatus': 'REVIEW_REQUIRED' if blocking or not validation['coverage_complete'] else 'PASS', 'reviewRequired': True,
+            'validationStatus': 'REVIEW_REQUIRED' if validation['errors'] or external or blocking or not validation['coverage_complete'] else 'PASS', 'reviewRequired': True,
             'coverageComplete': validation['coverage_complete'],
             'accountingApprovalPerformed': False, 'passed': int(not validation['errors'] and validation['coverage_complete']),
             'warnings': sum(r['result'] == 'WARNING' for r in results), 'failed': sum(r['result'] == 'FAIL' for r in results),
-            'blocking': blocking, 'results': results}
+            'blocking': blocking, 'results': results, 'vendorMatch': validation.get('vendor_match')}
 
 
 @app.get("/api/documents/{document_id}/processing-history")

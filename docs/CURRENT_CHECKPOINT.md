@@ -1,53 +1,52 @@
 ﻿# CURRENT CHECKPOINT — COS40005 V2
 
 Date: 2026-10-19
-Repository: Backend_V2 / feature/accounting-v2 / base HEAD 0b5d9c0; initially clean, D2.1 changes uncommitted.
-Active: D2.1 PASS for supported digital-PDF extraction-to-review; bill/receipt validation deliberately PARTIAL.
-STOP after D2.1. No frontend changes, schema changes, installs, model downloads, Qwen, approvals, merges, pushes or deployment.
+Repository: Backend_V2 / feature/accounting-v2 / base HEAD 92575bc, ahead 1; initially clean. M3A changes uncommitted.
+Active: M3A PASS for live supported invoice EX-001–EX-008 integration. Bill/receipt policies and live PO matching remain NOT_CHECKED.
+STOP after M3A. No frontend edits, schema/bootstrap/destructive SQL, installs, downloads, Qwen, approvals, merges, pushes or deployment.
 
-## Runtime preserved
-- Existing WSL Python 3.12.14: /home/donut99/.venvs/accounting-intelligence/bin/python; CPU Docling and SSD assets reused.
-- D: existed in Windows but /mnt/d was unmounted. Verified empty mountpoint, mounted drvfs D: read-only; no SSD asset writes.
-- Restarted only saic-v2-d1a-postgres18 / saic-v2-d1a-redis, which were stopped; unrelated containers/native V2 cluster preserved.
-- PostgreSQL 18.0: 127.0.0.1:55434, accounting_intelligence_v2_demo, d1a_v2_demo; cluster saic_backend_v2_d1a.
-- Fingerprint 7698223516621660199 verified by scripts/d1a.py configure(); no schema bootstrap/new migration command. Existing API startup retains its ADD COLUMN IF NOT EXISTS review revision check on the already-present column.
-- Redis authenticated dedicated 127.0.0.1:6382; sequential cpu_tasks worker. API http://127.0.0.1:8002, Windows health 200.
-- Private credentials/accounts/TOTP remain ignored in runs/d1a; never printed. Both API and worker left running on final source.
+## Preserved runtime and data
+- Existing WSL Python 3.12.14 /home/donut99/.venvs/accounting-intelligence and read-only SSD Docling assets reused.
+- PostgreSQL 18.0: 127.0.0.1:55434, accounting_intelligence_v2_demo, cluster saic_backend_v2_d1a, fingerprint 7698223516621660199; configure() verified.
+- Dedicated authenticated Redis 127.0.0.1:6382 and sequential cpu_tasks worker retained; native cluster/unrelated containers untouched.
+- Only verified idle V2 API/worker were gracefully reloaded. Final API http://127.0.0.1:8002 and frontend proxy http://127.0.0.1:3000/api/health returned 200 from Windows.
+- Existing additive startup review-revision check remains on its already-present column; no new schema change/migration applied.
+- All 6 prior D2.1 + 6 D2.2 documents' stored documents/raw extraction/fields/lines/status/revisions/exceptions hash-verified unchanged.
+- Fresh M3A synthetic tenants and vendor fixtures only; every current extraction is an actual uploaded PDF/CPU Docling result. One explicitly synthetic non-current reference row tests obsolete-run exclusion.
 
-## Implemented D2.1 contracts
-- Source headings classify invoice/bill/receipt; conflicting headings or Bill / Invoice remain unknown/ambiguous, with source references.
-- Content profile selected before mapping: invoice aliases plus customer/due/discount, bill issuer/reference/account/period/due/amount due, receipt merchant/date/time/reference/payment method.
-- Handles Docling merged label blocks with exact character spans and honest source-block boxes; short table headers use explicit first-row labels even when header flags are partial.
-- Unknown documents map no accounting fields/lines, produce EXCEPTION; selected intake kind remains only because DB has no unknown enum.
-- Accounting boundary accounting-fields/1.1; existing field_predictions TEXT keys/JSONB suffice; NUMERIC and Decimal strings retained, absent values NULL, confidence NULL.
-- Confident source kind updates stored kind; intake document_code stays stable. AP/AR category is never inferred or changed by extraction; legacy intake AP default remains.
-- Bills/receipts: EXTRACTED / REVIEW_REQUIRED, coverageComplete=false, passed=0; required-field/math checks explicitly NOT_CHECKED, standardisation blocked.
-- Invoice Decimal checks unchanged: 50.00 PASS; 99.00 EX-005. Review/approval/payment remain distinct; no automatic approvals.
-- Raw/normalized/current/evidence/candidates/revision/reviewer preserved. New extraction over human field/line corrections is refused pending amendment; replay remains idempotent.
-- Extraction DTO adds classification; raw adds field_schema + classification evidence; validation adds coverageComplete/checkStatus. See docs/D2_1_FRONTEND_HANDOFF.md.
+## Implemented M3A contracts
+- validation/document_validation.py now uses Aina's validation.engine with effective corrected predictions, actual current NUMERIC lines, classified kind, tenant/document identity and real tenant references.
+- New validation/references.py applies tenant predicates, current-run filtering, current-document exclusion, verified M2 invoice classification and corrected effective reference values.
+- Duplicate helper no longer converts null to None text; engine compares target only, not unrelated historical duplicate pairs. Incomplete key/context means NOT_CHECKED.
+- EX-001/002/006/008 retain medium severity, WARNING, EXCEPTION/REVIEW_REQUIRED, blocking=false; EX-003/004/005/007 are high/FAIL/blocking=true. Unknown classification's existing high EX-002 guard remains.
+- Format ambiguity is EX-002 rather than fabricated/missing defaults. Human corrections take precedence without rewriting raw/normalized/evidence/state/history; financial math stays Decimal with existing tolerance.
+- Tenant vendor catalogue absent/unresolved supplier -> EX-008 NOT_CHECKED. Fuzzy/no-match -> review; actual name similarity is exposed separately, never written as extraction confidence or an entity approval. AR customer resolution remains separate.
+- Standalone EX-009 preserved; live PO references unavailable -> NOT_CHECKED. Bills/receipts retain unsupported type checks NOT_CHECKED; unknowns map no financial fields.
+- Invoice PASS covers core + available references, not unavailable vendor/PO checks. coverageComplete keeps core-policy meaning; reviewRequired=true/accountingApprovalPerformed=false throughout.
+- Revalidation resolves superseded VALIDATION:* rows as history and inserts current findings with real severity transactionally. Standardisation rechecks references and existing human/revision gates.
+- GET validation adds code/severity/checkStatus, optional duplicate_of/vendor_candidate, and vendorMatch. D2.2 fields/statuses/correction DTOs remain compatible; see docs/M3A_FRONTEND_HANDOFF.md.
 
-## Actual commands and results
+## Actual executed verification
 - P = wsl -d Ubuntu --cd /mnt/c/Users/60103/Documents/GitHub/Accounting_Intelligence_Backend_V2 --exec /home/donut99/.venvs/accounting-intelligence/bin/python -B
-- Connectivity: P scripts/d1a.py check -> exit 0. Separate terminals: P scripts/d1a.py api / P scripts/d1a.py worker.
-- P -m tests.extraction.synthetic_documents -> exit 0; four clearly synthetic digital PDFs written under tests/extraction/data/multidocument/.
-- P -m unittest tests.test_accounting_contract tests.test_field_corrections tests.test_document_validation tests.extraction.test_multidocument -q -> exit 0, 64 passed, 0 failed/errors/skipped, 0.554s; includes original 38 C1A/C1B tests.
-- P runs/c1-pg-offline-extraction.py -> exit 0, 142 passed, 0 failed/errors/skipped, 0.187s; sockets blocked; includes same 12 new profile tests. Existing fixture-blocked test_execution.py excluded.
-- P runs/d2-1-live-tests.py -> exit 0, 7 real HTTP/TOTP/RQ/CPU Docling/PG tests passed, 0 failed/errors/skipped, 30.590s; no parser/auth mocks.
-- Live suite inherits unchanged five D1A regressions plus four profile subcases and correction re-extraction rollback guard; no Redis/Ollama/GPU substitutes.
-- Initial live attempts failed due unmounted models, merged label blocks and partial table headers; fixed and rerun. Failed synthetic uploads retained.
-- git diff --check -> exit 0. Actual API responses/PG assertions: ignored runs/d1a/d2-1-live-evidence.json.
+- P scripts/d1a.py check -> exit 0. Final startup remains P scripts/d1a.py api / P scripts/d1a.py worker (separate terminals; reuse existing listeners).
+- P -m unittest tests.test_m3_validation tests.test_accounting_contract tests.test_field_corrections tests.test_document_validation tests.extraction.test_multidocument -q -> exit 0, 76 passed, 0 failed/errors/skipped, 0.593s.
+- P runs/c1-pg-offline-extraction.py -> exit 0, 142 passed, 0 failed/errors/skipped, 0.180s; sockets blocked, overlaps 12 profile tests; existing fixture-blocked test_execution.py excluded.
+- P runs/m3a-po-unit.py -> exit 0, 4 original standalone PO functions passed via unittest.FunctionTestCase, no database matching.
+- P -m pytest tests/test_validation.py tests/test_po_matching.py -q -> BLOCKED, exit 1: pytest absent. No install; original pytest validation suite not executed, independent rule tests ran via unittest.
+- P runs/m3a-live-tests.py -> exit 0, 12 real HTTP/TOTP/RQ/Docling/PostgreSQL tests passed, 19 fresh PDFs, 0 failed/errors/skipped, 88.506s.
+- Initial live fixture/probe failures corrected (exact-file 409, unique tenant name, WSL→Windows localhost); final suite passed. No parser/auth mocks, injected sessions or fake approvals.
+- git diff --check -> exit 0. API and Windows frontend-proxy health 200. M3A is API verified, not a new browser acceptance run.
 
-## Fresh real source processing evidence
-- SYN-001 / 535dcfae-ba56-4b7c-a201-464f713b29e1: invoice, 50.00, EXTRACTED/PASS, real line 2 * 25.00 = 50.00.
-- SYN-BAD-001 / cd396203-4163-44c9-a068-305a2c5017fc: invoice, original 99.00, EXCEPTION/EX-005; corrected 50.00 at revision 3, stale 409, one real audit row, revalidation PASS still review-required.
-- invoice_b.pdf / 99e77638-e665-44f9-a14e-31e6efe4797c: invoice, 50.00 - 5.00 + 3.00 = 48.00, EXTRACTED/PASS; supplier/customer/date/due and fractional line 2.5 * 20.00 preserved.
-- utility_bill.pdf / 2c0b6be6-a0a5-45d6-b67c-724cd991c6a2: bill, account/reference/period/due, 80.00, EXTRACTED/REVIEW_REQUIRED; charge 80.00, quantity/unit price/subtotal/tax NULL.
-- retail_receipt.pdf / ba304cac-d289-46d4-b2be-4decfdaa2e35: receipt, merchant/reference/date/time/Card, subtotal 10.00/tax 0.60/total 10.60, EXTRACTED/REVIEW_REQUIRED.
-- unknown.pdf / 02431929-d43e-4b16-a0f3-b219bb5c3c3c: meeting agenda, unknown, EXCEPTION/REVIEW_REQUIRED; no fields/lines or fictional total despite source Total label.
-- Real JSONB evidence/raw, NUMERIC Decimal lines, correction history, revision preservation, cross-tenant 404 and approval gate 422 verified; no approved snapshots created.
+## Real acceptance evidence
+- Live 50.00 SYN-001: 3e3ddf73-327c-46cf-bcfd-99bdfd8b7652, EXTRACTED/PASS; vendor/PO NOT_CHECKED. Invalid 99.00 b83c2811-cd3d-409d-bf84-18b56a67f999 produced EX-005, corrected 50.00/revision 3; original 99.00 + audit retained, stale 409.
+- Real EX-001–EX-006 PDFs each produced only its intended core code, correct severity/blocking state and persisted exception; saved field/line corrections then revalidation resolved history and returned PASS, still human-review required.
+- Genuine same-tenant duplicate 10b68d4b-474e-415f-b5bb-27eb6e2c182d referenced fa988d37-b865-481b-8541-b663ca330d91, EX-007 high/blocking. Correcting number removed/resolved the finding.
+- Identical foreign-tenant keys, obsolete extraction reference and corrected reference's stale raw number did not falsely flag current unique invoices; cross-tenant GET/revalidate 404.
+- Separate synthetic catalogue: fuzzy vendor 9874614d-74da-4a1e-a401-d93ecb42f7a5 similarity 0.913 and no-match 22d4bfbc-81e3-48cf-b6fc-97968dd05b77 produced EX-008 medium/review. Correcting supplier returned exact-name/PASS; extraction confidence stayed NULL.
+- Invoice B 48.00 PASS, bill 80.00 REVIEW_REQUIRED/NOT_CHECKED, receipt 10.60 REVIEW_REQUIRED/NOT_CHECKED and unknown EXCEPTION/no fields reconfirmed. No approved records created.
+- Sanitized API/PG evidence: runs/m3a/latest-live-evidence.json. Private fresh accounts: runs/m3a/3afa9d94da9342c6ba0853367179114c/accounts.json and vendor-account.json; credentials never printed.
 
-## Limits and next review
-- Supported explicit English headings/colon labels, ISO dates/currency codes/decimal strings, simple unmerged/unrotated single-page 2–4-column tables; live examples cover 2/4 columns. OCR off; arbitrary/scanned layouts unsupported.
-- Block-level field boxes are honest coarse evidence, not tight field boxes. Missing/unsupported content requires review; bill/receipt policies remain NOT_CHECKED.
-- Full C1-PG concurrency/owner-assignee suite and historical-record immutability remain unverified; existing trigger loophole remains, no schema repair applied.
-- Next smallest review: Angeline integrates D2.1 DTOs; Aina specifies bill/receipt required-field and Decimal math rules before record creation. Do not start further gates automatically.
+## Remaining limits and next review
+- Repeated old demo business invoice numbers now correctly trigger EX-007. Use the fresh M3A tenant/verified unique records for clean PASS; never suppress genuine duplicates for a demo.
+- Bill/receipt policies, authorized live PO data/matching, concurrent duplicate races and full C1-PG owner/assignee/immutable-record verification remain unavailable/unverified. Existing immutable-trigger limitation remains.
+- Next small Angeline task: optional M3 candidate/reference metadata and unique validation row keys; current D2.2 workflow/HTTP contract remains usable. Aina/Rachel review rule/severity/reference semantics. Do not proceed automatically.
