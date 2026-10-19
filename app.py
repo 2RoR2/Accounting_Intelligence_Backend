@@ -22,9 +22,9 @@ from pydantic import BaseModel, Field, StringConstraints, field_validator
 from psycopg.errors import UniqueViolation
 from psycopg.types.json import Jsonb
 from services.extraction.accounting_contract import (
-    approved_snapshot, decimal_text, line_dto, prediction_dto, record_values,
+    approved_snapshot, decimal_text, field_value, line_dto, prediction_dto, record_values,
 )
-from validation.document_validation import evaluate_invoice, load_current, validate_document
+from validation.document_validation import evaluate_invoice, evaluate_document, load_current, validate_document
 
 from auth.security import (
     ACCESS_TOKEN_SECONDS,
@@ -1138,6 +1138,10 @@ def standardise_document(document_id: str, request: Request):
             snapshot = approved_snapshot(doc, extraction, fields, items)
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
+        if (extraction.get('raw_json') or {}).get('mode') == 'module2_public_result':
+            coverage = evaluate_document(doc, extraction, fields, items)
+            if not coverage['coverage_complete']:
+                raise HTTPException(422, 'Type-specific validation is NOT_CHECKED; standardisation is unavailable.')
         if doc['kind'] == 'invoice':
             validation = evaluate_invoice(doc, extraction, fields, items)
             if validation['errors']:
@@ -1185,7 +1189,9 @@ def standardise_document(document_id: str, request: Request):
 def get_document_extraction(document_id: str, request: Request):
     user = require_workspace_user(request, {"local_admin", "accountant"})
     with connect() as db:
-        doc = db.execute("SELECT id,content_revision FROM documents WHERE id=%s AND tenant_id=%s", (document_id, user["tenant_id"])).fetchone()
+        ownership = ' AND (owner_id=%s OR assigned_to=%s)' if user['role'] == 'accountant' else ''
+        params = [document_id, user['tenant_id']] + ([user['id'], user['id']] if ownership else [])
+        doc = db.execute('SELECT id,content_revision FROM documents WHERE id=%s AND tenant_id=%s' + ownership, params).fetchone()
         if not doc:
             raise HTTPException(404, "Document not found.")
         extraction = db.execute("SELECT * FROM raw_extractions WHERE document_id=%s AND is_current=true ORDER BY run_number DESC LIMIT 1", (document_id,)).fetchone()
@@ -1194,6 +1200,7 @@ def get_document_extraction(document_id: str, request: Request):
     return {
         "documentId": document_id,
         "contentRevision": doc['content_revision'],
+        "classification": (extraction['raw_json'].get('document_type') or {}) if extraction else {},
         "raw": extraction["raw_json"] if extraction else {},
         "fields": [prediction_dto(row) for row in fields],
         "lineItems": [line_dto(row) for row in items],
@@ -1227,15 +1234,17 @@ def get_document_validation(document_id: str, request: Request):
     user = _authorised_document(request, document_id)
     with connect() as db:
         doc, extraction, fields, items = load_current(db, document_id, user)
-        validation = evaluate_invoice(doc, extraction, fields, items)
+        validation = evaluate_document(doc, extraction, fields, items)
         exceptions = db.execute("SELECT id,type,severity,status,message,note,created_at,resolved_at FROM exceptions WHERE document_id=%s AND tenant_id=%s ORDER BY created_at", (document_id, user["tenant_id"])).fetchall()
     results = [{'rule': e['code'], 'field': e['field'], 'result': 'FAIL', 'message': e['message']} for e in validation['errors']]
+    results.extend(validation['checks'])
     external = [r for r in exceptions if not r['type'].startswith('VALIDATION:') and r['status'] != 'resolved']
     results.extend({'id': str(r['id']), 'rule': r['type'], 'result': 'FAIL' if r['severity'] == 'high' else 'WARNING', 'message': r['message']} for r in external)
     blocking = any(r['result'] == 'FAIL' for r in results)
     return {'documentId': document_id, 'contentRevision': doc['content_revision'], 'status': doc['status'].upper(),
-            'validationStatus': 'REVIEW_REQUIRED' if blocking else 'PASS', 'reviewRequired': True,
-            'accountingApprovalPerformed': False, 'passed': int(not validation['errors']),
+            'validationStatus': 'REVIEW_REQUIRED' if blocking or not validation['coverage_complete'] else 'PASS', 'reviewRequired': True,
+            'coverageComplete': validation['coverage_complete'],
+            'accountingApprovalPerformed': False, 'passed': int(not validation['errors'] and validation['coverage_complete']),
             'warnings': sum(r['result'] == 'WARNING' for r in results), 'failed': sum(r['result'] == 'FAIL' for r in results),
             'blocking': blocking, 'results': results}
 
@@ -1259,6 +1268,7 @@ def correct_extracted_field(document_id: str, field_key: str, data: FieldCorrect
         'date', 'due', 'currency', 'subtotal', 'tax', 'discount', 'total',
         'supplier_name', 'buyer_name', 'invoice_number', 'reference_number',
         'invoice_date', 'due_date', 'tax_amount', 'total_amount',
+        'account_number', 'billing_period', 'transaction_time', 'payment_method',
     }
     if field_key not in allowed_fields:
         raise HTTPException(422, "Unsupported extraction field.")
@@ -1274,6 +1284,11 @@ def correct_extracted_field(document_id: str, field_key: str, data: FieldCorrect
             raise HTTPException(422, "Dates must be valid YYYY-MM-DD values.")
     elif field_key == 'currency' and not re.fullmatch(r'[A-Z]{3}', data.value):
         raise HTTPException(422, "Currency must be a three-letter uppercase code.")
+    elif field_key == 'transaction_time':
+        try:
+            field_value('transaction_time', data.value)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
 
     ownership = " AND (d.owner_id=%s OR d.assigned_to=%s)" if user['role'] == 'accountant' else ""
     owner_params = [user['id'], user['id']] if ownership else []

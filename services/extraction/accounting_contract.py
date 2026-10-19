@@ -1,16 +1,20 @@
 """Versioned M2 -> existing accounting storage/API boundary. No approval or DB I/O."""
 from copy import deepcopy
-from datetime import date, datetime
+from datetime import date, datetime, time
 from decimal import Decimal, InvalidOperation, localcontext
 import re
 from uuid import UUID
 
-VERSION = 'accounting-fields/1.0'
+VERSION = 'accounting-fields/1.1'
 FIELD_KEYS = {
     'supplier_name': 'supplier', 'vendor_name': 'supplier', 'seller': 'supplier', 'merchant': 'supplier',
     'invoice_number': 'invoice', 'invoice_date': 'date', 'due_date': 'due',
     'tax_amount': 'tax', 'total_amount': 'total', 'buyer_name': 'customer', 'buyer': 'customer',
     'reference_number': 'reference', 'receipt': 'reference',
+    'issuer': 'supplier', 'bill_reference': 'reference', 'bill_date': 'date',
+    'receipt_number': 'reference', 'transaction_date': 'date', 'amount_due': 'total',
+    'account_number': 'account_number', 'billing_period': 'billing_period',
+    'transaction_time': 'transaction_time', 'payment_method': 'payment_method',
     **{key: key for key in ('supplier', 'invoice', 'date', 'due', 'currency', 'subtotal',
                            'tax', 'discount', 'total', 'customer', 'reference', 'type')},
 }
@@ -53,6 +57,10 @@ def field_value(key, value):
         date.fromisoformat(value)
     if key == 'currency' and not re.fullmatch(r'[A-Z]{3}', value):
         raise ValueError('Currency requires an explicit three-letter uppercase code.')
+    if key == 'transaction_time':
+        if not re.fullmatch(r'[0-9]{2}:[0-9]{2}(?::[0-9]{2})?', value):
+            raise ValueError('Transaction time requires HH:MM or HH:MM:SS.')
+        time.fromisoformat(value)
     return value
 
 

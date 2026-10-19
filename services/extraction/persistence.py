@@ -70,6 +70,14 @@ def persist_extraction_result(document_id: str, result: dict[str, Any]) -> dict[
             )
             return {"extraction_id": str(existing_run["id"]), "job_id": str(job["id"]), "idempotent": True}
 
+        # Re-extraction must not silently hide reviewed values/history. A future
+        # amendment workflow can explicitly carry them across extraction runs.
+        if db.execute("""SELECT 1 FROM field_predictions fp JOIN raw_extractions re ON re.id=fp.extraction_id
+            WHERE fp.document_id=%s AND re.is_current=true AND fp.corrected_at IS NOT NULL LIMIT 1""",
+            (document_id,)).fetchone() or db.execute(
+                'SELECT 1 FROM line_item_corrections WHERE document_id=%s LIMIT 1', (document_id,)).fetchone():
+            raise ValueError('Reviewed corrections exist; re-extraction requires an explicit amendment.')
+
         run_number = db.execute(
             "SELECT COALESCE(MAX(run_number), 0) + 1 AS next_run FROM raw_extractions WHERE document_id=%s",
             (document_id,),
@@ -110,6 +118,10 @@ def persist_extraction_result(document_id: str, result: dict[str, Any]) -> dict[
             )
 
         db.execute("UPDATE documents SET status='extracted', content_revision=content_revision+1, processing_seconds=EXTRACT(EPOCH FROM (now() - uploaded_at)), processing_completed_at=now(), updated_at=now() WHERE id=%s", (document_id,))
+        classification = mapped['document_kind']
+        if classification.get('status') == 'classified' and classification.get('value') in {'invoice', 'bill', 'receipt'}:
+            db.execute('UPDATE documents SET kind=%s WHERE id=%s AND tenant_id=%s',
+                       (classification['value'], document_id, job['tenant_id']))
         from validation.document_validation import validate_document
         validate_document(db, document_id)
         db.execute(

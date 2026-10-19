@@ -1,57 +1,53 @@
 ﻿# CURRENT CHECKPOINT — COS40005 V2
 
 Date: 2026-10-19
-Repository: Backend_V2 / feature/accounting-v2 / HEAD 879e384; prior pending work preserved.
-Active: D1A PASS for real digital-PDF invoice-to-review backend. Full production/C1-PG verification remains incomplete.
-Next: frontend agent integrates docs/D1A_FRONTEND_HANDOFF.md; do not begin C2 automatically.
+Repository: Backend_V2 / feature/accounting-v2 / base HEAD 0b5d9c0; initially clean, D2.1 changes uncommitted.
+Active: D2.1 PASS for supported digital-PDF extraction-to-review; bill/receipt validation deliberately PARTIAL.
+STOP after D2.1. No frontend changes, schema changes, installs, model downloads, Qwen, approvals, merges, pushes or deployment.
 
-## Runtime and dependency approval completed
-- Verified sys.prefix/executable/pyvenv.cfg: /home/donut99/.venvs/accounting-intelligence, Python 3.12.14; base interpreter distinct.
-- Approved ensurepip --upgrade installed pip 25.0.1; approved pip install --no-deps 'python-multipart>=0.0.9,<1' installed python-multipart 0.0.32, inside that venv only.
-- pip check exit 0: No broken requirements found. No other dependencies installed/downgraded; SSD models reused.
-- FastAPI 0.143.3 remains outside repository's older manifest range; actual import/upload/auth tested successfully.
+## Runtime preserved
+- Existing WSL Python 3.12.14: /home/donut99/.venvs/accounting-intelligence/bin/python; CPU Docling and SSD assets reused.
+- D: existed in Windows but /mnt/d was unmounted. Verified empty mountpoint, mounted drvfs D: read-only; no SSD asset writes.
+- Restarted only saic-v2-d1a-postgres18 / saic-v2-d1a-redis, which were stopped; unrelated containers/native V2 cluster preserved.
+- PostgreSQL 18.0: 127.0.0.1:55434, accounting_intelligence_v2_demo, d1a_v2_demo; cluster saic_backend_v2_d1a.
+- Fingerprint 7698223516621660199 verified by scripts/d1a.py configure(); no schema bootstrap/new migration command. Existing API startup retains its ADD COLUMN IF NOT EXISTS review revision check on the already-present column.
+- Redis authenticated dedicated 127.0.0.1:6382; sequential cpu_tasks worker. API http://127.0.0.1:8002, Windows health 200.
+- Private credentials/accounts/TOTP remain ignored in runs/d1a; never printed. Both API and worker left running on final source.
 
-## Isolated running services and schema evidence
-- API http://127.0.0.1:8002; /api/health and /openapi.json verified 200 from Windows; /docs available.
-- PostgreSQL 18.0 Debian: container saic-v2-d1a-postgres18, 127.0.0.1:55434, DB accounting_intelligence_v2_demo, role d1a_v2_demo.
-- Server fingerprint 7698223516621660199; cluster saic_backend_v2_d1a; PGDATA /var/lib/postgresql/18/docker.
-- Redis 7.2.16: saic-v2-d1a-redis, 127.0.0.1:6382, authenticated dedicated instance; one sequential CPU RQ worker.
-- Dedicated volumes saic-v2-d1a-pg18-data / saic-v2-d1a-redis-data; credentials/config ignored under runs/d1a, never printed.
-- Actual WSL backend connections to PG/Redis succeeded. Native V2 test cluster and four unrelated stopped containers preserved.
-- Fresh target had zero objects/tables before bootstrap. Executed only schema creation section, transactionally; NO DROP/reset preamble executed.
-- Consolidated SQL unchanged, SHA256 015118a83b6826f494bb865230905beb10cce889265a75594350951fc149b186.
-- Creation-only artifact runs/d1a/schema-create-only.sql SHA256 839e84792c41dd2c773ba99616a35223c676909da356d65663ba0de01d80af31; 51 application tables created.
+## Implemented D2.1 contracts
+- Source headings classify invoice/bill/receipt; conflicting headings or Bill / Invoice remain unknown/ambiguous, with source references.
+- Content profile selected before mapping: invoice aliases plus customer/due/discount, bill issuer/reference/account/period/due/amount due, receipt merchant/date/time/reference/payment method.
+- Handles Docling merged label blocks with exact character spans and honest source-block boxes; short table headers use explicit first-row labels even when header flags are partial.
+- Unknown documents map no accounting fields/lines, produce EXCEPTION; selected intake kind remains only because DB has no unknown enum.
+- Accounting boundary accounting-fields/1.1; existing field_predictions TEXT keys/JSONB suffice; NUMERIC and Decimal strings retained, absent values NULL, confidence NULL.
+- Confident source kind updates stored kind; intake document_code stays stable. AP/AR category is never inferred or changed by extraction; legacy intake AP default remains.
+- Bills/receipts: EXTRACTED / REVIEW_REQUIRED, coverageComplete=false, passed=0; required-field/math checks explicitly NOT_CHECKED, standardisation blocked.
+- Invoice Decimal checks unchanged: 50.00 PASS; 99.00 EX-005. Review/approval/payment remain distinct; no automatic approvals.
+- Raw/normalized/current/evidence/candidates/revision/reviewer preserved. New extraction over human field/line corrections is refused pending amendment; replay remains idempotent.
+- Extraction DTO adds classification; raw adds field_schema + classification evidence; validation adds coverageComplete/checkStatus. See docs/D2_1_FRONTEND_HANDOFF.md.
 
-## Startup and executed commands
-- Prefix P = wsl -d Ubuntu --cd /mnt/c/Users/60103/Documents/GitHub/Accounting_Intelligence_Backend_V2 --exec /home/donut99/.venvs/accounting-intelligence/bin/python -B
-- API: P scripts/d1a.py api; worker, separate terminal: P scripts/d1a.py worker. Both left running on final code.
-- Existing services: docker start saic-v2-d1a-postgres18 saic-v2-d1a-redis. Fresh provisioning helper scripts/d1a-services.ps1 refuses collisions.
-- Creation executed via runs/d1a-create-services.ps1; connectivity via P runs/d1a-connect.py; guarded non-destructive bootstrap via P runs/d1a-initialize-create-only.py; all exit 0.
-- P scripts/d1a.py prepare-accounts created only synthetic identities, not extracted/approved financial records.
-- Private accounts/TOTP seeds: runs/d1a/accounts.json. Lecturer demo uses second account; do not log/copy credentials.
+## Actual commands and results
+- P = wsl -d Ubuntu --cd /mnt/c/Users/60103/Documents/GitHub/Accounting_Intelligence_Backend_V2 --exec /home/donut99/.venvs/accounting-intelligence/bin/python -B
+- Connectivity: P scripts/d1a.py check -> exit 0. Separate terminals: P scripts/d1a.py api / P scripts/d1a.py worker.
+- P -m tests.extraction.synthetic_documents -> exit 0; four clearly synthetic digital PDFs written under tests/extraction/data/multidocument/.
+- P -m unittest tests.test_accounting_contract tests.test_field_corrections tests.test_document_validation tests.extraction.test_multidocument -q -> exit 0, 64 passed, 0 failed/errors/skipped, 0.554s; includes original 38 C1A/C1B tests.
+- P runs/c1-pg-offline-extraction.py -> exit 0, 142 passed, 0 failed/errors/skipped, 0.187s; sockets blocked; includes same 12 new profile tests. Existing fixture-blocked test_execution.py excluded.
+- P runs/d2-1-live-tests.py -> exit 0, 7 real HTTP/TOTP/RQ/CPU Docling/PG tests passed, 0 failed/errors/skipped, 30.590s; no parser/auth mocks.
+- Live suite inherits unchanged five D1A regressions plus four profile subcases and correction re-extraction rollback guard; no Redis/Ollama/GPU substitutes.
+- Initial live attempts failed due unmounted models, merged label blocks and partial table headers; fixed and rerun. Failed synthetic uploads retained.
+- git diff --check -> exit 0. Actual API responses/PG assertions: ignored runs/d1a/d2-1-live-evidence.json.
 
-## Implemented contract and financial behavior
-- Upload -> isolated Redis/RQ -> real CPU Docling -> classification -> C1B mapping -> PG persistence -> deterministic validation -> review-ready API verified.
-- Validation runs inside persistence transaction; errors create blocking exceptions. Raw/normalized/current, evidence/candidates and nullable confidence preserved.
-- /revalidate now executes checks, preserves exception history and returns EXTRACTED or EXCEPTION; it never automatically approves/marks validated.
-- Quantities and money use Decimal; zero valid; currency required, no MYR fallback; explicit discount/null distinction and existing Decimal tolerance retained.
-- Standardization rechecks invoice math while retaining human approval/revision gates. No approvals or standardised records created.
-- app.py, persistence.py, validation/models.py updated; new validation/document_validation.py; accounting contract test exception fixture aligned.
-- New tests/test_document_validation.py (12), tests/test_d1a_live.py (5), scripts/d1a.py, scripts/d1a-services.ps1, scripts/d1a_demo_invoices.py and frontend handoff.
+## Fresh real source processing evidence
+- SYN-001 / 535dcfae-ba56-4b7c-a201-464f713b29e1: invoice, 50.00, EXTRACTED/PASS, real line 2 * 25.00 = 50.00.
+- SYN-BAD-001 / cd396203-4163-44c9-a068-305a2c5017fc: invoice, original 99.00, EXCEPTION/EX-005; corrected 50.00 at revision 3, stale 409, one real audit row, revalidation PASS still review-required.
+- invoice_b.pdf / 99e77638-e665-44f9-a14e-31e6efe4797c: invoice, 50.00 - 5.00 + 3.00 = 48.00, EXTRACTED/PASS; supplier/customer/date/due and fractional line 2.5 * 20.00 preserved.
+- utility_bill.pdf / 2c0b6be6-a0a5-45d6-b67c-724cd991c6a2: bill, account/reference/period/due, 80.00, EXTRACTED/REVIEW_REQUIRED; charge 80.00, quantity/unit price/subtotal/tax NULL.
+- retail_receipt.pdf / ba304cac-d289-46d4-b2be-4decfdaa2e35: receipt, merchant/reference/date/time/Card, subtotal 10.00/tax 0.60/total 10.60, EXTRACTED/REVIEW_REQUIRED.
+- unknown.pdf / 02431929-d43e-4b16-a0f3-b219bb5c3c3c: meeting agenda, unknown, EXCEPTION/REVIEW_REQUIRED; no fields/lines or fictional total despite source Total label.
+- Real JSONB evidence/raw, NUMERIC Decimal lines, correction history, revision preservation, cross-tenant 404 and approval gate 422 verified; no approved snapshots created.
 
-## Actual tests and API evidence
-- P runs/d1a-upload-check.py: exit 0, 5 import/upload checks; 3 existing upload tests use mocked DB/auth/queue, no live startup SQL.
-- P -m unittest tests.test_accounting_contract tests.test_field_corrections tests.test_document_validation -q: exit 0, 50 passed, zero failures/errors/skips, 0.461s.
-- P runs/c1-pg-offline-extraction.py: exit 0, 130 passed, zero failures/errors/skips, 0.142s; network blocked, excludes previously fixture-blocked test_execution.py.
-- P runs/d1a-live-tests.py: exit 0, 5 real HTTP/RQ/CPU Docling/PG tests passed after final-code restart, 15.771s; no parser/auth mocks.
-- Real TOTP login/session, tenant denial 404, stale revision 409, correction metadata/append-only audit and review gates verified; no human approval manufactured.
-- P scripts/d1a_demo_invoices.py: exit 0, two further actual uploads in clean second tenant; complete 8c3a4df4-95d5-4ff5-b7ec-e9ad2b823233 = EXTRACTED/PASS/50.00.
-- Incorrect 63ec0103-11d2-410f-8aa1-44588014d6c8 = EXCEPTION/EX-005/99.00, still uncorrected. Both require human review.
-- Final PG query: jobs succeeded, line 2.000 * 25.0000 = 50.00 as Decimal/NUMERIC, JSONB evidence array, confidence NULL; zero approved decisions/standardised records.
-- Windows health 200, credentialed CORS preflight 200, unauthenticated document 401. git diff --check and service-script parse passed.
-- Evidence: runs/d1a/live-evidence.json and demo-invoices.json; fresh unuploaded PDFs in runs/d1a/demo-ready/; exact frontend API contract/startup in docs/D1A_FRONTEND_HANDOFF.md.
-
-## Remaining limits — stop after D1A
-- Full C1-PG race/owner-assignee/immutable-record suite not executed; its 20 previously skipped tests are not integration-verified by D1A's subset.
-- Known re-extraction correction carry-forward loss and is_current/financial-column immutability-trigger loophole remain; no schema repair applied. Aleeya/Rachel review required.
-- Demo scope: labelled digital invoices, OCR off/Qwen off; production crash recovery/retry guarantees and broader P0/P1 remain unverified. No frontend writes, commits, merges, resets, pushes or deployment. STOP after D1A.
+## Limits and next review
+- Supported explicit English headings/colon labels, ISO dates/currency codes/decimal strings, simple unmerged/unrotated single-page 2–4-column tables; live examples cover 2/4 columns. OCR off; arbitrary/scanned layouts unsupported.
+- Block-level field boxes are honest coarse evidence, not tight field boxes. Missing/unsupported content requires review; bill/receipt policies remain NOT_CHECKED.
+- Full C1-PG concurrency/owner-assignee suite and historical-record immutability remain unverified; existing trigger loophole remains, no schema repair applied.
+- Next smallest review: Angeline integrates D2.1 DTOs; Aina specifies bill/receipt required-field and Decimal math rules before record creation. Do not start further gates automatically.

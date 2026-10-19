@@ -33,6 +33,29 @@ def evaluate_invoice(document, extraction, fields, items):
     return {'errors': errors, 'review_required': True, 'accounting_approval_performed': False}
 
 
+def evaluate_document(document, extraction, fields, items):
+    """Keep the verified invoice rules; explicitly defer other kind policies."""
+    raw = extraction.get('raw_json') or {}
+    classification = raw.get('document_type') or {}
+    is_m2 = raw.get('mode') == 'module2_public_result'
+    kind = classification.get('value') if is_m2 else document['kind']
+    if kind == 'invoice':
+        return {**evaluate_invoice(document, extraction, fields, items),
+                'coverage_complete': True, 'checks': []}
+    errors = []
+    if kind not in {'bill', 'receipt'} or (is_m2 and (
+            classification.get('status') != 'classified' or kind != document['kind'])):
+        errors.append({'code': 'EX-002', 'field': 'document_type',
+                       'message': 'Source document kind is unknown, ambiguous or disagrees with intake; review the source.'})
+    # No invoice number/vendor/line requirements are imposed on receipts/bills.
+    # Parsing a total is not proof that all arithmetic or required-field rules passed.
+    checks = [{'rule': f'{str(kind).upper()}_{scope}', 'result': 'WARNING', 'checkStatus': 'NOT_CHECKED',
+               'message': f'{kind} {label} policy is not implemented; human review required.'}
+              for scope, label in [('REQUIRED_FIELDS', 'required-field'), ('FINANCIAL_MATH', 'financial validation')]]
+    return {'errors': errors, 'coverage_complete': False, 'checks': checks,
+            'review_required': True, 'accounting_approval_performed': False}
+
+
 def load_current(db, document_id, user=None, *, lock=False):
     params = [document_id]
     scope = ''
@@ -57,7 +80,7 @@ def validate_document(db, document_id, user=None):
     document, extraction, fields, items = load_current(db, document_id, user, lock=True)
     if document['status'] in {'completed', 'standardised'}:
         raise HTTPException(409, 'Approved records require an amendment.')
-    result = evaluate_invoice(document, extraction, fields, items)
+    result = evaluate_document(document, extraction, fields, items)
     db.execute("""UPDATE exceptions SET status='resolved',resolved_at=now(), note=COALESCE(note,'') || %s
         WHERE document_id=%s AND tenant_id=%s AND type LIKE %s AND status <> 'resolved'""",
         ('\nSuperseded by deterministic validation.', document_id, document['tenant_id'], 'VALIDATION:%'))
@@ -69,7 +92,7 @@ def validate_document(db, document_id, user=None):
         AND status <> 'resolved' AND severity='high' LIMIT 1""", (document_id, document['tenant_id'])).fetchone()
     status = 'exception' if blocking else 'extracted'
     db.execute("SELECT set_config('app.user_id',%s,true), set_config('app.status_reason',%s,true)",
-               (str(user['id']) if user else '', 'Deterministic invoice validation; human approval still required'))
+               (str(user['id']) if user else '', 'Document validation; human approval still required'))
     ownership, owner_params = '', []
     if user is not None and user['role'] == 'accountant':
         ownership = ' AND (owner_id=%s OR assigned_to=%s)'
@@ -80,5 +103,6 @@ def validate_document(db, document_id, user=None):
     if not updated:
         raise HTTPException(409, 'Document changed while validating.')
     return {'documentId': str(document_id), 'contentRevision': document['content_revision'], 'status': status.upper(),
-            'validationStatus': 'REVIEW_REQUIRED' if result['errors'] or blocking else 'PASS',
-            'reviewRequired': True, 'accountingApprovalPerformed': False, 'errors': result['errors']}
+            'validationStatus': 'REVIEW_REQUIRED' if result['errors'] or blocking or not result['coverage_complete'] else 'PASS',
+            'reviewRequired': True, 'accountingApprovalPerformed': False, 'errors': result['errors'],
+            'coverageComplete': result['coverage_complete'], 'checks': result['checks']}

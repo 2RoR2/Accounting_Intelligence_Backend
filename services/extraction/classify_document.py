@@ -7,11 +7,11 @@ from pathlib import Path
 import re
 from uuid import uuid4
 
-VERSION = '0.1.0'
+VERSION = '0.2.0'
 TITLES = {
     'invoice': 'invoice', 'tax invoice': 'invoice', 'commercial invoice': 'invoice',
-    'bill': 'bill', 'utility bill': 'bill',
-    'receipt': 'receipt', 'sales receipt': 'receipt', 'payment receipt': 'receipt',
+    'bill': 'bill', 'utility bill': 'bill', 'service bill': 'bill', 'electricity bill': 'bill',
+    'receipt': 'receipt', 'sales receipt': 'receipt', 'payment receipt': 'receipt', 'retail receipt': 'receipt',
 }
 UNSUPPORTED = {'credit note', 'debit note', 'quotation', 'purchase order',
                'pro forma invoice', 'proforma invoice', 'statement of account'}
@@ -35,6 +35,12 @@ def classify_document(document):
             continue
         raw = item.get('text', '')
         title = normalize_title(raw)
+        if title in {'bill / invoice', 'invoice / bill', 'bill/invoice', 'invoice/bill'}:
+            evidence = {'text': raw, 'source_ref': item.get('self_ref', f'#/texts/{index}'),
+                        'prov': deepcopy(item.get('prov', []))}
+            candidates.extend({'value': kind, 'matched_title': title, 'evidence': deepcopy(evidence)}
+                              for kind in ('bill', 'invoice'))
+            continue
         if title not in TITLES and title not in UNSUPPORTED:
             continue
         evidence = {'text': raw,

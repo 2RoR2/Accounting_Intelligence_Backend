@@ -67,6 +67,7 @@ class ContractDatabase:
         CREATE TABLE line_items (id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))), extraction_id TEXT,
           document_id TEXT, line_number INTEGER, description TEXT, quantity TEXT, unit_price TEXT, amount TEXT,
           field_states TEXT, evidence TEXT, candidates TEXT);
+        CREATE TABLE line_item_corrections (document_id TEXT);
         CREATE TABLE review_decisions (document_id TEXT, tenant_id TEXT, decision TEXT, approved_content_revision INTEGER);
         CREATE TABLE validation_rules (tenant_id TEXT, require_supplier BOOLEAN, require_invoice_number_for_invoice BOOLEAN,
           require_reference_for_bill BOOLEAN, require_receipt_identifier BOOLEAN);
@@ -354,6 +355,27 @@ class AccountingContractTests(unittest.TestCase):
         second = self.persist()
         self.assertTrue(second['idempotent'])
         self.assertEqual(first['extraction_id'], second['extraction_id'])
+        self.assertEqual(self.database.execute('SELECT content_revision FROM documents').fetchone()['content_revision'], 2)
+
+    def test_new_run_cannot_hide_a_human_field_correction(self):
+        self.persist()
+        self.database.db.execute("UPDATE field_predictions SET current_value='REVIEWED',corrected_by=?,corrected_at=CURRENT_TIMESTAMP WHERE field_key='invoice'", (USER['id'],))
+        self.database.db.commit()
+        result = fixture()
+        result['provenance']['service_run_id'] = 'new-run-after-correction'
+        with self.assertRaisesRegex(ValueError, 'Reviewed corrections exist'):
+            self.persist(result)
+        self.assertEqual(self.database.execute('SELECT count(*) AS n FROM raw_extractions').fetchone()['n'], 1)
+        self.assertEqual(self.database.execute("SELECT current_value FROM field_predictions WHERE field_key='invoice'").fetchone()['current_value'], 'REVIEWED')
+
+    def test_new_run_cannot_hide_line_correction_history(self):
+        self.persist()
+        self.database.db.execute('INSERT INTO line_item_corrections(document_id) VALUES (?)', (DOCUMENT,))
+        self.database.db.commit()
+        result = fixture()
+        result['provenance']['service_run_id'] = 'new-run-after-line-correction'
+        with self.assertRaisesRegex(ValueError, 'Reviewed corrections exist'):
+            self.persist(result)
         self.assertEqual(self.database.execute('SELECT content_revision FROM documents').fetchone()['content_revision'], 2)
 
     def test_extraction_dto_keeps_null_confidence_evidence_revision_and_decimal_strings(self):

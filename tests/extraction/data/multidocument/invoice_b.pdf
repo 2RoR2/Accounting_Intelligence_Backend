@@ -1,0 +1,56 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+5 0 obj
+<< /Length 1098 >>
+stream
+BT /F1 17 Tf 40 800 Td (TAX INVOICE - SYNTHETIC TEST DATA) Tj ET
+BT /F1 11 Tf 40 770 Td (Vendor: Synthetic Services B) Tj ET
+BT /F1 11 Tf 40 745 Td (Customer: Synthetic Buyer) Tj ET
+BT /F1 11 Tf 40 720 Td (Invoice no: SYN-B-002) Tj ET
+BT /F1 11 Tf 40 695 Td (Invoice date: 2026-10-19) Tj ET
+BT /F1 11 Tf 40 670 Td (Due date: 2026-11-19) Tj ET
+BT /F1 11 Tf 40 645 Td (Currency: MYR) Tj ET
+BT /F1 11 Tf 40 620 Td (Subtotal: 50.00) Tj ET
+BT /F1 11 Tf 40 595 Td (Discount: 5.00) Tj ET
+BT /F1 11 Tf 40 570 Td (Tax: 3.00) Tj ET
+BT /F1 11 Tf 40 545 Td (Total: 48.00) Tj ET
+0.5 w 40 300 515 80 re S
+40 340 m 555 340 l S
+280 300 m 280 380 l S
+360 300 m 360 380 l S
+450 300 m 450 380 l S
+BT /F1 11 Tf 48 355 Td (Description) Tj ET
+BT /F1 11 Tf 48 315 Td (Service hours) Tj ET
+BT /F1 11 Tf 288 355 Td (Quantity) Tj ET
+BT /F1 11 Tf 288 315 Td (2.5) Tj ET
+BT /F1 11 Tf 368 355 Td (Unit price) Tj ET
+BT /F1 11 Tf 368 315 Td (20.00) Tj ET
+BT /F1 11 Tf 458 355 Td (Line total) Tj ET
+BT /F1 11 Tf 458 315 Td (50.00) Tj ET
+BT /F1 10 Tf 40 220 Td (SYNTHETIC TEST DATA. Invented layout. Not a real transaction.) Tj ET
+endstream
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000241 00000 n 
+0000000311 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+1460
+%%EOF

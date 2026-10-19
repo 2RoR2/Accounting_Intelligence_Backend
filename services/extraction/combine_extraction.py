@@ -12,7 +12,7 @@ from services.extraction.extraction_v1 import ExtractionResultV1, StrictModel
 from services.extraction.classify_document import classify_document
 
 class ClassificationResult(StrictModel):
-    classifier_version: Literal['0.1.0']
+    classifier_version: Literal['0.1.0', '0.2.0']
     method: Literal['explicit_heading_rules']
     value: Literal['invoice', 'bill', 'receipt', 'unknown']
     status: Literal['classified', 'unknown', 'ambiguous', 'unsupported']
@@ -46,8 +46,11 @@ class ClassifiedExtractionResult(ExtractionResultV1):
 
     @model_validator(mode='after')
     def supported_field_schema(self):
-        if self.document_type.value in {'bill', 'receipt'}:
-            raise ValueError('Bill/receipt fields are not implemented; cannot attach to invoice schema')
+        profile = self.field_schema.split('_', 1)[0]
+        if self.document_type.value in {'bill', 'receipt'} and profile != self.document_type.value:
+            raise ValueError('Bill/receipt fields not implemented by the supplied invoice schema; profile mismatch')
+        if profile != 'invoice' and profile != self.document_type.value:
+            raise ValueError('Mapping profile does not match source classification')
         return self
 
 def combine_files(extraction_path, classification_path, project_root):
