@@ -1,0 +1,27 @@
+{
+  "synthetic": true,
+  "document_id": "changed_values",
+  "fields": {
+    "supplier_name": "Example Office Supply (Synthetic)",
+    "invoice_number": "SYN-002",
+    "invoice_date": "2026-10-02",
+    "currency": "MYR",
+    "subtotal": "29.50",
+    "tax_amount": "0.00",
+    "total_amount": "29.50"
+  },
+  "line_items": [
+    {
+      "description": "Pen",
+      "quantity": "3",
+      "unit_price": "4.50",
+      "line_total": "13.50"
+    },
+    {
+      "description": "Folder",
+      "quantity": "2",
+      "unit_price": "8.00",
+      "line_total": "16.00"
+    }
+  ]
+}

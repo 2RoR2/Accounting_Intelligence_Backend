@@ -1,0 +1,5 @@
+# Candidate lab packages, not a verified/pinned environment.
+# Install inside a chosen Linux virtual environment only.
+docling
+pydantic>=2,<3
+requests>=2,<3
