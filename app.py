@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException, Request, Response, UploadFile, File
+from fastapi import Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 import jwt
@@ -38,6 +39,7 @@ from auth.security import (
     verify_totp,
 )
 from database.connection import connect
+from validation.bank_reconciliation import reconcile_records
 from notifications.mailer import send_login_code, send_reset_code
 
 def apply_compatibility_migrations():
@@ -356,6 +358,24 @@ class ReconciliationInput(BaseModel):
     relationType: Annotated[str, StringConstraints(pattern=r"^(credit_for|debit_for|adjustment_of|related_to)$")]
     amount: str | None = Field(default=None, pattern=r"^(0|[1-9]\d*)(\.\d{1,2})?$")
     note: str = Field(default="", max_length=2000)
+
+class BankAccountingRecordInput(BaseModel):
+    record_id: str
+    total_amount: str
+    currency: str
+    reference_number: str | None = None
+
+
+class BankTransactionInput(BaseModel):
+    transaction_id: str
+    amount: str
+    currency: str
+    reference: str | None = None
+
+
+class BankReconciliationInput(BaseModel):
+    accounting_records: list[BankAccountingRecordInput]
+    bank_transactions: list[BankTransactionInput]
 
 
 class NamedInput(BaseModel):
@@ -1822,6 +1842,22 @@ def reconcile_document(document_id: str, data: ReconciliationInput, request: Req
         row = db.execute("""INSERT INTO document_reconciliations(tenant_id,source_document_id,related_document_id,relation_type,amount,note,created_by)
             VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING *""", (user["tenant_id"], document_id, data.relatedDocumentId, data.relationType, data.amount, data.note, user["id"])).fetchone()
     return {"id": str(row["id"]), "sourceDocumentId": document_id, "relatedDocumentId": data.relatedDocumentId, "relationType": row["relation_type"], "amount": row["amount"], "note": row["note"]}
+
+
+@app.post("/api/bank-reconciliation")
+def run_bank_reconciliation(
+    data: BankReconciliationInput,
+    request: Request,
+    x_requested_with: str = Header(..., alias="X-Requested-With"),
+):
+    require_workspace_user(request, {"local_admin", "accountant"})
+
+    results = reconcile_records(
+        [record.model_dump() for record in data.accounting_records],
+        [transaction.model_dump() for transaction in data.bank_transactions],
+    )
+
+    return results
 
 
 @app.get("/api/suppliers")
