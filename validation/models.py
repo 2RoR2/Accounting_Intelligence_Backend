@@ -6,33 +6,46 @@ Pydantic V2 models for invoice data validation.
 
 from datetime import date
 from decimal import Decimal, InvalidOperation
+import re
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-# Tolerance for floating point / rounding differences when comparing money values
+# Existing accounting tolerance; all arithmetic remains Decimal.
 AMOUNT_TOLERANCE = Decimal("0.01")
+
+
+def finite_decimal(value):
+    """Keep financial inputs exact; reject floats, booleans and bad grouping."""
+    if isinstance(value, bool) or not isinstance(value, (str, int, Decimal)):
+        raise ValueError('Expected an exact decimal string or Decimal.')
+    if isinstance(value, str):
+        if not re.fullmatch(r'-?(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)(?:\.[0-9]+)?', value):
+            raise ValueError('Malformed decimal value.')
+        value = value.replace(',', '')
+    try:
+        result = Decimal(value)
+    except (InvalidOperation, ValueError):
+        raise ValueError('Malformed decimal value.') from None
+    if not result.is_finite():
+        raise ValueError('Expected a finite decimal value.')
+    return result
 
 
 class LineItem(BaseModel):
     description: str = Field(min_length=1)
-    quantity: float = Field(gt=0)
-    unit_price: Decimal = Field(gt=0)
-    amount: Decimal = Field(gt=0)
+    quantity: Decimal = Field(gt=0)
+    unit_price: Decimal = Field(ge=0)
+    amount: Decimal = Field(ge=0)
 
-    @field_validator("unit_price", "amount", mode="before")
+    @field_validator("quantity", "unit_price", "amount", mode="before")
     @classmethod
     def coerce_line_item_amounts(cls, value):
-        if isinstance(value, str):
-            value = value.replace(",", "")
-        try:
-            return Decimal(str(value))
-        except (InvalidOperation, ValueError):
-            raise ValueError(f"'{value}' is not a valid monetary amount")
+        return finite_decimal(value)
 
     @model_validator(mode="after")
     def check_amount_matches_quantity_price(self) -> "LineItem":
-        expected = round(Decimal(str(self.quantity)) * self.unit_price, 2)
+        expected = round(self.quantity * self.unit_price, 2)
         if abs(expected - self.amount) > AMOUNT_TOLERANCE:
             raise ValueError(
                 f"Line item amount ({self.amount}) does not match "
@@ -49,15 +62,15 @@ class Invoice(BaseModel):
     invoice_date: date
     due_date: Optional[date] = None
     line_items: List[LineItem] = Field(min_length=1)
-    subtotal: Decimal = Field(gt=0)
+    subtotal: Decimal = Field(ge=0)
     tax_amount: Decimal = Field(ge=0)
-    total_amount: Decimal = Field(gt=0)
+    total_amount: Decimal = Field(ge=0)
+    discount: Optional[Decimal] = Field(default=None, ge=0)
     currency: str = Field(
-    default="MYR",
-    min_length=3,
-    max_length=3,
-    pattern=r"^[A-Za-z]{3}$"
-)
+        min_length=3,
+        max_length=3,
+        pattern=r"^[A-Z]{3}$",
+    )
 
     # ---------------------------------------------------------------
     # Field-level type checking 
@@ -76,17 +89,12 @@ class Invoice(BaseModel):
                 )
         raise TypeError("Date must be a string in YYYY-MM-DD format")
 
-    @field_validator("total_amount", "subtotal", "tax_amount", mode="before")
+    @field_validator("total_amount", "subtotal", "tax_amount", "discount", mode="before")
     @classmethod
     def coerce_to_decimal(cls, value):
-        # Extraction engine (Path A) outputs amounts with thousand-separator
-        # commas, e.g. "2,193,713.00" - strip them before parsing as Decimal.
-        if isinstance(value, str):
-            value = value.replace(",", "")
-        try:
-            return Decimal(str(value))
-        except (InvalidOperation, ValueError):
-            raise ValueError(f"'{value}' is not a valid monetary amount")
+        if value is None:
+            return None
+        return finite_decimal(value)
 
     # ---------------------------------------------------------------
     # Cross-field math validation , built using @model_validator
@@ -109,10 +117,10 @@ class Invoice(BaseModel):
 
     @model_validator(mode="after")
     def check_total_matches_subtotal_plus_tax(self) -> "Invoice":
-        expected_total = self.subtotal + self.tax_amount
+        expected_total = self.subtotal + self.tax_amount - (self.discount if self.discount is not None else Decimal('0'))
         if abs(expected_total - self.total_amount) > AMOUNT_TOLERANCE:
             raise ValueError(
-                f"subtotal + tax_amount = {expected_total} does not match "
+                f"subtotal + tax_amount - discount = {expected_total} does not match "
                 f"total_amount = {self.total_amount}"
             )
         return self

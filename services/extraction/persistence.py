@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from typing import Any
 from uuid import uuid4
 
 from database.connection import connect
+from services.extraction.accounting_contract import map_m2_result
 
 
 def persist_extraction_result(document_id: str, result: dict[str, Any]) -> dict[str, Any]:
@@ -26,6 +27,9 @@ def persist_extraction_result(document_id: str, result: dict[str, Any]) -> dict[
         public_result = json.load(handle)
     if public_result.get("document_id") != document_id:
         raise ValueError("Extraction result document identity does not match the job.")
+    mapped = map_m2_result(public_result, document_id)
+    if (public_result.get('provenance') or {}).get('service_run_id') != service_run_id:
+        raise ValueError('Extraction run identity does not match its artifact.')
 
     routing = public_result.get("routing") or {}
     routing_decision = routing.get("decision") or "human_review"
@@ -33,6 +37,13 @@ def persist_extraction_result(document_id: str, result: dict[str, Any]) -> dict[
         routing_decision = "human_review"
 
     with connect() as db:
+        document = db.execute('SELECT id,status FROM documents WHERE id=%s FOR UPDATE', (document_id,)).fetchone()
+        if not document:
+            raise ValueError('Document not found.')
+        if document['status'] in {'completed', 'standardised'}:
+            raise ValueError('Approved document snapshots cannot be reprocessed in place.')
+        if db.execute('SELECT 1 FROM standardised_records WHERE document_id=%s LIMIT 1', (document_id,)).fetchone():
+            raise ValueError('An approved historical record exists; use an amendment.')
         job = db.execute(
             """SELECT id, tenant_id, status FROM pending_jobs
                WHERE document_id=%s AND status IN ('pending','dispatched','processing')
@@ -73,48 +84,34 @@ def persist_extraction_result(document_id: str, result: dict[str, Any]) -> dict[
              public_result.get("schema_version"), job["id"], json.dumps(public_result)),
         )
 
-        for field_key, field in (public_result.get("fields") or {}).items():
-            field = field if isinstance(field, dict) else {}
-            state = field.get("state") if field.get("state") in {"resolved", "missing", "ambiguous", "conflict", "unsupported", "unreadable"} else "unreadable"
-            resolution = field.get("resolution")
-            if resolution not in {"parser_preserved", "candidate_for_review", "unresolved_missing"}:
-                resolution = "unresolved_missing" if state == "missing" else "parser_preserved"
+        for field in mapped['fields']:
             db.execute(
                 """INSERT INTO field_predictions
                    (extraction_id, document_id, field_key, field_label, extraction_state, resolution,
                     raw_value, normalized_value, current_value, confidence, evidence, candidates,
                     extraction_method, model_name, model_version, schema_version)
                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                (extraction_id, document_id, field_key, field_key.replace("_", " ").title(), state, resolution,
-                 field.get("raw_text"), field.get("value"),
-                 None if resolution == "candidate_for_review" else field.get("value"),
-                 field.get("confidence"), json.dumps(field.get("evidence") or []), json.dumps(field.get("candidates") or []),
-                 str(field.get("method") or "PARSER").upper() if str(field.get("method") or "PARSER").upper() in {"VLM", "OCR", "PARSER", "MANUAL_CORRECTION"} else "PARSER",
-                 field.get("model_name"), field.get("model_version"), public_result.get("schema_version") or "1.0"),
+                (extraction_id, document_id, field['field_key'], field['field_label'], field['extraction_state'],
+                 field['resolution'], field['raw_value'], field['normalized_value'], field['current_value'],
+                 field['confidence'], json.dumps(field['evidence']), json.dumps(field['candidates']),
+                 field['extraction_method'], field['model_name'], field['model_version'], field['schema_version']),
             )
 
-        for index, row in enumerate(public_result.get("line_items") or [], start=1):
-            row = row if isinstance(row, dict) else {}
-            def value(name: str):
-                cell = row.get(name)
-                return cell.get("value") if isinstance(cell, dict) else None
+        for row in mapped['line_items']:
             def decimal(name: str):
-                raw = value(name)
-                if raw in (None, ""):
-                    return None
-                try:
-                    return Decimal(str(raw).replace(",", ""))
-                except (InvalidOperation, ValueError):
-                    return None
+                return Decimal(row[name]) if row[name] is not None else None
             db.execute(
                 """INSERT INTO line_items
                    (extraction_id, document_id, line_number, description, quantity, unit_price, amount, field_states, evidence, candidates)
                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                (extraction_id, document_id, index, value("description"), decimal("quantity"),
-                 decimal("unit_price"), decimal("line_total"), json.dumps({}), json.dumps({}), json.dumps({})),
+                (extraction_id, document_id, row['line_number'], row['description'], decimal('quantity'),
+                 decimal('unit_price'), decimal('amount'), json.dumps(row['field_states']),
+                 json.dumps(row['evidence']), json.dumps(row['candidates'])),
             )
 
-        db.execute("UPDATE documents SET status='extracted', processing_seconds=EXTRACT(EPOCH FROM (now() - uploaded_at)), processing_completed_at=now(), updated_at=now() WHERE id=%s", (document_id,))
+        db.execute("UPDATE documents SET status='extracted', content_revision=content_revision+1, processing_seconds=EXTRACT(EPOCH FROM (now() - uploaded_at)), processing_completed_at=now(), updated_at=now() WHERE id=%s", (document_id,))
+        from validation.document_validation import validate_document
+        validate_document(db, document_id)
         db.execute(
             "UPDATE pending_jobs SET status='succeeded', finished_at=now(), last_error=NULL, updated_at=now() WHERE id=%s",
             (job["id"],),

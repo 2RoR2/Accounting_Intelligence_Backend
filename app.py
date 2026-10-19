@@ -2,13 +2,14 @@
 import hmac
 import logging
 import os
+import re
 import secrets
 import uuid
 import hashlib
 import io
 from decimal import Decimal
 from pathlib import Path
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Annotated
 from contextlib import asynccontextmanager
 from urllib.parse import quote
@@ -17,8 +18,13 @@ from fastapi import FastAPI, HTTPException, Request, Response, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 import jwt
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints, field_validator
 from psycopg.errors import UniqueViolation
+from psycopg.types.json import Jsonb
+from services.extraction.accounting_contract import (
+    approved_snapshot, decimal_text, line_dto, prediction_dto, record_values,
+)
+from validation.document_validation import evaluate_invoice, load_current, validate_document
 
 from auth.security import (
     ACCESS_TOKEN_SECONDS,
@@ -308,7 +314,15 @@ class AdminCredentialsInput(BaseModel):
 
 
 class FieldCorrectionInput(BaseModel):
-    value: str = Field(max_length=4000)
+    value: Annotated[str, StringConstraints(strict=True, strip_whitespace=True, min_length=1, max_length=4000)]
+    expectedContentRevision: int = Field(strict=True, ge=1)
+
+    @field_validator('value')
+    @classmethod
+    def reject_control_characters(cls, value: str):
+        if any(ord(character) < 32 or ord(character) == 127 for character in value):
+            raise ValueError('Correction values must not contain control characters.')
+        return value
 
 
 class CompanyReviewInput(BaseModel):
@@ -796,7 +810,7 @@ def get_record(record_id: str, request: Request):
         row = db.execute("SELECT * FROM standardised_records WHERE (record_code=%s OR id::text=%s) AND (%s IS NULL OR tenant_id=%s)", (record_id, record_id, scope, scope)).fetchone()
     if not row:
         raise HTTPException(404, "Standardised record not found.")
-    return {"id": str(row["id"]), "code": row["record_code"], "documentId": str(row["document_id"]), "tenantId": str(row["tenant_id"]), "revision": row["revision_number"], "category": row["category"].upper(), "supplier": row["supplier_name"], "customer": row["buyer_name"], "invoiceNumber": row["invoice_number"], "referenceNumber": row["reference_number"], "invoiceDate": str(row["invoice_date"]) if row["invoice_date"] else None, "dueDate": str(row["due_date"]) if row["due_date"] else None, "totalAmount": float(row["total_amount"]) if row["total_amount"] is not None else None, "validation": row["validation_status"].upper(), "snapshot": row["snapshot"], "createdAt": str(row["created_at"])}
+    return {"id": str(row["id"]), "code": row["record_code"], "documentId": str(row["document_id"]), "tenantId": str(row["tenant_id"]), "revision": row["revision_number"], "category": row["category"].upper(), "supplier": row["supplier_name"], "customer": row["buyer_name"], "invoiceNumber": row["invoice_number"], "referenceNumber": row["reference_number"], "invoiceDate": str(row["invoice_date"]) if row["invoice_date"] else None, "dueDate": str(row["due_date"]) if row["due_date"] else None, "totalAmount": decimal_text(row["total_amount"]), "validation": row["validation_status"].upper(), "snapshot": row["snapshot"], "createdAt": str(row["created_at"])}
 
 
 @app.get("/api/records/{record_id}/amendments")
@@ -1111,52 +1125,58 @@ def standardise_document(document_id: str, request: Request):
             LIMIT 1""", (document_id, user["tenant_id"], document_id, user["tenant_id"])).fetchone()
         if not approved:
             raise HTTPException(422, "A local administrator must approve the document before standardising.")
-        extracted = db.execute("""SELECT field_key,COALESCE(current_value,normalized_value,raw_value) AS value
-            FROM field_predictions WHERE document_id=%s AND extraction_id=(SELECT id FROM raw_extractions WHERE document_id=%s AND is_current=true LIMIT 1)""", (document_id, document_id)).fetchall()
-        values = {r["field_key"]: r["value"] for r in extracted}
+        existing = db.execute("SELECT id FROM standardised_records WHERE document_id=%s", (document_id,)).fetchone()
+        if existing:
+            raise HTTPException(409, "This document already has a standardised record.")
+        extraction = db.execute("SELECT * FROM raw_extractions WHERE document_id=%s AND is_current=true ORDER BY run_number DESC LIMIT 1", (document_id,)).fetchone()
+        if not extraction:
+            raise HTTPException(422, "The document has no current extraction.")
+        fields = db.execute("SELECT * FROM field_predictions WHERE document_id=%s AND extraction_id=%s", (document_id, extraction['id'])).fetchall()
+        items = db.execute("SELECT * FROM line_items WHERE document_id=%s AND extraction_id=%s ORDER BY line_number", (document_id, extraction['id'])).fetchall()
+        try:
+            values = record_values(fields)
+            snapshot = approved_snapshot(doc, extraction, fields, items)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        if doc['kind'] == 'invoice':
+            validation = evaluate_invoice(doc, extraction, fields, items)
+            if validation['errors']:
+                raise HTTPException(422, {'message': 'Invoice validation requires correction.', 'errors': validation['errors']})
         required_by_kind = {
-            "invoice": ["invoice", "seller", "customer", "date", "currency", "total"],
+            # AP buyer_name is nullable and absent from the M2 supplier-invoice
+            # contract. AR retains the existing explicit customer requirement.
+            "invoice": ["invoice", "supplier", "date", "currency", "total"]
+                       + (["customer"] if doc['category'] == 'accounts_receivable' else []),
             "bill": ["supplier", "reference", "date", "currency", "total"],
-            "receipt": ["merchant", "date", "currency", "total"],
+            "receipt": ["supplier", "date", "currency", "total"],
             "credit_note": ["supplier", "date", "currency", "total"],
             "debit_note": ["supplier", "date", "currency", "total"],
         }
-        aliases = {"seller": values.get("seller") or values.get("supplier"), "merchant": values.get("merchant") or values.get("supplier"), "reference": values.get("reference") or values.get("invoice")}
         rules = db.execute("""SELECT require_supplier, require_invoice_number_for_invoice,
             require_reference_for_bill, require_receipt_identifier
             FROM validation_rules WHERE tenant_id=%s""", (user["tenant_id"],)).fetchone()
         if rules:
             if not rules["require_supplier"]:
-                required_by_kind["invoice"] = [k for k in required_by_kind["invoice"] if k not in {"seller", "supplier"}]
+                required_by_kind["invoice"] = [k for k in required_by_kind["invoice"] if k != "supplier"]
                 required_by_kind["bill"] = [k for k in required_by_kind["bill"] if k != "supplier"]
             if not rules["require_invoice_number_for_invoice"]:
                 required_by_kind["invoice"].remove("invoice")
             if not rules["require_reference_for_bill"]:
                 required_by_kind["bill"].remove("reference")
             if rules["require_receipt_identifier"]:
-                required_by_kind["receipt"].append("receipt")
-        missing = [key for key in required_by_kind[doc["kind"]] if not str(values.get(key) or aliases.get(key) or "").strip()]
+                required_by_kind["receipt"].append("reference")
+        missing = [key for key in required_by_kind[doc["kind"]] if values.get(key) is None]
         if missing:
             raise HTTPException(422, f"Missing required {doc['kind'].replace('_', ' ')} fields: {', '.join(missing)}.")
-        existing = db.execute("SELECT id FROM standardised_records WHERE document_id=%s", (document_id,)).fetchone()
-        if existing:
-            raise HTTPException(409, "This document already has a standardised record.")
         blocking = db.execute("SELECT 1 FROM exceptions WHERE document_id=%s AND tenant_id=%s AND status <> 'resolved' AND severity IN ('high','blocking') LIMIT 1", (document_id, user["tenant_id"])).fetchone()
         if blocking:
             raise HTTPException(422, "Blocking exceptions must be resolved before standardising this document.")
-        extraction = db.execute("SELECT raw_json FROM raw_extractions WHERE document_id=%s AND is_current=true ORDER BY run_number DESC LIMIT 1", (document_id,)).fetchone()
-        fields = db.execute("SELECT field_key,current_value,normalized_value,raw_value FROM field_predictions WHERE document_id=%s AND extraction_id=(SELECT id FROM raw_extractions WHERE document_id=%s AND is_current=true LIMIT 1)", (document_id, document_id)).fetchall()
-        items = db.execute("SELECT id,description,quantity,unit_price,amount FROM line_items WHERE document_id=%s AND extraction_id=(SELECT id FROM raw_extractions WHERE document_id=%s AND is_current=true LIMIT 1) ORDER BY line_number", (document_id, document_id)).fetchall()
-        snapshot = {
-            "extraction": extraction["raw_json"] if extraction else {},
-            "reviewedFields": {r["field_key"]: (r["current_value"] if r["current_value"] is not None else r["normalized_value"] if r["normalized_value"] is not None else r["raw_value"]) for r in fields},
-            "lineItems": [{"id": str(r["id"]), "description": r["description"], "quantity": float(r["quantity"]) if r["quantity"] is not None else None, "unit_price": float(r["unit_price"]) if r["unit_price"] is not None else None, "amount": float(r["amount"]) if r["amount"] is not None else None} for r in items],
-        }
-        supplier = values.get("supplier") or values.get("seller") or values.get("merchant")
         invoice_number = values.get("invoice") or values.get("reference")
-        row = db.execute("""INSERT INTO standardised_records(document_id,tenant_id,category,supplier_name,invoice_number,buyer_name,invoice_date,due_date,currency,total_amount,validation_status,snapshot,created_by)
-            VALUES (%s,%s,%s,%s,%s,%s,NULLIF(%s,'')::date,NULLIF(%s,'')::date,%s,NULLIF(%s,'')::numeric,'passed',%s,%s) RETURNING *""",
-            (document_id, user["tenant_id"], doc["category"], supplier, invoice_number, values.get("customer"), values.get("date"), values.get("due"), values.get("currency") or "MYR", values.get("total"), snapshot, user["id"])).fetchone()
+        row = db.execute("""INSERT INTO standardised_records(document_id,tenant_id,category,supplier_name,invoice_number,buyer_name,invoice_date,due_date,currency,total_amount,subtotal,tax_amount,discount,validation_status,snapshot,created_by)
+            VALUES (%s,%s,%s,%s,%s,%s,%s::date,%s::date,%s,%s::numeric,%s::numeric,%s::numeric,%s::numeric,'passed',%s,%s) RETURNING *""",
+            (document_id, user["tenant_id"], doc["category"], values.get('supplier'), invoice_number,
+             values.get("customer"), values.get("date"), values.get("due"), values.get("currency"),
+             values.get("total"), values.get('subtotal'), values.get('tax'), values.get('discount'), Jsonb(snapshot), user["id"])).fetchone()
         db.execute("UPDATE documents SET status='completed', updated_at=now() WHERE id=%s", (document_id,))
     return {"id": str(row["id"]), "documentId": str(row["document_id"]), "tenantId": str(row["tenant_id"]), "category": row["category"].upper(), "validation": row["validation_status"].upper(), "status": "COMPLETED", "createdAt": str(row["created_at"])}
 
@@ -1165,7 +1185,7 @@ def standardise_document(document_id: str, request: Request):
 def get_document_extraction(document_id: str, request: Request):
     user = require_workspace_user(request, {"local_admin", "accountant"})
     with connect() as db:
-        doc = db.execute("SELECT id FROM documents WHERE id=%s AND tenant_id=%s", (document_id, user["tenant_id"])).fetchone()
+        doc = db.execute("SELECT id,content_revision FROM documents WHERE id=%s AND tenant_id=%s", (document_id, user["tenant_id"])).fetchone()
         if not doc:
             raise HTTPException(404, "Document not found.")
         extraction = db.execute("SELECT * FROM raw_extractions WHERE document_id=%s AND is_current=true ORDER BY run_number DESC LIMIT 1", (document_id,)).fetchone()
@@ -1173,9 +1193,10 @@ def get_document_extraction(document_id: str, request: Request):
         items = db.execute("SELECT * FROM line_items WHERE document_id=%s AND extraction_id=%s ORDER BY line_number", (document_id, extraction["id"] if extraction else None)).fetchall() if extraction else []
     return {
         "documentId": document_id,
+        "contentRevision": doc['content_revision'],
         "raw": extraction["raw_json"] if extraction else {},
-        "fields": [{"key": r["field_key"], "label": r["field_label"], "value": r["current_value"] or r["normalized_value"] or r["raw_value"] or "", "confidence": float(r["confidence"] or 0), "state": r["extraction_state"]} for r in fields],
-        "lineItems": [{"id": str(r["id"]), "description": r["description"] or "", "quantity": float(r["quantity"] or 0), "unit_price": float(r["unit_price"] or 0), "amount": float(r["amount"] or 0)} for r in items],
+        "fields": [prediction_dto(row) for row in fields],
+        "lineItems": [line_dto(row) for row in items],
     }
 
 
@@ -1205,10 +1226,18 @@ def get_document_reviews(document_id: str, request: Request):
 def get_document_validation(document_id: str, request: Request):
     user = _authorised_document(request, document_id)
     with connect() as db:
+        doc, extraction, fields, items = load_current(db, document_id, user)
+        validation = evaluate_invoice(doc, extraction, fields, items)
         exceptions = db.execute("SELECT id,type,severity,status,message,note,created_at,resolved_at FROM exceptions WHERE document_id=%s AND tenant_id=%s ORDER BY created_at", (document_id, user["tenant_id"])).fetchall()
-        doc = db.execute("SELECT status,content_revision FROM documents WHERE id=%s", (document_id,)).fetchone()
-    results = [{"id": str(r["id"]), "rule": r["type"], "result": "PASS" if r["status"] == "resolved" else "FAIL" if r["severity"] == "high" else "WARNING", "message": r["message"], "status": r["status"].upper()} for r in exceptions]
-    return {"documentId": document_id, "contentRevision": doc["content_revision"], "status": doc["status"].upper(), "passed": sum(1 for r in results if r["result"] == "PASS"), "warnings": sum(1 for r in results if r["result"] == "WARNING"), "failed": sum(1 for r in results if r["result"] == "FAIL"), "blocking": any(r["result"] == "FAIL" for r in results), "results": results}
+    results = [{'rule': e['code'], 'field': e['field'], 'result': 'FAIL', 'message': e['message']} for e in validation['errors']]
+    external = [r for r in exceptions if not r['type'].startswith('VALIDATION:') and r['status'] != 'resolved']
+    results.extend({'id': str(r['id']), 'rule': r['type'], 'result': 'FAIL' if r['severity'] == 'high' else 'WARNING', 'message': r['message']} for r in external)
+    blocking = any(r['result'] == 'FAIL' for r in results)
+    return {'documentId': document_id, 'contentRevision': doc['content_revision'], 'status': doc['status'].upper(),
+            'validationStatus': 'REVIEW_REQUIRED' if blocking else 'PASS', 'reviewRequired': True,
+            'accountingApprovalPerformed': False, 'passed': int(not validation['errors']),
+            'warnings': sum(r['result'] == 'WARNING' for r in results), 'failed': sum(r['result'] == 'FAIL' for r in results),
+            'blocking': blocking, 'results': results}
 
 
 @app.get("/api/documents/{document_id}/processing-history")
@@ -1223,13 +1252,65 @@ def get_processing_history(document_id: str, request: Request):
 @app.patch("/api/documents/{document_id}/extraction/{field_key}")
 def correct_extracted_field(document_id: str, field_key: str, data: FieldCorrectionInput, request: Request):
     user = require_workspace_user(request, {"local_admin", "accountant"})
+    # Accept existing API and M2 keys as stored; key translation belongs to the
+    # extraction adapter. Never allow arbitrary prediction metadata to be edited.
+    allowed_fields = {
+        'supplier', 'seller', 'merchant', 'customer', 'buyer', 'invoice', 'reference', 'receipt',
+        'date', 'due', 'currency', 'subtotal', 'tax', 'discount', 'total',
+        'supplier_name', 'buyer_name', 'invoice_number', 'reference_number',
+        'invoice_date', 'due_date', 'tax_amount', 'total_amount',
+    }
+    if field_key not in allowed_fields:
+        raise HTTPException(422, "Unsupported extraction field.")
+    if field_key in {'subtotal', 'tax', 'discount', 'total', 'tax_amount', 'total_amount'}:
+        if not re.fullmatch(r'-?[0-9]+(?:\.[0-9]+)?', data.value):
+            raise HTTPException(422, "Amounts must be finite decimal strings without currency prefixes.")
+    elif field_key in {'date', 'due', 'invoice_date', 'due_date'}:
+        try:
+            if not re.fullmatch(r'[0-9]{4}-[0-9]{2}-[0-9]{2}', data.value):
+                raise ValueError
+            date.fromisoformat(data.value)
+        except ValueError:
+            raise HTTPException(422, "Dates must be valid YYYY-MM-DD values.")
+    elif field_key == 'currency' and not re.fullmatch(r'[A-Z]{3}', data.value):
+        raise HTTPException(422, "Currency must be a three-letter uppercase code.")
+
+    ownership = " AND (d.owner_id=%s OR d.assigned_to=%s)" if user['role'] == 'accountant' else ""
+    owner_params = [user['id'], user['id']] if ownership else []
     with connect() as db:
-        row = db.execute("""UPDATE field_predictions SET current_value=%s, resolution='corrected', corrected_by=%s, corrected_at=now()
-            WHERE document_id=%s AND field_key=%s RETURNING *""", (data.value, user["id"], document_id, field_key)).fetchone()
+        document = db.execute(f"""SELECT d.id,d.content_revision,d.status FROM documents d
+            WHERE d.id=%s AND d.tenant_id=%s{ownership} FOR UPDATE""",
+            [document_id, user['tenant_id'], *owner_params]).fetchone()
+        if not document:
+            raise HTTPException(404, "Document not found.")
+        if document['content_revision'] != data.expectedContentRevision:
+            raise HTTPException(409, "The document changed. Refresh it before correcting this field.")
+        if document['status'] in {'completed', 'standardised'}:
+            raise HTTPException(409, "Standardised documents require an amendment.")
+        db.execute("SELECT set_config('app.user_id',%s,true), set_config('app.status_reason',%s,true)",
+                   (str(user['id']), 'Extracted field corrected'))
+        # Repeat tenant, visibility and revision guards in the write itself.
+        # Preserve resolution/raw/provenance; the existing trigger appends history.
+        row = db.execute(f"""UPDATE field_predictions AS fp
+            SET current_value=%s, corrected_by=%s, corrected_at=now()
+            FROM documents d JOIN raw_extractions re ON re.document_id=d.id AND re.is_current=true
+            WHERE fp.document_id=d.id AND fp.extraction_id=re.id
+              AND d.id=%s AND d.tenant_id=%s AND d.content_revision=%s
+              AND d.status NOT IN ('completed','standardised'){ownership}
+              AND fp.field_key=%s RETURNING fp.*""",
+            [data.value, user['id'], document_id, user['tenant_id'], data.expectedContentRevision,
+             *owner_params, field_key]).fetchone()
         if not row:
             raise HTTPException(404, "Extraction field not found.")
-        db.execute("UPDATE documents SET content_revision=content_revision+1,updated_at=now() WHERE id=%s AND tenant_id=%s", (document_id, user["tenant_id"]))
-    return {"key": row["field_key"], "value": row["current_value"], "correctedBy": str(row["corrected_by"])}
+        revision = db.execute(f"""UPDATE documents AS d
+            SET content_revision=content_revision+1,status='corrected',updated_at=now()
+            WHERE d.id=%s AND d.tenant_id=%s AND d.content_revision=%s{ownership}
+            RETURNING content_revision""",
+            [document_id, user['tenant_id'], data.expectedContentRevision, *owner_params]).fetchone()
+        if not revision:
+            raise HTTPException(409, "The document changed. Refresh it before correcting this field.")
+    return {"key": row["field_key"], "value": row["current_value"], "correctedBy": str(row["corrected_by"]),
+            "contentRevision": revision['content_revision']}
 
 
 @app.patch("/api/documents/{document_id}/line-items/{line_item_id}/{field_key}")
@@ -1267,10 +1348,7 @@ def request_record_amendment(record_id: str, data: RecordAmendmentInput, request
 def revalidate_document(document_id: str, request: Request):
     user = require_workspace_user(request, {"local_admin", "accountant"})
     with connect() as db:
-        row = db.execute("UPDATE documents SET status='validated', updated_at=now() WHERE id=%s AND tenant_id=%s RETURNING id,status", (document_id, user["tenant_id"])).fetchone()
-        if not row:
-            raise HTTPException(404, "Document not found.")
-    return {"documentId": str(row["id"]), "status": row["status"].upper()}
+        return validate_document(db, document_id, user)
 
 
 @app.post("/api/documents/{document_id}/draft")
