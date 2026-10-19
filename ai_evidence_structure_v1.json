@@ -1,0 +1,259 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "ai_evidence_structure_v1.json",
+  "title": "AI Evidence and Confidence Structure v1",
+  "description": "One entry per extracted field for one extraction run. Each entry is stored as one row in field_predictions. The extracted values (raw_value, normalized_value, confidence, evidence, candidates, extraction_state, resolution) are read only once saved. Only current_value, corrected_by and corrected_at can change, and every change to current_value is written to field_corrections. A rerun saves a new set of entries for a new run and never changes the old ones. confidence is null when the extractor gives no numeric score. Null is not zero, and no artificial score is ever generated. An AI candidate never replaces the parser value. While resolution is candidate_for_review, current_value stays null until a person corrects it.",
+  "type": "object",
+  "required": [
+    "field_key",
+    "extraction_state",
+    "raw_value",
+    "normalized_value",
+    "evidence",
+    "candidates",
+    "extraction_method",
+    "schema_version"
+  ],
+  "properties": {
+    "field_key": {
+      "description": "Which field this entry belongs to. Use the key from the Key column of the Field Dictionary v1, which is the frontend key. The M2 names map to it in the adapter: supplier_name to supplier, invoice_number to invoice, invoice_date to date, currency to currency, subtotal to subtotal, tax_amount to tax, total_amount to total. Line item cells are not stored here. Their state, evidence and candidates are kept in the line_items table, in JSON objects keyed by cell name.",
+      "enum": [
+        "type",
+        "accountingCategory",
+        "supplier",
+        "supplierAddress",
+        "registration",
+        "invoice",
+        "date",
+        "issuanceDateTime",
+        "submissionDateTime",
+        "validationDateTime",
+        "due",
+        "reference",
+        "customer",
+        "buyerAddress",
+        "currency",
+        "subtotal",
+        "tax",
+        "discount",
+        "total",
+        "paymentDetails"
+      ]
+    },
+    "field_label": {
+      "type": "string",
+      "description": "The label shown to the reviewer, for example Total Payable Amount."
+    },
+    "extraction_state": {
+      "type": "string",
+      "enum": [
+        "resolved",
+        "missing",
+        "ambiguous",
+        "conflict",
+        "unsupported",
+        "unreadable"
+      ],
+      "description": "The M2 state of the field."
+    },
+    "resolution": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "parser_preserved",
+        "candidate_for_review",
+        "unresolved_missing",
+        null
+      ],
+      "description": "The M2 reconciliation outcome, when reconciliation ran."
+    },
+    "raw_value": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "The text exactly as the extractor read it (M2 raw_text). Null when nothing was read."
+    },
+    "normalized_value": {
+      "type": [
+        "string",
+        "number",
+        "boolean",
+        "null"
+      ],
+      "description": "The cleaned value from the extractor (M2 value). Null unless the field is resolved. The database stores it as text."
+    },
+    "current_value": {
+      "type": [
+        "string",
+        "number",
+        "boolean",
+        "null"
+      ],
+      "description": "The value now in use. Null while an AI candidate waits for review."
+    },
+    "confidence": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 1,
+      "description": "A numeric confidence from 0 to 1, or null when the extractor provides none. Null is different from 0. The frontend must treat null as no score and review needed, never as zero."
+    },
+    "evidence": {
+      "type": "array",
+      "description": "The full M2 evidence, kept as sent. A field can have more than one reference. The API converts bbox to x, y, width, height if the frontend needs it.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "bbox": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Left, top, right and bottom in document points, measured from the top left corner.",
+            "properties": {
+              "l": {
+                "type": "number"
+              },
+              "t": {
+                "type": "number"
+              },
+              "r": {
+                "type": "number"
+              },
+              "b": {
+                "type": "number"
+              },
+              "coord_origin": {
+                "type": "string",
+                "enum": [
+                  "TOPLEFT"
+                ]
+              }
+            }
+          },
+          "bbox_original": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "page_size": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "coordinate_units": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "candidates": {
+      "type": "array",
+      "description": "Every candidate value for the field. Parser candidates and AI candidates stay distinct, and nothing is accepted automatically.",
+      "items": {
+        "type": "object",
+        "required": [
+          "source",
+          "value",
+          "auto_accepted"
+        ],
+        "properties": {
+          "source": {
+            "type": "string",
+            "enum": [
+              "parser",
+              "ai"
+            ]
+          },
+          "raw_text": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "value": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "evidence": {
+            "type": "array"
+          },
+          "auto_accepted": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          }
+        }
+      }
+    },
+    "extraction_method": {
+      "type": "string",
+      "enum": [
+        "VLM",
+        "OCR",
+        "PARSER",
+        "MANUAL_CORRECTION"
+      ],
+      "description": "M2 parser_mapping is stored as PARSER. The original M2 method is kept in raw_extractions.raw_json. MANUAL_CORRECTION is reserved and not used by the frontend."
+    },
+    "model_name": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "model_version": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "schema_version": {
+      "type": "string",
+      "description": "Version of this evidence structure."
+    },
+    "corrected_by": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "corrected_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    }
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "synthetic": true,
+  "document_id": "missing_number",
+  "fields": {
+    "supplier_name": "Example Office Supply (Synthetic)",
+    "invoice_number": null,
+    "invoice_date": "2026-10-02",
+    "currency": "MYR",
+    "subtotal": "18.00",
+    "tax_amount": "0.00",
+    "total_amount": "18.00"
+  },
+  "line_items": [
+    {
+      "description": "Paper pack",
+      "quantity": "1",
+      "unit_price": "18.00",
+      "line_total": "18.00"
+    }
+  ]
+}
