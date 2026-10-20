@@ -64,11 +64,10 @@ def persist_extraction_result(document_id: str, result: dict[str, Any]) -> dict[
             (document_id,),
         ).fetchone()["next_run"]
         extraction_id = uuid4()
-        db.execute("UPDATE raw_extractions SET is_current=FALSE WHERE document_id=%s AND is_current=TRUE", (document_id,))
         db.execute(
             """INSERT INTO raw_extractions
                (id, document_id, run_number, is_current, routing_decision, service_run_id, schema_version, pending_job_id, raw_json)
-               VALUES (%s,%s,%s,TRUE,%s,%s,%s,%s,%s)""",
+               VALUES (%s,%s,%s,FALSE,%s,%s,%s,%s,%s)""",
             (extraction_id, document_id, run_number, routing_decision, service_run_id,
              public_result.get("schema_version"), job["id"], json.dumps(public_result)),
         )
@@ -114,6 +113,7 @@ def persist_extraction_result(document_id: str, result: dict[str, Any]) -> dict[
                  decimal("unit_price"), decimal("line_total"), json.dumps({}), json.dumps({}), json.dumps({})),
             )
 
+        db.execute("SELECT switch_current_extraction(%s)", (extraction_id,))
         db.execute("UPDATE documents SET status='extracted', processing_seconds=EXTRACT(EPOCH FROM (now() - uploaded_at)), processing_completed_at=now(), updated_at=now() WHERE id=%s", (document_id,))
         db.execute(
             "UPDATE pending_jobs SET status='succeeded', finished_at=now(), last_error=NULL, updated_at=now() WHERE id=%s",

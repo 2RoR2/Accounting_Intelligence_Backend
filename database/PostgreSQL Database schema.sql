@@ -490,6 +490,7 @@ CREATE FUNCTION switch_current_extraction(new_extraction UUID) RETURNS INTEGER A
 DECLARE
     doc            UUID;
     old_extraction UUID;
+    carried        INTEGER := 0;
 BEGIN
     SELECT document_id INTO doc FROM raw_extractions WHERE id = new_extraction;
     IF doc IS NULL THEN
@@ -501,9 +502,17 @@ BEGIN
         UPDATE raw_extractions SET is_current = FALSE WHERE id = old_extraction;
     END IF;
     UPDATE raw_extractions SET is_current = TRUE WHERE id = new_extraction;
-    -- Corrections are intentionally not copied to a new extraction run.
-    -- The new run must be reviewed again before it can be approved or standardised.
-    RETURN 0;
+    IF old_extraction IS NOT NULL AND old_extraction <> new_extraction THEN
+        UPDATE field_predictions np
+        SET current_value = op.current_value, corrected_by = op.corrected_by, corrected_at = op.corrected_at
+        FROM field_predictions op
+        WHERE np.extraction_id = new_extraction
+          AND op.extraction_id = old_extraction
+          AND op.field_key = np.field_key
+          AND op.corrected_at IS NOT NULL;
+        GET DIAGNOSTICS carried = ROW_COUNT;
+    END IF;
+    RETURN carried;
 END;
 $$ LANGUAGE plpgsql;
 
