@@ -1245,8 +1245,12 @@ def get_processing_history(document_id: str, request: Request):
 def correct_extracted_field(document_id: str, field_key: str, data: FieldCorrectionInput, request: Request):
     user = require_workspace_user(request, {"local_admin", "accountant"})
     with connect() as db:
-        row = db.execute("""UPDATE field_predictions SET current_value=%s, resolution='corrected', corrected_by=%s, corrected_at=now()
-            WHERE document_id=%s AND field_key=%s RETURNING *""", (data.value, user["id"], document_id, field_key)).fetchone()
+        row = db.execute("""UPDATE field_predictions AS fp
+            SET current_value=%s, corrected_by=%s, corrected_at=now()
+            FROM documents d JOIN raw_extractions re ON re.document_id=d.id AND re.is_current=true
+            WHERE fp.document_id=d.id AND fp.extraction_id=re.id
+              AND d.id=%s AND d.tenant_id=%s AND fp.field_key=%s
+            RETURNING fp.*""", (data.value, user["id"], document_id, user["tenant_id"], field_key)).fetchone()
         if not row:
             raise HTTPException(404, "Extraction field not found.")
         db.execute("UPDATE documents SET content_revision=content_revision+1,updated_at=now() WHERE id=%s AND tenant_id=%s", (document_id, user["tenant_id"]))

@@ -714,10 +714,7 @@ CREATE TRIGGER trg_set_record_code
 CREATE FUNCTION prevent_record_update() RETURNS trigger AS $$
 BEGIN
     IF NEW.is_current IS DISTINCT FROM OLD.is_current
-       AND NEW.record_code = OLD.record_code
-       AND NEW.document_id = OLD.document_id
-       AND NEW.revision_number = OLD.revision_number
-       AND NEW.snapshot = OLD.snapshot THEN
+       AND (to_jsonb(NEW) - 'is_current') = (to_jsonb(OLD) - 'is_current') THEN
         RETURN NEW;
     END IF;
     RAISE EXCEPTION 'Standardised records are immutable.';
