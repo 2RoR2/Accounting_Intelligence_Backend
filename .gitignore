@@ -1,0 +1,11 @@
+.env
+kaggle.json
+.venv/
+.venv-*/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+runs/
+storage/
+*.log
+*.err

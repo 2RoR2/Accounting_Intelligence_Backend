@@ -1,0 +1,3 @@
+# Lightweight original 63-test suite; no Docling, Torch, or Ollama needed.
+# Matches the Pydantic version recorded with the verified SSD baseline.
+pydantic==2.13.5
