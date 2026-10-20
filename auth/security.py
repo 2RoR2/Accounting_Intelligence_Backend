@@ -16,8 +16,11 @@ from cryptography.fernet import Fernet, InvalidToken
 PASSWORDS = PasswordHasher(time_cost=3, memory_cost=65536, parallelism=2, hash_len=32, salt_len=16)
 JWT_ISSUER = "accounting-intelligence"
 JWT_AUDIENCE = "accounting-intelligence-web"
-ACCESS_TOKEN_SECONDS = 15 * 60
-SESSION_SECONDS = 8 * 60 * 60
+# Keep a signed-in user active for up to three hours before requiring login
+# again. Both the access token and refresh session use the same boundary so a
+# refresh cannot extend the login beyond the requested three-hour window.
+ACCESS_TOKEN_SECONDS = 3 * 60 * 60
+SESSION_SECONDS = 3 * 60 * 60
 TOTP_PERIOD = 30
 
 
