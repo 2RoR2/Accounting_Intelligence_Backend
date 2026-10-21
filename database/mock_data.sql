@@ -149,7 +149,7 @@ VALUES
      NULL, now());
 
 -- Active extraction fixture shown on the accountant dashboard. The worker can
--- process this document through infrastructure.queue.jobs when a real demo
+-- process this document through queue.jobs when a real demo
 -- file is placed under DOCUMENT_STORAGE_PATH.
 INSERT INTO pending_jobs
     (id, tenant_id, document_id, status, attempt_count, max_attempts,

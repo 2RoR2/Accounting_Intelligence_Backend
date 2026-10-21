@@ -12,8 +12,10 @@ def find_duplicate_invoices(invoices: List[Dict[str, Any]]) -> List[Dict[str, An
     duplicates = []
 
     for invoice in invoices:
-        vendor_name = str(invoice.get("vendor_name", "")).strip().lower()
-        invoice_number = str(invoice.get("invoice_number", "")).strip()
+        vendor = invoice.get('vendor_name')
+        number = invoice.get('invoice_number')
+        vendor_name = vendor.strip().casefold() if isinstance(vendor, str) else ''
+        invoice_number = number.strip() if isinstance(number, str) else ''
 
         if not vendor_name or not invoice_number:
             continue

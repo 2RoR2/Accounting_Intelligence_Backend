@@ -62,7 +62,9 @@ class OllamaQwenProvider:
     def chat(self, payload):
         request = Request(BASE + '/api/chat', data=json.dumps(payload).encode('utf-8'),
                           headers={'Content-Type': 'application/json'})
-        with self.opener.open(request, timeout=120) as response:
+        # CPU vision inference for Qwen2.5-VL can take several minutes on a
+        # first request while the model is loaded. The RQ job timeout is 600s.
+        with self.opener.open(request, timeout=300) as response:
             # Caller saves this before JSON parsing or structural validation.
             return response.read().decode('utf-8')
 

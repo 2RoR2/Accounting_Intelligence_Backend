@@ -12,7 +12,7 @@ def normalize_vendor_name(name: str) -> str:
     This does not decide whether two vendors are the same.
     It only makes formatting differences easier to compare.
     """
-    if not name:
+    if not isinstance(name, str) or not name:
         return ""
 
     name = name.lower().strip()

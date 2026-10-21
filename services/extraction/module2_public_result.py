@@ -502,8 +502,12 @@ def build_public_result(
             PUBLIC_SCHEMA_VERSION
         ),
         "mode": "module2_public_result",
+        "field_schema": extraction.get("field_schema"),
         "document_id": document_id,
         "document_type": {
+            "classifier_version": document_type.get("classifier_version"),
+            "candidates": document_type.get("candidates") or [],
+            "unsupported_headings": document_type.get("unsupported_headings") or [],
             "value": document_type.get(
                 "value"
             ),

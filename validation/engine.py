@@ -37,10 +37,8 @@ def validate_invoice_document(
     Returns one consolidated validation result.
     """
 
-    known_vendors = known_vendors or []
-    existing_invoices = existing_invoices or []
-
     errors = []
+    checks = []
 
     # ---------------------------------------------------------
     # 1. Core invoice validation
@@ -58,8 +56,22 @@ def validate_invoice_document(
     # ---------------------------------------------------------
     # 2. Duplicate detection
     # ---------------------------------------------------------
-    duplicate_input = existing_invoices + [invoice_data]
-    duplicates = find_duplicate_invoices(duplicate_input)
+    # Compare the target to each reference. A duplicate pair elsewhere in the
+    # reference history says nothing about this invoice.
+    duplicates = []
+    duplicate_key_ready = all(isinstance(invoice_data.get(key), str) and invoice_data[key].strip()
+                              for key in ('vendor_name','invoice_number'))
+    if existing_invoices is None or not duplicate_key_ready:
+        checks.append({'rule': 'EX-007', 'result': 'WARNING', 'checkStatus': 'NOT_CHECKED',
+                       'message': 'Authorized current-invoice references or a complete supplier/invoice key are unavailable.'})
+    else:
+        for existing in existing_invoices:
+            if invoice_data.get('document_id') and existing.get('document_id') == invoice_data['document_id']:
+                continue
+            duplicates.extend(find_duplicate_invoices([existing, invoice_data]))
+        if not duplicates:
+            checks.append({'rule': 'EX-007', 'result': 'PASS', 'checkStatus': 'CHECKED',
+                           'message': 'Current same-tenant invoice references checked.'})
 
     for duplicate in duplicates:
         errors.append({
@@ -77,12 +89,22 @@ def validate_invoice_document(
     # ---------------------------------------------------------
     # 3. Vendor matching
     # ---------------------------------------------------------
-    vendor_match = find_vendor_match(
-        invoice_data.get("vendor_name", ""),
-        known_vendors,
-    )
+    vendor_name = invoice_data.get('vendor_name')
+    if not known_vendors or not isinstance(vendor_name, str) or not vendor_name.strip():
+        vendor_match = {'status': 'NOT_CHECKED', 'vendor_id': None, 'vendor_name': None, 'similarity': None}
+        checks.append({'rule': 'EX-008', 'result': 'WARNING', 'checkStatus': 'NOT_CHECKED',
+                       'message': 'No applicable tenant supplier catalogue or resolved supplier name; vendor matching was not checked.'})
+    else:
+        # Legacy helper calls this confidence; it measures name similarity only.
+        # Never write it into extraction confidence or automatically accept an entity.
+        vendor_match = find_vendor_match(invoice_data.get('vendor_name'), known_vendors)
+        vendor_match['similarity'] = vendor_match['confidence']
+        vendor_match['score_method'] = 'normalized_name_sequence_matcher'
+        if vendor_match['status'] == 'ACCEPT':
+            checks.append({'rule': 'EX-008', 'result': 'PASS', 'checkStatus': 'CHECKED',
+                           'message': 'Tenant vendor names compared; this does not approve an entity.'})
 
-    if vendor_match["status"] != "ACCEPT":
+    if vendor_match["status"] not in {"ACCEPT", "NOT_CHECKED"}:
         errors.append({
             "code": "EX-008",
             "severity": EXCEPTION_SEVERITY["EX-008"],
@@ -91,6 +113,8 @@ def validate_invoice_document(
                 f"Vendor matching requires review: "
                 f"{vendor_match['status']}"
             ),
+            'vendor_candidate': {key: vendor_match.get(key) for key in
+                                 ('vendor_id', 'vendor_name', 'similarity', 'score_method')},
         })
 
     # ---------------------------------------------------------
@@ -114,6 +138,9 @@ def validate_invoice_document(
                 ),
                 "po_match": po_match,
             })
+    else:
+        checks.append({'rule': 'EX-009', 'result': 'WARNING', 'checkStatus': 'NOT_CHECKED',
+                       'message': 'No authorized purchase-order reference supplied; database PO matching is not implemented.'})
 
     # ---------------------------------------------------------
     # 5. Final decision
@@ -126,4 +153,5 @@ def validate_invoice_document(
         "vendor_match": vendor_match,
         "po_match": po_match,
         "errors": errors,
+        'checks': checks,
     }

@@ -20,8 +20,8 @@
 -- scripts for databases that were created before this consolidated version.
 
 DROP TABLE IF EXISTS
-    audit_logs, workspace_settings, validation_rules, standardised_records,
-    vendors, exceptions, line_items, field_predictions, raw_extractions,
+    audit_logs, workspace_settings, validation_rules, validation_results, standardised_records,
+    vendors, purchase_orders, goods_receipts, exceptions, line_items, field_predictions, raw_extractions,
     field_corrections, pending_jobs, documents, auth_tokens, account_limit_requests, company_requests,
     mfa_recovery_requests, auth_challenges, password_challenges, auth_rate_limits, web_sessions,
     document_custom_values, custom_fields, customer_matches, customers, supplier_matches, document_status_history, workload_assignments, backup_runs,
@@ -573,6 +573,30 @@ CREATE TABLE exceptions (
     resolved_at  TIMESTAMPTZ
 );
 
+-- Versioned result for every validation rule/check at a document revision.
+CREATE TABLE validation_results (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    document_id UUID NOT NULL REFERENCES documents(id) ON DELETE RESTRICT,
+    tenant_id UUID NOT NULL,
+    content_revision INTEGER NOT NULL CHECK (content_revision >= 1),
+    rule_id TEXT NOT NULL,
+    rule_source TEXT NOT NULL DEFAULT 'SAIC',
+    rule_version TEXT NOT NULL DEFAULT 'validation-v1',
+    document_type TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('passed','failed','not_checked','warning')),
+    severity TEXT NOT NULL CHECK (severity IN ('info','medium','high','blocking')),
+    field_key TEXT,
+    actual_value TEXT,
+    expected_value TEXT,
+    difference TEXT,
+    prevents_approval BOOLEAN NOT NULL DEFAULT FALSE,
+    requires_review BOOLEAN NOT NULL DEFAULT TRUE,
+    message TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    FOREIGN KEY (document_id, tenant_id) REFERENCES documents(id, tenant_id) ON DELETE RESTRICT
+);
+CREATE INDEX idx_validation_results_revision ON validation_results(document_id, content_revision, created_at);
+
 -- ---------------------------------------------------------------------------
 -- Suppliers, one set per company (optional resolved entity for vendor matching).
 -- ---------------------------------------------------------------------------
@@ -586,6 +610,53 @@ CREATE TABLE vendors (
     UNIQUE (tenant_id, vendor_name)
 );
 CREATE UNIQUE INDEX uq_vendors_id_tenant ON vendors(id, tenant_id);
+
+-- Purchase orders and goods receipts used by optional AP matching.
+CREATE TABLE purchase_orders (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    vendor_id UUID,
+    po_number TEXT NOT NULL,
+    order_date DATE,
+    currency CHAR(3),
+    total_amount NUMERIC(14,2) CHECK (total_amount >= 0),
+    status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('draft','open','partially_received','closed','cancelled')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (tenant_id, po_number),
+    FOREIGN KEY (vendor_id, tenant_id) REFERENCES vendors(id, tenant_id) ON DELETE RESTRICT
+);
+CREATE TABLE purchase_order_lines (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    purchase_order_id UUID NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE,
+    line_number INTEGER NOT NULL CHECK (line_number >= 1),
+    description TEXT NOT NULL,
+    quantity NUMERIC(14,3) NOT NULL CHECK (quantity > 0),
+    unit_price NUMERIC(14,4) NOT NULL CHECK (unit_price >= 0),
+    amount NUMERIC(14,2) NOT NULL CHECK (amount >= 0),
+    UNIQUE (purchase_order_id, line_number)
+);
+CREATE TABLE goods_receipts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    purchase_order_id UUID NOT NULL,
+    receipt_number TEXT NOT NULL,
+    received_date DATE NOT NULL,
+    status TEXT NOT NULL DEFAULT 'received' CHECK (status IN ('draft','received','cancelled')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (tenant_id, receipt_number),
+    FOREIGN KEY (purchase_order_id) REFERENCES purchase_orders(id) ON DELETE RESTRICT
+);
+CREATE TABLE goods_receipt_lines (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    goods_receipt_id UUID NOT NULL REFERENCES goods_receipts(id) ON DELETE CASCADE,
+    purchase_order_line_id UUID REFERENCES purchase_order_lines(id) ON DELETE RESTRICT,
+    line_number INTEGER NOT NULL CHECK (line_number >= 1),
+    description TEXT NOT NULL,
+    quantity NUMERIC(14,3) NOT NULL CHECK (quantity > 0),
+    UNIQUE (goods_receipt_id, line_number)
+);
+CREATE INDEX idx_purchase_orders_tenant_status ON purchase_orders(tenant_id, status);
+CREATE INDEX idx_goods_receipts_po ON goods_receipts(purchase_order_id, received_date);
 
 CREATE TABLE customers (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -739,6 +810,10 @@ CREATE TABLE validation_rules (
     require_invoice_number_for_invoice BOOLEAN NOT NULL DEFAULT TRUE,
     require_reference_for_bill        BOOLEAN NOT NULL DEFAULT TRUE,
     require_receipt_identifier        BOOLEAN NOT NULL DEFAULT FALSE,
+    approval_limit_amount             NUMERIC(14,2),
+    approval_limit_currency            CHAR(3),
+    require_po_for_ap                  BOOLEAN NOT NULL DEFAULT FALSE,
+    require_grn_for_ap                 BOOLEAN NOT NULL DEFAULT FALSE,
     confidence_threshold    NUMERIC(3,2) NOT NULL DEFAULT 0.80
         CHECK (confidence_threshold >= 0 AND confidence_threshold <= 1),
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT now()

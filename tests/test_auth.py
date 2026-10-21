@@ -10,7 +10,7 @@ import psycopg
 from psycopg import sql
 from psycopg.rows import dict_row
 from fastapi.testclient import TestClient
-import app as api
+import main as api
 from auth.security import (
     ACCESS_TOKEN_SECONDS,
     create_access_token,

@@ -9,3 +9,4 @@ runs/
 storage/
 *.log
 *.err
+logs/

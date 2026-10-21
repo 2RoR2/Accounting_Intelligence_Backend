@@ -12,6 +12,7 @@ Important:
 """
 
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any, Callable, Dict, Optional
 
 from services.extraction.document_intelligence_service import DocumentIntelligenceService
@@ -61,15 +62,35 @@ def execute_document_extraction(
         models_dir=models_dir,
     )
 
-    # 1. Run DocumentIntelligenceService
+    # 1. Run DocumentIntelligenceService. The baseline parser consumes PDFs,
+    # while the public upload API also accepts image documents. Convert images
+    # to a temporary PDF at this boundary so JPG/PNG/TIFF uploads follow the
+    # same trusted extraction and persistence path without changing the stored
+    # original artifact.
     try:
-        summary_path, summary = service.process_document(
-            document_id=document_id,
-            file_path=path,
-            verbose=verbose,
-            allow_vlm_inference=allow_vlm_inference,
-            models_dir=models_dir,
-        )
+        source_for_parser = path
+        # The baseline parser intentionally rejects inputs outside its project
+        # root. Keep the transient converted PDF inside that trusted root.
+        temp_parent = service.project_root / ".extraction-tmp"
+        temp_parent.mkdir(parents=True, exist_ok=True)
+        with TemporaryDirectory(prefix="accounting-extraction-", dir=temp_parent) as temp_dir:
+            if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".tif", ".tiff"}:
+                try:
+                    from PIL import Image
+                    with Image.open(path) as image:
+                        converted = image.convert("RGB")
+                        source_for_parser = Path(temp_dir) / "source.pdf"
+                        converted.save(source_for_parser, format="PDF", resolution=150.0)
+                except Exception as exc:
+                    raise RuntimeError(f"Image-to-PDF conversion failed: {type(exc).__name__}: {exc}") from exc
+
+            summary_path, summary = service.process_document(
+                document_id=document_id,
+                file_path=source_for_parser,
+                verbose=verbose,
+                allow_vlm_inference=allow_vlm_inference,
+                models_dir=models_dir,
+            )
     except Exception as exc:
         return {
             "execution_status": "INFRASTRUCTURE_ERROR",

@@ -354,6 +354,19 @@ def integrate_m2_with_m3(
             "m2_provenance": adapter_result["m2_provenance"],
             "original_m2_result": public_result
         }
+
+    # The isolated adapter must not claim a complete validation when it has no
+    # tenant supplier catalogue context. The production API supplies that
+    # context separately and may apply its configured validation rules.
+    if not known_vendors:
+        m3_result = {**m3_result,
+                     "status": "REVIEW_REQUIRED",
+                     "errors": [*m3_result.get("errors", []), {
+                         "code": "EX-008",
+                         "severity": "medium",
+                         "field": "vendor_name",
+                         "message": "Supplier verification requires tenant vendor context.",
+                     }]}
     
     return {
         "workflow_status": "M3_VALIDATION_COMPLETE",

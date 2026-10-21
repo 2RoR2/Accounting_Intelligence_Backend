@@ -6,7 +6,7 @@ from fakeredis import FakeStrictRedis
 from rq import Queue
 from rq.worker import SimpleWorker
 from rq.serializers import JSONSerializer
-from infrastructure.queue.jobs import (
+from job_queue.jobs import (
     process_document_mock,
     process_document_extraction_job,
     set_test_extraction_environment,
@@ -49,7 +49,7 @@ def test_mock_job_execution():
 def test_enqueue_serialization(fake_cpu_queue):
     """Verify that jobs can be successfully enqueued using JSON serialization."""
     test_uuid = str(uuid.uuid4())
-    job = fake_cpu_queue.enqueue('infrastructure.queue.jobs.process_document_mock', args=(test_uuid,))
+    job = fake_cpu_queue.enqueue('job_queue.jobs.process_document_mock', args=(test_uuid,))
     
     assert job.id is not None
     assert job.is_queued
@@ -64,7 +64,7 @@ def test_invalid_serialization(fake_cpu_queue):
         
     with pytest.raises(Exception):
         # Depending on RQ version, this might raise TypeError directly inside enqueue
-        fake_cpu_queue.enqueue('infrastructure.queue.jobs.process_document_mock', args=(NonSerializableObj(),))
+        fake_cpu_queue.enqueue('job_queue.jobs.process_document_mock', args=(NonSerializableObj(),))
 
 
 def test_extraction_job_fails_closed_by_default():
@@ -87,7 +87,7 @@ def test_extraction_job_fails_when_resolver_returns_missing_file():
 def test_extraction_job_unauthorized_fails_in_rq(fake_redis, fake_cpu_queue):
     """Verify that an unauthorized extraction job is marked as FAILED by RQ."""
     job = fake_cpu_queue.enqueue(
-        "infrastructure.queue.jobs.process_document_extraction_job",
+        "job_queue.jobs.process_document_extraction_job",
         args=("DOC-UNAUTH-RQ",),
     )
     worker = SimpleWorker([fake_cpu_queue], connection=fake_redis, serializer=JSONSerializer)
@@ -101,7 +101,7 @@ def test_extraction_job_unresolvable_fails_in_rq(fake_redis, fake_cpu_queue):
     """Verify that an unresolvable extraction job is marked as FAILED by RQ."""
     set_test_extraction_environment(resolver=lambda doc_id: Path("non_existent_file.pdf"))
     job = fake_cpu_queue.enqueue(
-        "infrastructure.queue.jobs.process_document_extraction_job",
+        "job_queue.jobs.process_document_extraction_job",
         args=("DOC-MISSING-RQ",),
     )
     worker = SimpleWorker([fake_cpu_queue], connection=fake_redis, serializer=JSONSerializer)
@@ -131,7 +131,7 @@ def test_extraction_job_offline_queued_execution(fake_redis, fake_cpu_queue, tmp
 
     # Case J: Payload is strictly opaque/minimal identifier tuple (no raw file paths)
     job = fake_cpu_queue.enqueue(
-        "infrastructure.queue.jobs.process_document_extraction_job",
+        "job_queue.jobs.process_document_extraction_job",
         args=("DOC-QUEUED-001",),
     )
     assert job.id is not None

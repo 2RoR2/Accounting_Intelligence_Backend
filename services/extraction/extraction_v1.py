@@ -9,6 +9,7 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from services.extraction.map_invoice import PROFILE_FIELDS, INVOICE_OPTIONAL
 
 HEADERS = {'supplier_name', 'invoice_number', 'invoice_date', 'currency',
            'subtotal', 'tax_amount', 'total_amount'}
@@ -59,7 +60,9 @@ class ExtractionResultV1(StrictModel):
     extraction_run_id: str = Field(min_length=1)
     created_at: str
     document_type: Classification = Field(default_factory=Classification)
-    field_schema: Literal['invoice_headers_and_simple_rows_v1'] = 'invoice_headers_and_simple_rows_v1'
+    field_schema: Literal['invoice_headers_and_simple_rows_v1', 'bill_headers_and_simple_rows_v1',
+                          'receipt_headers_and_simple_rows_v1', 'credit_note_headers_and_simple_rows_v1',
+                          'debit_note_headers_and_simple_rows_v1', 'unknown_no_accounting_fields_v1'] = 'invoice_headers_and_simple_rows_v1'
     status: Literal['needs_review'] = 'needs_review'
     review_required: Literal[True] = True
     fields: dict[str, FieldResult]
@@ -72,8 +75,13 @@ class ExtractionResultV1(StrictModel):
 
     @model_validator(mode='after')
     def check_shape(self):
-        if set(self.fields) != HEADERS:
-            raise ValueError('Expected all seven invoice header wrappers')
+        profile = next((name for name in PROFILE_FIELDS if self.field_schema.startswith(name + '_')), 'unknown')
+        required = PROFILE_FIELDS[profile]
+        allowed = required | (INVOICE_OPTIONAL if profile == 'invoice' else set())
+        if not required <= set(self.fields) <= allowed:
+            raise ValueError('Unexpected fields for document profile')
+        if profile == 'unknown' and self.line_items:
+            raise ValueError('Unknown documents cannot contain mapped accounting rows')
         for row in self.line_items:
             if set(row) != ROW_FIELDS:
                 raise ValueError('Expected all four wrappers in each line-item row')
@@ -111,6 +119,8 @@ def adapt_result(legacy, document_id, source_path, source_sha256):
         document_id=document_id,
         extraction_run_id='extraction-' + uuid4().hex,
         created_at=datetime.now(timezone.utc).isoformat(),
+        field_schema=({'unknown': 'unknown_no_accounting_fields_v1'}.get(legacy['provenance'].get('document_profile'))
+                      or legacy['provenance'].get('document_profile', 'invoice') + '_headers_and_simple_rows_v1'),
         fields={k: adapt_field(v) for k, v in legacy['fields'].items()},
         line_items=[{k: adapt_field(v) for k, v in row.items()} for row in legacy['line_items']],
         issues=deepcopy(legacy['issues']),

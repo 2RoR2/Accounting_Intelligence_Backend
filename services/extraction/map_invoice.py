@@ -9,6 +9,8 @@ from pathlib import Path
 import re
 import time
 from uuid import uuid4
+from services.extraction.classify_document import classify_document
+from services.extraction.accounting_contract import decimal_text, field_value
 
 LABELS = {
     'supplier': 'supplier_name', 'invoice number': 'invoice_number',
@@ -18,6 +20,40 @@ LABELS = {
 HEADERS = {'description': 'description', 'quantity': 'quantity',
            'unit price': 'unit_price', 'line total': 'line_total'}
 AMOUNTS = {'subtotal', 'tax_amount', 'total_amount'}
+
+# Explicit content profiles, not filename/category guesses. Optional invoice
+# labels are emitted only when present, preserving the original seven fields.
+INVOICE_LABELS = {**LABELS, 'vendor': 'supplier_name', 'seller': 'supplier_name',
+    'invoice no': 'invoice_number', 'invoice date': 'invoice_date', 'total': 'total_amount',
+    'tax': 'tax_amount', 'customer': 'buyer_name', 'buyer': 'buyer_name',
+    'due date': 'due_date', 'discount': 'discount',
+    'allowances': 'document_allowances', 'charges': 'document_charges',
+    'prepaid amount': 'prepaid_amount', 'rounding amount': 'rounding_amount',
+    'total excluding tax': 'total_excluding_tax', 'total including tax': 'total_including_tax',
+    'amount due': 'amount_due'}
+BILL_LABELS = {'issuer': 'issuer', 'supplier': 'issuer', 'account number': 'account_number',
+    'bill reference': 'bill_reference', 'bill number': 'bill_reference',
+    'billing period': 'billing_period', 'bill date': 'bill_date', 'date': 'bill_date',
+    'due date': 'due_date', 'currency': 'currency', 'subtotal': 'subtotal',
+    'tax': 'tax_amount', 'tax amount': 'tax_amount', 'amount due': 'amount_due'}
+RECEIPT_LABELS = {'merchant': 'merchant', 'receipt number': 'receipt_number',
+    'transaction date': 'transaction_date', 'date': 'transaction_date',
+    'transaction time': 'transaction_time', 'time': 'transaction_time',
+    'currency': 'currency', 'subtotal': 'subtotal', 'tax': 'tax_amount',
+    'tax amount': 'tax_amount', 'total': 'total_amount', 'total amount': 'total_amount',
+    'payment method': 'payment_method'}
+NOTE_LABELS = {'supplier': 'supplier_name', 'issuer': 'supplier_name',
+    'credit note number': 'credit_note_number', 'debit note number': 'debit_note_number',
+    'reference': 'reference_number', 'original invoice': 'original_invoice_number',
+    'invoice number': 'original_invoice_number', 'date': 'invoice_date',
+    'currency': 'currency', 'subtotal': 'subtotal', 'tax': 'tax_amount',
+    'tax amount': 'tax_amount', 'total': 'total_amount', 'total amount': 'total_amount'}
+PROFILE_FIELDS = {'invoice': set(LABELS.values()), 'bill': set(BILL_LABELS.values()),
+                  'receipt': set(RECEIPT_LABELS.values()), 'unknown': set()}
+PROFILE_FIELDS.update({'credit_note': set(NOTE_LABELS.values()), 'debit_note': set(NOTE_LABELS.values())})
+INVOICE_OPTIONAL = {'buyer_name', 'due_date', 'discount', 'document_allowances', 'document_charges',
+                    'prepaid_amount', 'rounding_amount', 'total_excluding_tax',
+                    'total_including_tax', 'amount_due'}
 
 
 def location(document, page, box, ref, text):
@@ -55,6 +91,13 @@ def map_document(document):
     if document.get('schema_name') != 'DoclingDocument':
         raise ValueError('Expected a DoclingDocument JSON export')
     issues, found = [], defaultdict(list)
+    kind = classify_document(document)['value']
+    labels = {'invoice': INVOICE_LABELS, 'bill': BILL_LABELS,
+              'receipt': RECEIPT_LABELS, 'credit_note': NOTE_LABELS,
+              'debit_note': NOTE_LABELS}.get(kind, {})
+    label_pattern = re.compile(r'(?<!\S)(?P<label>' + '|'.join(
+        re.escape(label).replace(r'\ ', r'\s+') for label in sorted(labels, key=len, reverse=True)
+    ) + r')\s*:\s*', re.IGNORECASE) if labels else None
 
     def issue(code, detail):
         issues.append({'code': code, 'detail': detail})
@@ -63,19 +106,28 @@ def map_document(document):
         if item.get('content_layer', 'body') != 'body':
             continue
         text = item.get('text', '')
-        match = re.fullmatch(r'\s*([^:\n]+):\s*([^\n]*)\s*', text)
-        if not match:
+        # Docling can merge separate labelled PDF lines into one text block.
+        # Split only explicit known label boundaries, never dates/time colons or
+        # unlabeled prose; evidence keeps the full block and exact character span.
+        matches = list(label_pattern.finditer(text)) if label_pattern else []
+        if not matches or text[:matches[0].start()].strip():
             continue
-        key = LABELS.get(' '.join(match[1].casefold().split()))
-        if key:
+        for mi, match in enumerate(matches):
+            key = labels[' '.join(match['label'].casefold().split())]
+            end = matches[mi + 1].start() if mi + 1 < len(matches) else len(text)
+            raw = text[match.start():end].strip()
+            value = text[match.end():end].strip()
             evidence = [location(document, p.get('page_no'), p.get('bbox'),
                         item.get('self_ref', f'#/texts/{index}'), text)
                         for p in item.get('prov', [])]
-            found[key].append({'raw_text': text, 'value': match[2].strip(),
+            for ev in evidence:
+                ev['text_span'] = [match.start(), end]
+                ev['bbox_scope'] = 'source_block'
+            found[key].append({'raw_text': raw, 'value': value,
                                'evidence': evidence})
 
     fields = {}
-    for key in LABELS.values():
+    for key in sorted(PROFILE_FIELDS[kind] | set(found)):
         candidates = found[key]
         values = {c['value'] for c in candidates}
         if not candidates or values == {''}:
@@ -94,7 +146,9 @@ def map_document(document):
 
     # Only remove an explicit currency token when it agrees with the currency field.
     # Locale/thousands/date normalisation belongs to the agreed downstream policy.
-    for key in AMOUNTS:
+    for key in AMOUNTS | {'discount', 'amount_due'}:
+        if key not in fields:
+            continue
         f = fields[key]
         if f['value'] is None:
             continue
@@ -105,8 +159,24 @@ def map_document(document):
         else:
             f['value'] = match['amount']
 
+    # Unsupported formats stay visible as candidates, never fail the whole job
+    # or enter a lossy NUMERIC/date write. Raw strings/evidence remain unchanged.
+    typed_keys = {'invoice_date': 'date', 'bill_date': 'date', 'transaction_date': 'date',
+                  'due_date': 'due', 'currency': 'currency', 'transaction_time': 'transaction_time'}
+    for key, f in fields.items():
+        if f['value'] is None:
+            continue
+        try:
+            if key in AMOUNTS | {'discount', 'amount_due'}:
+                f['value'] = decimal_text(f['value'])
+            elif key in typed_keys:
+                f['value'] = field_value(typed_keys[key], f['value'])
+        except ValueError:
+            f['value'], f['mapping_status'] = None, 'ambiguous'
+            issue('FORMAT_REQUIRES_REVIEW', key)
+
     rows = []
-    for ti, table in enumerate(document.get('tables', [])):
+    for ti, table in enumerate(document.get('tables', []) if kind != 'unknown' else []):
         ref = table.get('self_ref', f'#/tables/{ti}')
         data, prov = table.get('data', {}), table.get('prov', [])
         cells = data.get('table_cells', [])
@@ -120,14 +190,17 @@ def map_document(document):
             continue
         columns, bad_header = {}, False
         for c in cells:
-            if c.get('column_header'):
+            # Docling can omit the header flag for one cell in a short charges
+            # table. Require explicit supported text in every first-row cell.
+            if c.get('start_row_offset_idx') == 0 or c.get('column_header'):
                 name = HEADERS.get(' '.join(c.get('text', '').casefold().split()))
                 col = c.get('start_col_offset_idx')
                 if c.get('start_row_offset_idx') != 0 or not name or col in columns or name in columns.values():
                     bad_header = True
                 columns[col] = name
-        if bad_header or set(columns.values()) != set(HEADERS.values()) or data.get('num_cols') != 4:
-            issue('UNSUPPORTED_TABLE', ref + ': expected four unique supported column headers')
+        if (bad_header or not {'description', 'line_total'} <= set(columns.values())
+                or data.get('num_cols') != len(columns) or len(columns) not in {2, 3, 4}):
+            issue('UNSUPPORTED_TABLE', ref + ': expected unique description/line total and optional quantity/unit price headers')
             continue
         row_count = data.get('num_rows', 0)
         if not isinstance(row_count, int) or row_count < 2:
@@ -135,7 +208,7 @@ def map_document(document):
             continue
         grouped = defaultdict(list)
         for ci, cell in enumerate(cells):
-            if not cell.get('column_header'):
+            if cell.get('start_row_offset_idx') != 0:
                 grouped[cell.get('start_row_offset_idx')].append((ci, cell))
         if any(r not in range(1, row_count) for r in grouped):
             issue('UNSUPPORTED_TABLE', ref + ': unexpected data row indices')
@@ -154,8 +227,16 @@ def map_document(document):
                               f'{ref}/data/table_cells/{ci}', text)
                 value = text.strip() or None
                 row[key] = mapped_field(text, value, [ev], 'mapped' if value else 'missing')
+                if value is not None and key != 'description':
+                    try:
+                        row[key]['value'] = decimal_text(value, 14, {'quantity': 3, 'unit_price': 4, 'line_total': 2}[key])
+                    except ValueError:
+                        row[key]['value'], row[key]['mapping_status'] = None, 'ambiguous'
+                        issue('FORMAT_REQUIRES_REVIEW', f'{ref} row {ri} field {key}')
                 if not value or ev['bbox'] is None:
                     issue('INCOMPLETE_TABLE_EVIDENCE', f'{ref} row {ri} field {key}')
+            for key in set(HEADERS.values()) - set(row):
+                row[key] = mapped_field()
             rows.append(row)
     if not rows:
         issue('NO_MAPPED_LINE_ITEMS', 'No supported line-item rows mapped; inspect original tables')
@@ -164,7 +245,7 @@ def map_document(document):
             'document_id': document.get('origin', {}).get('filename') or document.get('name'),
             'status': 'needs_review', 'fields': fields, 'line_items': rows,
             'issues': issues, 'provenance': {'path': 'docling_explicit_mapping',
-            'mapper_version': '0.1.0', 'model': None,
+            'mapper_version': '0.2.0', 'document_profile': kind, 'model': None,
             'docling_schema_version': document.get('version')}}
 
 

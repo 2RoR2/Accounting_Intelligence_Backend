@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
-import app
+import main as app
 
 
 class FakeDB:
@@ -45,7 +45,7 @@ def test_upload_creates_document_and_pending_job(tmp_path):
     with patch.object(app, "require_workspace_user", return_value=user), \
          patch.object(app, "connect", return_value=fake_db), \
          patch.dict("os.environ", {"DOCUMENT_STORAGE_PATH": str(tmp_path)}), \
-         patch("infrastructure.queue.config.get_queues", side_effect=RuntimeError("redis unavailable")):
+         patch("job_queue.config.get_queues", side_effect=RuntimeError("redis unavailable")):
         with TestClient(app.app) as client:
             response = client.post("/api/documents", headers=request_headers(), files={"file": ("../invoice.pdf", b"%PDF-1.7 demo", "application/pdf")}, data={"kind": "invoice", "category": "accounts_payable"})
 

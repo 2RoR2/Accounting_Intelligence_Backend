@@ -9,12 +9,13 @@ python-dotenv>=1,<2
 httpx>=0.27,<0.29
 python-multipart>=0.0.9,<1
 openpyxl>=3.1,<4
+Pillow>=10,<12
+docling>=2.141,<3
 pandas>=2.2,<3
 argon2-cffi>=23.1,<26
 PyJWT>=2.10,<3
 cryptography>=44,<47
 resend[async]>=2,<3
-truststore>=0.10.0
 rq==2.12.0
 redis==5.2.0
 
