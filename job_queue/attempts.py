@@ -240,9 +240,9 @@ def fail_claim(claim):
 def publish(delivery):
     """One send per reserved token; SQL claim is the deduplication authority."""
     try:
-        from infrastructure.queue.config import get_queues
+        from job_queue.config import get_queues
         cpu,_ = get_queues()
-        cpu.enqueue_call('infrastructure.queue.jobs.process_document_extraction_job',
+        cpu.enqueue_call('job_queue.jobs.process_document_extraction_job',
             args=(delivery.document_id,delivery.job_id,delivery.tenant_id,delivery.dispatch_token),
             job_id=delivery.dispatch_token,timeout=PROCESSING_SECONDS,ttl=DISPATCH_SECONDS,
             result_ttl=0,failure_ttl=0,description='Accounting extraction '+delivery.job_id)

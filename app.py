@@ -842,7 +842,7 @@ def _processing_error(exc, document_id, job_id=None):
 
 @app.post("/api/documents/{document_id}/retry")
 def retry_document_processing(document_id: str, request: Request):
-    from infrastructure.queue import attempts
+    from job_queue import attempts
     user = require_workspace_user(request, {'local_admin','accountant'})
     delivery = None
     try:
@@ -950,7 +950,7 @@ async def upload_document(request: Request, file: UploadFile = File(...), kind: 
     original_filename = Path(file.filename or "document").name
     storage_path = storage_dir / f"{uuid.uuid4()}_{original_filename}"
     storage_path.write_bytes(data)
-    from infrastructure.queue import attempts
+    from job_queue import attempts
     try:
         with connect() as db:
             _lock_upload_identity(db,tenant_id,file_hash)
@@ -1103,7 +1103,7 @@ def processing_health(request: Request):
     user = require_workspace_user(request, {"super_admin", "local_admin"})
     redis_status = "unavailable"
     try:
-        from infrastructure.queue.config import get_queues
+        from job_queue.config import get_queues
         cpu_queue, io_queue = get_queues()
         cpu_queue.connection.ping()
         io_queue.connection.ping()
