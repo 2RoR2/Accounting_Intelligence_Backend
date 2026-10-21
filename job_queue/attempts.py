@@ -243,7 +243,9 @@ def publish(delivery):
         from job_queue.config import get_queues
         cpu,_ = get_queues()
         cpu.enqueue_call('job_queue.jobs.process_document_extraction_job',
-            args=(delivery.document_id,delivery.job_id,delivery.tenant_id,delivery.dispatch_token),
+            # The worker receives only the opaque document ID. It resolves and
+            # claims the exact dispatched pending_jobs row from PostgreSQL.
+            args=(delivery.document_id,),
             job_id=delivery.dispatch_token,timeout=PROCESSING_SECONDS,ttl=DISPATCH_SECONDS,
             result_ttl=0,failure_ttl=0,description='Accounting extraction '+delivery.job_id)
     except Exception:
