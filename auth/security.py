@@ -16,6 +16,7 @@ from cryptography.fernet import Fernet, InvalidToken
 PASSWORDS = PasswordHasher(time_cost=3, memory_cost=65536, parallelism=2, hash_len=32, salt_len=16)
 JWT_ISSUER = "accounting-intelligence"
 JWT_AUDIENCE = "accounting-intelligence-web"
+# Preserve V2 policy until the proposed three-hour policy is approved.
 ACCESS_TOKEN_SECONDS = 15 * 60
 SESSION_SECONDS = 8 * 60 * 60
 TOTP_PERIOD = 30

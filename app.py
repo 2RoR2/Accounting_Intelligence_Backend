@@ -15,10 +15,12 @@ from contextlib import asynccontextmanager
 from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException, Request, Response, UploadFile, File
+from fastapi import Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 import jwt
 from pydantic import BaseModel, Field, StringConstraints, field_validator
+import psycopg
 from psycopg.errors import UniqueViolation
 from psycopg.types.json import Jsonb
 from services.extraction.accounting_contract import (
@@ -44,18 +46,20 @@ from auth.security import (
     verify_totp,
 )
 from database.connection import connect
+from validation.bank_reconciliation import reconcile_records
 from notifications.mailer import send_login_code, send_reset_code
 
-def apply_compatibility_migrations():
-    """Apply additive compatibility changes for existing development databases."""
+def check_schema_compatibility():
+    """Read-only prerequisites; owner migrations are an explicit manage.py action."""
+    from database.schema_compatibility import check_runtime_schema
     with connect() as db:
-        db.execute("ALTER TABLE review_submissions ADD COLUMN IF NOT EXISTS content_revision INTEGER NOT NULL DEFAULT 1")
+        check_runtime_schema(db)
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    """Run startup migrations using FastAPI's supported lifespan interface."""
-    apply_compatibility_migrations()
+    """Verify schema prerequisites without changing database structure."""
+    check_schema_compatibility()
     yield
 
 
@@ -144,7 +148,24 @@ async def protect_requests(request: Request, call_next):
 async def unexpected_error(_request: Request, exc: Exception):
     # Never return connection strings, credentials or database details to the browser.
     log.error("Account API failure at %s: %s", _request.url.path, type(exc).__name__)
-    return JSONResponse({"detail": "Account service is unavailable. Check the backend configuration."}, status_code=503)
+    return JSONResponse({'detail': 'The operation could not be completed.', 'code': 'INTERNAL_ERROR'}, status_code=500)
+
+
+@app.exception_handler(psycopg.Error)
+async def database_error(_request: Request, exc: psycopg.Error):
+    # Categorize failures without returning SQL, constraint names or parameters.
+    log.error('Database operation failed at %s (%s)', _request.url.path, type(exc).__name__)
+    if isinstance(exc, (psycopg.errors.SerializationFailure, psycopg.errors.DeadlockDetected, psycopg.errors.LockNotAvailable)):
+        status, code, detail = 409, 'CONCURRENT_CHANGE', 'The resource changed or is busy. Refresh before trying again.'
+    elif isinstance(exc, (psycopg.OperationalError, psycopg.InterfaceError)):
+        status, code, detail = 503, 'DATA_SERVICE_UNAVAILABLE', 'The data service is temporarily unavailable.'
+    elif isinstance(exc, psycopg.IntegrityError):
+        status, code, detail = 409, 'DATA_CONFLICT', 'The operation conflicts with the current data state.'
+    elif isinstance(exc, (psycopg.errors.InvalidTextRepresentation, psycopg.errors.NumericValueOutOfRange)):
+        status, code, detail = 422, 'INVALID_DATA', 'One or more values cannot be stored.'
+    else:
+        status, code, detail = 500, 'DATA_OPERATION_FAILED', 'The data operation could not be completed.'
+    return JSONResponse({'detail': detail, 'code': code}, status_code=status)
 
 
 def rate_limit(key: str, maximum: int, seconds: int):
@@ -199,7 +220,8 @@ def active(user):
 
 def public_user(user):
     return {"id": str(user["id"]), "name": user["name"], "email": user["email"],
-            "role": user["role"].upper(), "tenantId": user["tenant_code"],
+            "role": user["role"].upper(), "tenantId": str(user['tenant_id']) if user['tenant_id'] else None,
+            "tenantCode": user.get('tenant_code'),
             "tenantName": user.get("tenant_name") or "",
             "status": user["status"].upper(), "mustChangePassword": user["must_change_password"],
             "invitedBy": str(user["invited_by"] or ""),
@@ -348,17 +370,17 @@ class BatchInput(BaseModel):
 class ReviewInput(BaseModel):
     decision: Annotated[str, StringConstraints(pattern=r"^submitted$")] = "submitted"
     note: str = Field(default="", max_length=4000)
-    expectedContentRevision: int = Field(ge=1)
+    expectedContentRevision: int = Field(strict=True, ge=1)
 
 
 class ReviewDecisionInput(BaseModel):
     decision: Annotated[str, StringConstraints(pattern=r"^(approved|rejected|returned)$")]
     note: str = Field(default="", max_length=4000)
-    expectedContentRevision: int = Field(ge=1)
+    expectedContentRevision: int = Field(strict=True, ge=1)
 
 
-class LineItemCorrectionInput(BaseModel):
-    value: str = Field(max_length=2000)
+class LineItemCorrectionInput(FieldCorrectionInput):
+    value: Annotated[str, StringConstraints(strict=True, strip_whitespace=True, min_length=1, max_length=2000)]
 
 
 class RecordAmendmentInput(BaseModel):
@@ -370,6 +392,24 @@ class ReconciliationInput(BaseModel):
     relationType: Annotated[str, StringConstraints(pattern=r"^(credit_for|debit_for|adjustment_of|related_to)$")]
     amount: str | None = Field(default=None, pattern=r"^(0|[1-9]\d*)(\.\d{1,2})?$")
     note: str = Field(default="", max_length=2000)
+
+class BankAccountingRecordInput(BaseModel):
+    record_id: str
+    total_amount: str
+    currency: str
+    reference_number: str | None = None
+
+
+class BankTransactionInput(BaseModel):
+    transaction_id: str
+    amount: str
+    currency: str
+    reference: str | None = None
+
+
+class BankReconciliationInput(BaseModel):
+    accounting_records: list[BankAccountingRecordInput]
+    bank_transactions: list[BankTransactionInput]
 
 
 class NamedInput(BaseModel):
@@ -492,6 +532,28 @@ def api_user(row):
 
 def tenant_scope(user):
     return None if user["role"] == "super_admin" else user["tenant_id"]
+
+
+def _lock_workspace_document(db, document_id, user, *, protect_record=True):
+    """Authorize and lock within the caller's transaction; display codes never scope SQL."""
+    if user['role'] not in {'accountant', 'local_admin'} or not user.get('tenant_id'):
+        raise HTTPException(403, 'This document action requires a company accountant or administrator.')
+    visibility = ' AND (d.owner_id=%s OR d.assigned_to=%s)' if user['role'] == 'accountant' else ''
+    params = [document_id, user['tenant_id']] + ([user['id'], user['id']] if visibility else [])
+    document = db.execute('SELECT d.* FROM documents d WHERE d.id=%s AND d.tenant_id=%s' + visibility + ' FOR UPDATE', params).fetchone()
+    if not document:
+        raise HTTPException(404, 'Document not found.')
+    if protect_record and (document['status'] in {'completed', 'standardised'} or db.execute(
+            'SELECT 1 FROM standardised_records WHERE document_id=%s LIMIT 1', (document_id,)).fetchone()):
+        raise HTTPException(409, 'Standardised documents require an amendment.')
+    return document
+
+
+def _require_current_extraction(db, document_id):
+    extraction = db.execute('SELECT * FROM raw_extractions WHERE document_id=%s AND is_current=true', (document_id,)).fetchone()
+    if not extraction:
+        raise HTTPException(409, 'The document has no current extraction to review.')
+    return extraction
 
 
 @app.get("/api/workspace/navigation")
@@ -725,7 +787,7 @@ def list_documents(
             WHERE {' AND '.join(clauses)}
             ORDER BY d.uploaded_at DESC
         """, params).fetchall()
-    return [{"id": str(r["id"]), "code": r["document_code"], "name": r["original_filename"], "tenantId": str(r["tenant_id"]), "ownerId": str(r["owner_id"]), "kind": r["kind"].upper(), "category": r["category"].upper(), "status": r["status"].upper(), "mimeType": r["mime_type"], "fileSize": r["file_size_bytes"], "totalAmount": float(r["total_amount"]) if r["total_amount"] is not None else None, "supplier": r["supplier_name"], "customer": r["buyer_name"], "dueDate": r["due_date_value"], "createdAt": str(r["uploaded_at"]), "updatedAt": str(r["updated_at"])} for r in rows]
+    return [{"id": str(r["id"]), "code": r["document_code"], "name": r["original_filename"], "tenantId": str(r["tenant_id"]), "ownerId": str(r["owner_id"]), "assignedTo": str(r["assigned_to"]) if r["assigned_to"] else None, "kind": r["kind"].upper(), "category": r["category"].upper(), "status": r["status"].upper(), "mimeType": r["mime_type"], "fileSize": r["file_size_bytes"], "contentRevision": r["content_revision"], "totalAmount": float(r["total_amount"]) if r["total_amount"] is not None else None, "supplier": r["supplier_name"], "customer": r["buyer_name"], "dueDate": r["due_date_value"], "createdAt": str(r["uploaded_at"]), "updatedAt": str(r["updated_at"])} for r in rows]
 
 
 @app.get("/api/documents/{document_id}")
@@ -739,7 +801,7 @@ def get_document_detail(document_id: str, request: Request):
         r = db.execute(f"SELECT * FROM documents WHERE id=%s AND (%s IS NULL OR tenant_id=%s){visibility}", params).fetchone()
     if not r:
         raise HTTPException(404, "Document not found.")
-    return {"id": str(r["id"]), "code": r["document_code"], "name": r["original_filename"], "tenantId": str(r["tenant_id"]), "ownerId": str(r["owner_id"]), "kind": r["kind"].upper(), "category": r["category"].upper(), "status": r["status"].upper(), "mimeType": r["mime_type"], "fileSize": r["file_size_bytes"], "contentRevision": r["content_revision"], "createdAt": str(r["uploaded_at"]), "updatedAt": str(r["updated_at"])}
+    return {"id": str(r["id"]), "code": r["document_code"], "name": r["original_filename"], "tenantId": str(r["tenant_id"]), "ownerId": str(r["owner_id"]), "assignedTo": str(r["assigned_to"]) if r["assigned_to"] else None, "kind": r["kind"].upper(), "category": r["category"].upper(), "status": r["status"].upper(), "mimeType": r["mime_type"], "fileSize": r["file_size_bytes"], "contentRevision": r["content_revision"], "createdAt": str(r["uploaded_at"]), "updatedAt": str(r["updated_at"])}
 
 
 @app.get("/api/documents/{document_id}/file")
@@ -767,22 +829,37 @@ def update_document_status(document_id: str, status: str, request: Request):
     raise HTTPException(405, "Direct document status changes are not permitted. Use the dedicated workflow action.")
 
 
+def _processing_error(exc, document_id, job_id=None):
+    detail = {'code':exc.code,'documentId':str(document_id),'dispatchAccepted':False,
+              'message':'Processing could not be dispatched.' if exc.code=='DISPATCH_UNCONFIRMED'
+                        else 'Processing is not eligible for retry in its current state.'}
+    if job_id:
+        detail['jobId']=str(job_id)
+    if exc.job:
+        detail.update(jobId=str(exc.job['id']),jobStatus=exc.job['status'].upper())
+    raise HTTPException(503 if exc.code=='DISPATCH_UNCONFIRMED' else 409,detail)
+
+
 @app.post("/api/documents/{document_id}/retry")
 def retry_document_processing(document_id: str, request: Request):
-    user = require_workspace_user(request, {"local_admin", "accountant"})
-    with connect() as db:
-        document = db.execute("SELECT id FROM documents WHERE id=%s AND tenant_id=%s FOR UPDATE", (document_id, user["tenant_id"])).fetchone()
-        if not document:
-            raise HTTPException(404, "Document not found.")
-        job = db.execute("INSERT INTO pending_jobs(tenant_id,document_id,status) VALUES (%s,%s,'pending') RETURNING id", (user["tenant_id"], document_id)).fetchone()
-        db.execute("UPDATE documents SET status='queued',updated_at=now() WHERE id=%s AND tenant_id=%s", (document_id, user["tenant_id"]))
+    from infrastructure.queue import attempts
+    user = require_workspace_user(request, {'local_admin','accountant'})
+    delivery = None
     try:
-        from infrastructure.queue.config import get_queues
-        cpu_queue, _ = get_queues()
-        queued = cpu_queue.enqueue("infrastructure.queue.jobs.process_document_extraction_job", document_id)
-        return {"documentId": document_id, "jobId": str(job["id"]), "queueJobId": queued.id, "status": "QUEUED"}
-    except Exception:
-        return {"documentId": document_id, "jobId": str(job["id"]), "queueJobId": None, "status": "QUEUED", "message": "Retry queued; processing will resume when the worker is available."}
+        with connect() as db:
+            _lock_workspace_document(db,document_id,user)
+            db.execute("SELECT set_config('app.user_id',%s,true), set_config('app.status_reason',%s,true)",
+                       (str(user['id']),'Explicit extraction retry'))
+            delivery = attempts.reserve_dispatch(db,document_id,str(user['tenant_id']),retry=True)
+            db.execute('''INSERT INTO audit_logs(tenant_id,user_id,user_name,role,action,resource,details)
+                VALUES (%s,%s,%s,%s,'extraction.retry_requested',%s,%s)''',
+                (user['tenant_id'],user['id'],user.get('name','Workspace user'),user['role'],
+                 str(document_id),delivery.job_id))
+        # No SQL lock or uncommitted outbox reservation crosses the Redis call.
+        queued = attempts.publish(delivery)
+    except attempts.AttemptRejected as exc:
+        _processing_error(exc,document_id,delivery.job_id if delivery else None)
+    return {'id':str(document_id),**queued}
 
 
 @app.get("/api/records")
@@ -836,6 +913,20 @@ def support_view(record_id: str, data: CompanyReviewInput, request: Request):
     return {"id": str(row["id"]), "documentId": str(row["document_id"]), "tenantId": str(row["tenant_id"]), "snapshot": row["snapshot"], "status": "COMPLETED"}
 
 
+def _lock_upload_identity(db,tenant_id,file_hash):
+    # Shared PostgreSQL lock across API processes, held until document/job commit.
+    # A 64-bit collision only serializes unrelated uploads; lookup remains tenant/hash exact.
+    key=int.from_bytes(hashlib.sha256(
+        ("saic:upload:v1:"+str(tenant_id)+":"+file_hash).encode("ascii")).digest()[:8],
+        byteorder="big",signed=True)
+    row=db.execute(
+        "SELECT pg_advisory_xact_lock(%s), current_setting('transaction_isolation') AS isolation",
+        (key,)).fetchone()
+    # READ COMMITTED takes a fresh duplicate-query snapshot AFTER a waiting lock.
+    if not row or row.get('isolation')!='read committed':
+        raise HTTPException(503,"Document upload requires a READ COMMITTED database transaction.")
+
+
 @app.post("/api/documents", status_code=201)
 async def upload_document(request: Request, file: UploadFile = File(...), kind: str = "invoice", category: str = "accounts_payable"):
     user = require_workspace_user(request, {"local_admin", "accountant"})
@@ -859,27 +950,32 @@ async def upload_document(request: Request, file: UploadFile = File(...), kind: 
     original_filename = Path(file.filename or "document").name
     storage_path = storage_dir / f"{uuid.uuid4()}_{original_filename}"
     storage_path.write_bytes(data)
+    from infrastructure.queue import attempts
     try:
         with connect() as db:
-            duplicate = db.execute("SELECT id,document_code,original_filename FROM documents WHERE tenant_id=%s AND file_hash_sha256=%s", (tenant_id, file_hash)).fetchone()
+            _lock_upload_identity(db,tenant_id,file_hash)
+            duplicate = db.execute("SELECT id,document_code,original_filename FROM documents WHERE tenant_id=%s AND file_hash_sha256=%s ORDER BY uploaded_at,id LIMIT 1", (tenant_id, file_hash)).fetchone()
             if duplicate:
                 raise HTTPException(409, {"message": "This document is already uploaded.", "existingDocumentId": str(duplicate["id"]), "existingDocumentCode": duplicate["document_code"], "existingFilename": duplicate["original_filename"]})
             row = db.execute("""INSERT INTO documents(tenant_id,owner_id,original_filename,kind,category,storage_path,mime_type,file_size_bytes,file_hash_sha256,status)
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,'queued') RETURNING *""",
                 (tenant_id, user["id"], original_filename, kind, category, str(storage_path), file.content_type or "application/octet-stream", len(data), file_hash)).fetchone()
             job = db.execute("INSERT INTO pending_jobs(tenant_id,document_id) VALUES (%s,%s) RETURNING id", (tenant_id, row["id"])).fetchone()
+            # Document, job and lease commit together. A crash before Redis is
+            # recoverable by the exact expired reservation, never a guessed job.
+            delivery = attempts.reserve_dispatch(db,str(row['id']),str(tenant_id),job_id=str(job['id']))
     except Exception:
         storage_path.unlink(missing_ok=True)
         raise
-    queue_job_id = None
     try:
-        from infrastructure.queue.config import get_queues
-        cpu_queue, _ = get_queues()
-        queue_job = cpu_queue.enqueue("infrastructure.queue.jobs.process_document_extraction_job", str(row["id"]))
-        queue_job_id = queue_job.id
-    except Exception as exc:
-        log.warning("Document %s stored but could not be queued: %s", row["id"], type(exc).__name__)
-    return {"id": str(row["id"]), "code": row["document_code"], "name": row["original_filename"], "tenantId": str(row["tenant_id"]), "ownerId": str(row["owner_id"]), "kind": kind.upper(), "category": category.upper(), "status": "QUEUED", "jobId": str(job["id"]), "queueJobId": queue_job_id}
+        queued = attempts.publish(delivery)
+    except attempts.AttemptRejected as exc:
+        # The document and durable job remain stored. Include their IDs so the
+        # caller can refresh/retry; do not encourage a duplicate upload.
+        _processing_error(exc,row['id'],job['id'])
+    return {"id":str(row["id"]),"code":row["document_code"],"name":row["original_filename"],
+            "tenantId":str(row["tenant_id"]),"ownerId":str(row["owner_id"]),
+            "kind":kind.upper(),"category":category.upper(),**queued}
 
 
 @app.get("/api/exceptions")
@@ -1016,7 +1112,7 @@ def processing_health(request: Request):
         pass
     with connect() as db:
         scope = tenant_scope(user)
-        pending = db.execute("SELECT count(*) AS n FROM pending_jobs WHERE status IN ('pending','processing') AND (%s IS NULL OR tenant_id=%s)", (scope, scope)).fetchone()["n"]
+        pending = db.execute("SELECT count(*) AS n FROM pending_jobs WHERE status IN ('pending','dispatched','processing') AND (%s IS NULL OR tenant_id=%s)", (scope, scope)).fetchone()["n"]
     return {"status": "healthy" if redis_status == "healthy" else "degraded", "worker": redis_status == "healthy", "redis": redis_status, "pendingJobs": int(pending)}
 
 
@@ -1116,8 +1212,8 @@ def resolve_exception(exception_id: str, data: ExceptionUpdate, request: Request
 def standardise_document(document_id: str, request: Request):
     user = require_workspace_user(request, {"local_admin", "accountant"})
     with connect() as db:
-        doc = db.execute("SELECT * FROM documents WHERE id=%s AND tenant_id=%s AND status='validated' FOR UPDATE", (document_id, user["tenant_id"])).fetchone()
-        if not doc:
+        doc = _lock_workspace_document(db, document_id, user)
+        if doc['status'] != 'validated':
             raise HTTPException(422, "The document must be validated before standardising.")
         approved = db.execute("""SELECT 1 FROM review_decisions
             WHERE document_id=%s AND tenant_id=%s AND decision='approved'
@@ -1227,8 +1323,8 @@ def get_document_reviews(document_id: str, request: Request):
     user = _authorised_document(request, document_id)
     with connect() as db:
         submissions = db.execute("SELECT * FROM review_submissions WHERE document_id=%s AND tenant_id=%s ORDER BY created_at DESC", (document_id, user["tenant_id"])).fetchall()
-        decisions = db.execute("SELECT * FROM review_decisions WHERE document_id=%s AND tenant_id=%s ORDER BY created_at DESC", (document_id, user["tenant_id"])).fetchall()
-    return {"submissions": [{"id": str(r["id"]), "submittedBy": str(r["submitted_by"]), "decision": r["decision"].upper(), "note": r["note"] or "", "createdAt": str(r["created_at"])} for r in submissions], "decisions": [{"id": str(r["id"]), "reviewedBy": str(r["reviewed_by"]), "decision": r["decision"].upper(), "note": r["note"] or "", "approvedRevision": r["approved_content_revision"], "createdAt": str(r["created_at"])} for r in decisions]}
+        decisions = db.execute("SELECT * FROM review_decisions WHERE document_id=%s AND tenant_id=%s ORDER BY reviewed_at DESC", (document_id, user["tenant_id"])).fetchall()
+    return {"submissions": [{"id": str(r["id"]), "submittedBy": str(r["submitted_by"]), "decision": r["decision"].upper(), "note": r["note"] or "", "createdAt": str(r["created_at"])} for r in submissions], "decisions": [{"id": str(r["id"]), "reviewedBy": str(r["reviewed_by"]), "decision": r["decision"].upper(), "note": r["note"] or "", "approvedRevision": r["approved_content_revision"], "createdAt": str(r["reviewed_at"])} for r in decisions]}
 
 
 @app.get("/api/documents/{document_id}/validation")
@@ -1303,7 +1399,8 @@ def correct_extracted_field(document_id: str, field_key: str, data: FieldCorrect
             raise HTTPException(404, "Document not found.")
         if document['content_revision'] != data.expectedContentRevision:
             raise HTTPException(409, "The document changed. Refresh it before correcting this field.")
-        if document['status'] in {'completed', 'standardised'}:
+        if document['status'] in {'completed', 'standardised'} or db.execute(
+                'SELECT 1 FROM standardised_records WHERE document_id=%s LIMIT 1', (document_id,)).fetchone():
             raise HTTPException(409, "Standardised documents require an amendment.")
         db.execute("SELECT set_config('app.user_id',%s,true), set_config('app.status_reason',%s,true)",
                    (str(user['id']), 'Extracted field corrected'))
@@ -1333,22 +1430,49 @@ def correct_extracted_field(document_id: str, field_key: str, data: FieldCorrect
 
 @app.patch("/api/documents/{document_id}/line-items/{line_item_id}/{field_key}")
 def correct_line_item(document_id: str, line_item_id: str, field_key: str, data: LineItemCorrectionInput, request: Request):
-    user = require_workspace_user(request, {"local_admin", "accountant"})
-    if field_key not in {"description", "quantity", "unit_price", "amount"}:
-        raise HTTPException(422, "Unsupported line-item field.")
+    user = require_workspace_user(request, {'local_admin', 'accountant'})
+    if field_key not in {'description', 'quantity', 'unit_price', 'amount'}:
+        raise HTTPException(422, 'Unsupported line-item field.')
+    value = data.value
+    if field_key != 'description':
+        try:
+            if not re.fullmatch(r'-?[0-9]+(?:\.[0-9]+)?', value):
+                raise ValueError('Use a plain decimal string.')
+            value = decimal_text(value, precision=14, scale={'quantity': 3, 'unit_price': 4, 'amount': 2}[field_key])
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
     with connect() as db:
-        item = db.execute("""SELECT li.* FROM line_items li
-            JOIN documents d ON d.id=li.document_id AND d.tenant_id=%s
-            WHERE li.id=%s AND li.document_id=%s FOR UPDATE""", (user["tenant_id"], line_item_id, document_id)).fetchone()
+        document = _lock_workspace_document(db, document_id, user)
+        if document['content_revision'] != data.expectedContentRevision:
+            raise HTTPException(409, 'The document changed. Refresh before correcting this line.')
+        item = db.execute("""SELECT li.* FROM line_items li JOIN raw_extractions re
+            ON re.id=li.extraction_id AND re.document_id=li.document_id AND re.is_current=true
+            WHERE li.id=%s AND li.document_id=%s FOR UPDATE""", (line_item_id, document_id)).fetchone()
         if not item:
-            raise HTTPException(404, "Line item not found.")
+            raise HTTPException(404, 'Current extraction line item not found.')
         old_value = item[field_key]
-        db.execute(f"UPDATE line_items SET {field_key}=%s WHERE id=%s", (data.value, line_item_id))
-        db.execute("UPDATE documents SET content_revision=content_revision+1,updated_at=now() WHERE id=%s AND tenant_id=%s", (document_id, user["tenant_id"]))
+        visibility = ' AND (d.owner_id=%s OR d.assigned_to=%s)' if user['role'] == 'accountant' else ''
+        owners = [user['id'], user['id']] if visibility else []
+        changed = db.execute(f"""UPDATE line_items AS li SET {field_key}=%s
+            FROM documents d JOIN raw_extractions re ON re.document_id=d.id AND re.is_current=true
+            WHERE li.document_id=d.id AND li.extraction_id=re.id AND li.id=%s
+              AND d.id=%s AND d.tenant_id=%s AND d.content_revision=%s
+              AND d.status NOT IN ('completed','standardised'){visibility} RETURNING li.*""",
+            [value, line_item_id, document_id, user['tenant_id'], data.expectedContentRevision, *owners]).fetchone()
+        if not changed:
+            raise HTTPException(409, 'The document changed while correcting this line.')
+        db.execute("SELECT set_config('app.user_id',%s,true), set_config('app.status_reason',%s,true)",
+                   (str(user['id']), 'Extracted line item corrected'))
+        revision = db.execute(f"""UPDATE documents AS d SET content_revision=content_revision+1,status='corrected',updated_at=now()
+            WHERE d.id=%s AND d.tenant_id=%s AND d.content_revision=%s{visibility} RETURNING content_revision""",
+            [document_id, user['tenant_id'], data.expectedContentRevision, *owners]).fetchone()
+        if not revision:
+            raise HTTPException(409, 'The document changed while correcting this line.')
         db.execute("""INSERT INTO line_item_corrections(line_item_id,document_id,field_key,old_value,new_value,corrected_by)
-            VALUES (%s,%s,%s,%s,%s,%s)""", (line_item_id, document_id, field_key, str(old_value) if old_value is not None else None, data.value, user["id"]))
-    return {"lineItemId": line_item_id, "fieldKey": field_key, "value": data.value, "correctedBy": str(user["id"])}
-
+            VALUES (%s,%s,%s,%s,%s,%s)""", (line_item_id, document_id, field_key,
+                str(old_value) if old_value is not None else None, value, user['id']))
+    return {'lineItemId': line_item_id, 'fieldKey': field_key, 'value': value,
+            'correctedBy': str(user['id']), 'contentRevision': revision['content_revision']}
 
 @app.post("/api/records/{record_id}/amendments", status_code=201)
 def request_record_amendment(record_id: str, data: RecordAmendmentInput, request: Request):
@@ -1373,6 +1497,7 @@ def revalidate_document(document_id: str, request: Request):
 def save_document_draft(document_id: str, request: Request):
     user = require_workspace_user(request, {"local_admin", "accountant"})
     with connect() as db:
+        _lock_workspace_document(db, document_id, user)
         row = db.execute("""UPDATE documents SET updated_at=now()
             WHERE id=%s AND tenant_id=%s AND status NOT IN ('completed','standardised')
             RETURNING id,status,updated_at""", (document_id, user["tenant_id"])).fetchone()
@@ -1472,7 +1597,7 @@ def resend_mfa(request: Request, response: Response):
     challenge = request.cookies.get(MFA, "")
     if not challenge:
         raise HTTPException(400, "Your sign-in challenge has expired. Sign in again.")
-    rate_limit("resend-mfa:" + digest(challenge).hex(), 3, 60)
+    rate_limit("resend-mfa:" + digest(challenge), 3, 60)
     with connect() as db:
         row = db.execute("""SELECT c.user_id, c.method, u.email
             FROM auth_challenges c JOIN users u ON u.id=c.user_id
@@ -1516,7 +1641,7 @@ def verify_mfa(data: MfaInput, request: Request, response: Response):
             db.execute("UPDATE auth_challenges SET attempts=attempts+1 WHERE challenge_hash=%s",
                        (digest(challenge),))
             encoded_totp = row["pending_totp_secret_enc"] or row["totp_secret_enc"]
-            email_valid = row.get("method") == "email" and row.get("email_code_hash") and hmac.compare_digest(row["email_code_hash"], otp_hash(jwt_secret(), row["email"], data.code))
+            email_valid = row.get("method") in {"email", "recovery_email"} and row.get("email_code_hash") and hmac.compare_digest(row["email_code_hash"], otp_hash(jwt_secret(), row["email"], data.code))
             if (encoded_totp and verify_totp(decrypt_totp_secret(encoded_totp), data.code)) or email_valid:
                 valid = True
                 user = row
@@ -1744,6 +1869,16 @@ def request_mfa_recovery(data: dict, request: Request):
     return {"id": str(row["id"]), "status": row["status"], "createdAt": str(row["created_at"])}
 
 
+@app.post("/api/auth/mfa-recovery-requests/lost-authenticator")
+def request_lost_authenticator_recovery(data: dict, request: Request):
+    """Keep the route discoverable without bypassing administrator-approved MFA recovery.
+
+    The team password-only reset requires separate security/product approval.
+    Existing recovery-request and administrator-approval routes remain available.
+    """
+    raise HTTPException(403, "Self-service authenticator reset is unavailable. Use administrator-approved MFA recovery.")
+
+
 @app.get("/api/admin/mfa-recovery-requests")
 def list_mfa_recovery_requests(request: Request):
     with connect() as db:
@@ -1805,9 +1940,8 @@ def create_accountant_batch(data: BatchInput, request: Request):
     if not data.documentIds:
         raise HTTPException(422, "Select at least one document.")
     with connect() as db:
-        valid = db.execute("SELECT id FROM documents WHERE tenant_id=%s AND id=ANY(%s::uuid[])", (user["tenant_id"], data.documentIds)).fetchall()
-        if len(valid) != len(set(data.documentIds)):
-            raise HTTPException(404, "One or more documents were not found in this workspace.")
+        for key in sorted(set(data.documentIds)):
+            _lock_workspace_document(db, key, user, protect_record=False)
         batch = db.execute("INSERT INTO document_batches(tenant_id,created_by,name,total_documents,status) VALUES (%s,%s,%s,%s,'queued') RETURNING *", (user["tenant_id"], user["id"], data.name, len(data.documentIds))).fetchone()
         for position, document_id in enumerate(data.documentIds, 1):
             db.execute("INSERT INTO batch_documents(batch_id,document_id,tenant_id,position) VALUES (%s,%s,%s,%s)", (batch["id"], document_id, user["tenant_id"], position))
@@ -1828,6 +1962,11 @@ def get_accountant_batch(batch_id: str, request: Request):
 def cancel_accountant_batch(batch_id: str, request: Request):
     user = require_workspace_user(request, {"accountant", "local_admin"})
     with connect() as db:
+        batch = db.execute('SELECT id,created_by FROM document_batches WHERE id=%s AND tenant_id=%s FOR UPDATE', (batch_id, user['tenant_id'])).fetchone()
+        if not batch or (user['role'] == 'accountant' and str(batch['created_by']) != str(user['id'])):
+            raise HTTPException(404, 'Batch not found.')
+        for item in db.execute('SELECT document_id FROM batch_documents WHERE batch_id=%s AND tenant_id=%s ORDER BY document_id', (batch_id, user['tenant_id'])).fetchall():
+            _lock_workspace_document(db, str(item['document_id']), user, protect_record=False)
         row = db.execute("UPDATE document_batches SET status='cancelled' WHERE id=%s AND tenant_id=%s AND status IN ('queued','processing') RETURNING id,status", (batch_id, user["tenant_id"])).fetchone()
     if not row:
         raise HTTPException(404, "Pending batch not found or already completed.")
@@ -1838,8 +1977,10 @@ def cancel_accountant_batch(batch_id: str, request: Request):
 def submit_document_review(document_id: str, data: ReviewInput, request: Request):
     user = require_workspace_user(request, {"accountant", "local_admin"})
     with connect() as db:
-        document = db.execute("SELECT id,tenant_id,status,content_revision FROM documents WHERE id=%s AND tenant_id=%s FOR UPDATE", (document_id, user["tenant_id"])).fetchone()
-        if not document: raise HTTPException(404, "Document not found.")
+        document = _lock_workspace_document(db, document_id, user)
+        _require_current_extraction(db, document_id)
+        if document['status'] not in {'extracted','corrected','exception','in_review','validated'}:
+            raise HTTPException(409, 'Only extracted documents can be submitted for review.')
         if data.expectedContentRevision is not None and data.expectedContentRevision != document["content_revision"]:
             raise HTTPException(409, "The document changed. Refresh it before submitting for approval.")
         if data.decision != "submitted":
@@ -1854,9 +1995,8 @@ def submit_document_review(document_id: str, data: ReviewInput, request: Request
 def decide_document_review(document_id: str, data: ReviewDecisionInput, request: Request):
     user = require_workspace_user(request, {"local_admin"})
     with connect() as db:
-        document = db.execute("SELECT id,tenant_id,status,content_revision FROM documents WHERE id=%s AND tenant_id=%s FOR UPDATE", (document_id, user["tenant_id"])).fetchone()
-        if not document:
-            raise HTTPException(404, "Document not found.")
+        document = _lock_workspace_document(db, document_id, user)
+        _require_current_extraction(db, document_id)
         if document["status"] != "in_review":
             raise HTTPException(409, "Only documents currently in review can be approved or returned.")
         if data.expectedContentRevision is not None and data.expectedContentRevision != document["content_revision"]:
@@ -1875,7 +2015,7 @@ def decide_document_review(document_id: str, data: ReviewDecisionInput, request:
 
 @app.get("/api/documents/{document_id}/comments")
 def list_document_comments(document_id: str, request: Request):
-    user = require_workspace_user(request)
+    user = _authorised_document(request, document_id)
     with connect() as db:
         rows = db.execute("SELECT c.*,u.name AS author_name FROM document_comments c JOIN users u ON u.id=c.author_id WHERE c.document_id=%s AND c.tenant_id=%s ORDER BY c.created_at", (document_id, user["tenant_id"])).fetchall()
     return [{"id": str(r["id"]), "comment": r["comment"], "author": r["author_name"], "pageNumber": r["page_number"], "fieldKey": r["field_key"], "resolved": bool(r["resolved_at"]), "createdAt": str(r["created_at"])} for r in rows]
@@ -1885,6 +2025,7 @@ def list_document_comments(document_id: str, request: Request):
 def add_document_comment(document_id: str, data: CommentInput, request: Request):
     user = require_workspace_user(request, {"accountant", "local_admin"})
     with connect() as db:
+        _lock_workspace_document(db, document_id, user, protect_record=False)
         row = db.execute("INSERT INTO document_comments(document_id,tenant_id,author_id,comment,page_number,field_key) SELECT id,tenant_id,%s,%s,%s,%s FROM documents WHERE id=%s AND tenant_id=%s RETURNING *", (user["id"], data.comment, data.pageNumber, data.fieldKey, document_id, user["tenant_id"])).fetchone()
     if not row: raise HTTPException(404, "Document not found.")
     return {"id": str(row["id"]), "comment": row["comment"], "createdAt": str(row["created_at"])}
@@ -1892,7 +2033,7 @@ def add_document_comment(document_id: str, data: CommentInput, request: Request)
 
 @app.get("/api/documents/{document_id}/reconciliations")
 def list_document_reconciliations(document_id: str, request: Request):
-    user = require_workspace_user(request)
+    user = _authorised_document(request, document_id)
     with connect() as db:
         rows = db.execute("""SELECT r.*, s.document_code AS source_code, d.document_code AS related_code
             FROM document_reconciliations r
@@ -1907,8 +2048,9 @@ def list_document_reconciliations(document_id: str, request: Request):
 def reconcile_document(document_id: str, data: ReconciliationInput, request: Request):
     user = require_workspace_user(request, {"local_admin", "accountant"})
     with connect() as db:
-        source = db.execute("SELECT id,kind FROM documents WHERE id=%s AND tenant_id=%s", (document_id, user["tenant_id"])).fetchone()
-        related = db.execute("SELECT id,kind FROM documents WHERE id=%s AND tenant_id=%s", (data.relatedDocumentId, user["tenant_id"])).fetchone()
+        locked = {key: _lock_workspace_document(db, key, user, protect_record=False)
+                  for key in sorted(set((document_id, data.relatedDocumentId)))}
+        source, related = locked[document_id], locked[data.relatedDocumentId]
         if not source or not related:
             raise HTTPException(404, "Both documents must belong to this workspace.")
         if data.relationType == "credit_for" and related["kind"] != "credit_note":
@@ -1918,6 +2060,24 @@ def reconcile_document(document_id: str, data: ReconciliationInput, request: Req
         row = db.execute("""INSERT INTO document_reconciliations(tenant_id,source_document_id,related_document_id,relation_type,amount,note,created_by)
             VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING *""", (user["tenant_id"], document_id, data.relatedDocumentId, data.relationType, data.amount, data.note, user["id"])).fetchone()
     return {"id": str(row["id"]), "sourceDocumentId": document_id, "relatedDocumentId": data.relatedDocumentId, "relationType": row["relation_type"], "amount": row["amount"], "note": row["note"]}
+
+
+@app.post("/api/bank-reconciliation")
+def run_bank_reconciliation(
+    data: BankReconciliationInput,
+    request: Request,
+    x_requested_with: str = Header(..., alias="X-Requested-With"),
+):
+    require_workspace_user(request, {"local_admin", "accountant"})
+
+    # Submitted IDs/amounts are untrusted comparison inputs. This endpoint does
+    # not fetch canonical records, establish ownership, or persist settlement.
+    results = reconcile_records(
+        [record.model_dump() for record in data.accounting_records],
+        [transaction.model_dump() for transaction in data.bank_transactions],
+    )
+
+    return results
 
 
 @app.get("/api/suppliers")
@@ -1966,6 +2126,7 @@ def delete_document_tag(tag_id: str, request: Request):
 def tag_document(document_id: str, tag_id: str, request: Request):
     user = require_workspace_user(request, {"local_admin", "accountant"})
     with connect() as db:
+        _lock_workspace_document(db, document_id, user, protect_record=False)
         row = db.execute("""INSERT INTO document_tag_links(document_id,tag_id,created_by)
             SELECT d.id,t.id,%s FROM documents d JOIN document_tags t ON t.tenant_id=d.tenant_id
             WHERE d.id=%s AND d.tenant_id=%s AND t.id=%s RETURNING document_id,tag_id""", (user["id"], document_id, user["tenant_id"], tag_id)).fetchone()
@@ -2063,11 +2224,14 @@ def document_status_history(document_id: str, request: Request):
 def assign_workload(document_id: str, data: WorkloadInput, request: Request):
     user = require_workspace_user(request, {"local_admin"})
     with connect() as db:
+        _lock_workspace_document(db, document_id, user, protect_record=False)
         target = db.execute("SELECT id FROM users WHERE id=%s AND tenant_id=%s AND status='active'", (data.userId, user["tenant_id"])).fetchone()
         if not target: raise HTTPException(422, "Invalid team member.")
         row = db.execute("""INSERT INTO workload_assignments(tenant_id,document_id,assigned_to,assigned_by,priority,due_at)
             SELECT tenant_id,id,%s,%s,%s,%s FROM documents WHERE id=%s AND tenant_id=%s
             ON CONFLICT (document_id) DO UPDATE SET assigned_to=EXCLUDED.assigned_to,assigned_by=EXCLUDED.assigned_by,priority=EXCLUDED.priority,due_at=EXCLUDED.due_at,completed_at=NULL RETURNING *""", (data.userId, user["id"], data.priority, data.dueAt, document_id, user["tenant_id"])).fetchone()
+        db.execute('UPDATE documents SET assigned_to=%s,updated_at=now() WHERE id=%s AND tenant_id=%s',
+                   (data.userId, document_id, user['tenant_id']))
     if not row: raise HTTPException(404, "Document not found.")
     return {"id": str(row["id"]), "documentId": str(row["document_id"]), "assignedTo": str(row["assigned_to"]), "priority": row["priority"], "dueAt": str(row["due_at"] or "")}
 
@@ -2167,9 +2331,14 @@ def download_export(export_id: str, request: Request):
 def create_document_version(document_id: str, data: VersionInput, request: Request):
     user = require_workspace_user(request, {"local_admin", "accountant"})
     with connect() as db:
+        _lock_workspace_document(db, document_id, user)
         source = db.execute("SELECT storage_path,file_hash_sha256,file_size_bytes FROM documents WHERE id=%s AND tenant_id=%s", (document_id, user["tenant_id"])).fetchone()
         if not source: raise HTTPException(404, "Document not found.")
         supplied = Path(data.storagePath).resolve()
+        # Being inside private storage does not prove ownership of a new file.
+        # Only the source already registered to this authorized document is safe.
+        if supplied != Path(source['storage_path']).resolve():
+            raise HTTPException(422, 'New source versions require an ownership-verified upload/amendment workflow.')
         storage_root = Path(os.getenv("DOCUMENT_STORAGE_PATH", "storage")).resolve()
         if storage_root not in supplied.parents or not supplied.is_file():
             raise HTTPException(422, "The version file must be an existing private stored file.")
@@ -2185,7 +2354,7 @@ def create_document_version(document_id: str, data: VersionInput, request: Reque
 
 @app.get("/api/documents/{document_id}/versions")
 def list_document_versions(document_id: str, request: Request):
-    user = require_workspace_user(request)
+    user = _authorised_document(request, document_id)
     with connect() as db:
         rows = db.execute("SELECT * FROM document_versions WHERE document_id=%s AND tenant_id=%s ORDER BY version_number DESC", (document_id, user["tenant_id"])).fetchall()
     return [{"id": str(r["id"]), "versionNumber": r["version_number"], "storagePath": r["storage_path"], "fileHashSha256": r["file_hash_sha256"], "createdAt": str(r["created_at"])} for r in rows]
@@ -2316,13 +2485,19 @@ def bulk_document_action(data: BulkActionInput, request: Request):
     user = require_workspace_user(request, {"local_admin", "accountant"})
     ids = list(dict.fromkeys(data.documentIds))
     with connect() as db:
-        count = db.execute("SELECT count(*) AS n FROM documents WHERE tenant_id=%s AND id=ANY(%s::uuid[])", (user["tenant_id"], ids)).fetchone()["n"]
-        if count != len(ids): raise HTTPException(404, "One or more documents are outside this workspace.")
+        for key in sorted(ids):
+            _lock_workspace_document(db, key, user, protect_record=False)
         if data.action == "assign":
+            if user['role'] != 'local_admin':
+                raise HTTPException(403, 'Only a local administrator can assign documents.')
             if not data.userId: raise HTTPException(422, "userId is required.")
+            if not db.execute("SELECT id FROM users WHERE id=%s AND tenant_id=%s AND status='active'", (data.userId, user['tenant_id'])).fetchone():
+                raise HTTPException(422, 'Invalid team member.')
             for document_id in ids:
                 db.execute("""INSERT INTO workload_assignments(tenant_id,document_id,assigned_to,assigned_by)
                     VALUES (%s,%s,%s,%s) ON CONFLICT (document_id) DO UPDATE SET assigned_to=EXCLUDED.assigned_to,assigned_by=EXCLUDED.assigned_by,completed_at=NULL""", (user["tenant_id"], document_id, data.userId, user["id"]))
+                db.execute('UPDATE documents SET assigned_to=%s,updated_at=now() WHERE id=%s AND tenant_id=%s',
+                           (data.userId, document_id, user['tenant_id']))
         elif data.action == "tag":
             if not data.tagId: raise HTTPException(422, "tagId is required.")
             for document_id in ids:

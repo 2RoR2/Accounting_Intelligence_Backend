@@ -335,7 +335,7 @@ CREATE INDEX idx_pending_jobs_tenant_status
 -- routing_decision is the route M2 chose. It does not prove that a model ran. For example, a
 -- vlm_candidate route can end as human_review when inference is disabled.
 -- is_current marks the run the screens show. Never set it by hand: call switch_current_extraction(run_id),
--- which moves is_current and carries the accountant's corrections forward in ONE transaction.
+-- which moves is_current atomically and rejects reruns over accountant-reviewed values.
 -- service_run_id is unique, so saving the same M2 run twice cannot create a duplicate.
 -- ---------------------------------------------------------------------------
 CREATE TABLE raw_extractions (
@@ -477,14 +477,10 @@ CREATE TRIGGER trg_field_corrections_append_only
 
 
 -- ---------------------------------------------------------------------------
--- Rerun policy, in one place. Call this once after saving all the rows of a rerun:
---   SELECT switch_current_extraction(:new_run_id);
--- In ONE transaction it makes the rerun the current run and carries every accountant correction from the
--- previous current run into the rerun, so a rerun never replaces a corrected value. The fresh prediction stays
--- visible in normalized_value. Every expected field must have a row in every run (state missing when the
--- extractor does not return it), so a correction always has a row to be carried to. The carry forward is
--- written to field_corrections by the trigger, with the original correction time. It returns how many
--- corrected values were carried forward. The document row is locked, so two reruns cannot interleave.
+-- Rerun policy: save all fields/items, then switch within the same transaction.
+-- Reviewed corrections and approved records require an explicit amendment.
+-- Automatic correction carry-forward is not approved. Old predictions remain
+-- immutable history; content_revision is incremented by the persistence caller.
 -- ---------------------------------------------------------------------------
 CREATE FUNCTION switch_current_extraction(new_extraction UUID) RETURNS INTEGER AS $$
 DECLARE
@@ -497,12 +493,26 @@ BEGIN
     END IF;
     PERFORM 1 FROM documents WHERE id = doc FOR UPDATE;
     SELECT id INTO old_extraction FROM raw_extractions WHERE document_id = doc AND is_current;
-    IF old_extraction IS NOT NULL AND old_extraction <> new_extraction THEN
+    IF old_extraction = new_extraction THEN
+        RETURN 0;
+    END IF;
+    IF EXISTS (SELECT 1 FROM documents WHERE id = doc AND status IN ('completed','standardised'))
+       OR EXISTS (SELECT 1 FROM standardised_records WHERE document_id = doc)
+       OR EXISTS (SELECT 1 FROM review_decisions rd JOIN documents d
+           ON d.id = rd.document_id AND d.tenant_id = rd.tenant_id
+           WHERE d.id = doc AND rd.decision = 'approved'
+             AND rd.approved_content_revision = d.content_revision) THEN
+        RAISE EXCEPTION 'Approved documents require an explicit amendment.';
+    END IF;
+    IF EXISTS (SELECT 1 FROM field_predictions
+           WHERE extraction_id = old_extraction AND corrected_at IS NOT NULL)
+       OR EXISTS (SELECT 1 FROM line_item_corrections WHERE document_id = doc) THEN
+        RAISE EXCEPTION 'Reviewed corrections exist; re-extraction requires an explicit amendment.';
+    END IF;
+    IF old_extraction IS NOT NULL THEN
         UPDATE raw_extractions SET is_current = FALSE WHERE id = old_extraction;
     END IF;
     UPDATE raw_extractions SET is_current = TRUE WHERE id = new_extraction;
-    -- Corrections are intentionally not copied to a new extraction run.
-    -- The new run must be reviewed again before it can be approved or standardised.
     RETURN 0;
 END;
 $$ LANGUAGE plpgsql;
@@ -705,10 +715,7 @@ CREATE TRIGGER trg_set_record_code
 CREATE FUNCTION prevent_record_update() RETURNS trigger AS $$
 BEGIN
     IF NEW.is_current IS DISTINCT FROM OLD.is_current
-       AND NEW.record_code = OLD.record_code
-       AND NEW.document_id = OLD.document_id
-       AND NEW.revision_number = OLD.revision_number
-       AND NEW.snapshot = OLD.snapshot THEN
+       AND (to_jsonb(NEW) - 'is_current') = (to_jsonb(OLD) - 'is_current') THEN
         RETURN NEW;
     END IF;
     RAISE EXCEPTION 'Standardised records are immutable.';

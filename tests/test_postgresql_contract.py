@@ -1,6 +1,6 @@
 """C1A/C1B integration against the explicitly initialized disposable PG18 DB.
 
-Run only after approval and schema initialization; C1_PG_CONFIG selects the
+Run only after approval and schema initialization; P4A_CONFIG selects the
 ignored resource configuration. This suite never initializes/resets a schema.
 Each test adds unique synthetic fixtures; it never deletes historical records.
 Real session fixtures skip login/MFA delivery, not session/tenant/role checks.
@@ -17,7 +17,9 @@ import secrets
 import tempfile
 from threading import Barrier
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
+from dataclasses import replace
+from infrastructure.queue import attempts
 from uuid import uuid4
 
 import psycopg
@@ -29,11 +31,12 @@ from auth.security import create_access_token
 from services.extraction import persistence
 from services.extraction.accounting_contract import record_values
 from tests.c1pg_support import connect
+from tests.p4a_support import connect_runtime
 
 FIXTURE = Path(__file__).parent / 'extraction/data/contracts/syn001_m2.json'
 
 
-@unittest.skipUnless(os.getenv('C1_PG_CONFIG'), 'BLOCKED: explicitly initialized isolated C1-PG database required')
+@unittest.skipUnless(os.getenv('P4A_CONFIG'), 'BLOCKED: explicitly initialized isolated Phase 4A target/selector required')
 class PostgreSQLContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -42,8 +45,8 @@ class PostgreSQLContractTests(unittest.TestCase):
                 raise RuntimeError('C1-PG schema not initialized; explicit approval required')
 
     def setUp(self):
-        self.patchers = [patch.object(api, 'connect', connect), patch.object(persistence, 'connect', connect),
-                         patch.object(api, 'apply_compatibility_migrations', side_effect=AssertionError('No startup SQL')),
+        self.patchers = [patch.object(attempts,'connect',connect_runtime), patch.object(api, 'connect', connect_runtime), patch.object(persistence, 'connect', connect_runtime),
+                         patch.object(api, 'check_schema_compatibility', side_effect=AssertionError('No startup SQL')),
                          patch.dict(os.environ, {'AUTH_SECRET': secrets.token_urlsafe(48), 'COOKIE_SECURE': 'false'})]
         for patcher in self.patchers:
             patcher.start()
@@ -90,10 +93,46 @@ class PostgreSQLContractTests(unittest.TestCase):
 
     def persist(self, result=None, document=None):
         value = self.result if result is None else result
-        target = Path(self.temp.name) / (uuid4().hex + '.json')
+        document=str(document or self.document)
+        if not hasattr(self,'processing_claims'): self.processing_claims={}
+        if document not in self.processing_claims:
+            with connect() as db:
+                job=db.execute("SELECT id FROM pending_jobs WHERE document_id=%s AND status='pending'",(document,)).fetchone()
+                delivery=attempts.reserve_dispatch(db,document,str(self.tenant),job_id=str(job['id']))
+            self.processing_claims[document]=attempts.claim_delivery(delivery,delivery.dispatch_token)
+        target = Path(self.temp.name)/(uuid4().hex+'.json')
         target.write_text(json.dumps(value))
-        return persistence.persist_extraction_result(document or self.document, {
-            'service_run_id': value['provenance']['service_run_id'], 'public_result_path': str(target)})
+        return persistence.persist_extraction_result(document,{
+            'service_run_id':value['provenance']['service_run_id'],'public_result_path':str(target)},
+            claim=self.processing_claims[document])
+
+    def queue_new_job(self):
+        claim=self.protocol_start()
+        self.processing_claims[str(self.document)]=claim
+
+    def protocol_delivery(self):
+        with connect() as db:
+            job=db.execute('INSERT INTO pending_jobs(document_id,tenant_id) VALUES (%s,%s) RETURNING id',
+                           (self.document,self.tenant)).fetchone()
+            db.execute("UPDATE documents SET status='queued' WHERE id=%s",(self.document,))
+            return attempts.reserve_dispatch(db,self.document,str(self.tenant),job_id=str(job['id']))
+
+    def protocol_start(self):
+        delivery=self.protocol_delivery()
+        return attempts.claim_delivery(delivery,delivery.dispatch_token)
+
+    def protocol_artifact(self):
+        value=deepcopy(self.result)
+        value['provenance']['service_run_id']='phase3e-'+uuid4().hex
+        path=Path(self.temp.name)/(uuid4().hex+'.json')
+        path.write_text(json.dumps(value))
+        return {'service_run_id':value['provenance']['service_run_id'],'public_result_path':str(path)}
+
+    def protocol_snapshot(self):
+        with connect() as db:
+            return {table:db.execute('SELECT * FROM '+table+' WHERE document_id=%s ORDER BY id',
+                                    (self.document,)).fetchall()
+                    for table in ('pending_jobs','raw_extractions','field_predictions','line_items')}
 
     def client(self, user=None):
         user = user or self.owner
@@ -212,6 +251,7 @@ class PostgreSQLContractTests(unittest.TestCase):
         cell = result['fields']['invoice_number']
         cell.update(value=None, state='ambiguous', resolution='candidate_for_review')
         cell['candidates'] = [{'value': 'AI-UNVERIFIED', 'source': 'ai', 'auto_accepted': False}]
+        self.queue_new_job()
         self.persist(result)
         self.assertIsNone(self.field()['current_value'])
         response = self.correct('REVIEWED', revision=3)
@@ -248,7 +288,7 @@ class PostgreSQLContractTests(unittest.TestCase):
                 return self.db.execute(sql, params)
         client = self.client()
         with patch.object(api, 'connect', FailAfterFieldWrite):
-            self.assertEqual(self.correct(client=client).status_code, 503)
+            self.assertEqual(self.correct(client=client).status_code, 500)
         self.assertEqual((self.field(), self.state(), self.history()), before)
 
     def test_syn001_persistence_jsonb_evidence_nullable_confidence_and_line_numeric(self):
@@ -287,6 +327,7 @@ class PostgreSQLContractTests(unittest.TestCase):
         result['provenance']['service_run_id'] = 'c1pg-' + uuid4().hex
         for key in ('invoice_number', 'currency'):
             result['fields'][key].update(value=None, state='missing', resolution='unresolved')
+        self.queue_new_job()
         self.persist(result)
         for key in ('invoice', 'currency'):
             self.assertIsNone(self.field(key)['current_value'])
@@ -303,6 +344,7 @@ class PostgreSQLContractTests(unittest.TestCase):
         line = result['line_items'][0]
         for key, value in [('quantity', '1.125'), ('unit_price', '0.0000'), ('line_total', '0.00')]:
             line[key]['value'] = value
+        self.queue_new_job()
         self.persist(result)
         self.review()
         self.assertEqual(self.standardise().status_code, 201)
@@ -318,6 +360,7 @@ class PostgreSQLContractTests(unittest.TestCase):
         result['provenance']['service_run_id'] = 'c1pg-' + uuid4().hex
         result['fields']['invoice_number'].update(value=None, state='ambiguous', resolution='candidate_for_review',
             candidates=[{'value': 'AI-GUESS', 'source': 'ai', 'auto_accepted': False}])
+        self.queue_new_job()
         self.persist(result)
         self.assertEqual(self.field()['candidates'][0]['value'], 'AI-GUESS')
         self.assertIsNone(self.field()['current_value'])
@@ -331,6 +374,7 @@ class PostgreSQLContractTests(unittest.TestCase):
             result['fields'][key]['value'] = '28.26'
         for key, value in [('quantity', '1.125'), ('unit_price', '25.1200'), ('line_total', '28.26')]:
             result['line_items'][0][key]['value'] = value
+        self.queue_new_job()
         self.persist(result)
         self.review()
         self.assertEqual(self.standardise().status_code, 201)
@@ -339,21 +383,20 @@ class PostgreSQLContractTests(unittest.TestCase):
         saved = record['snapshot']['lineItems'][0]
         self.assertEqual((saved['quantity'], saved['unit_price'], saved['amount']), ('1.125', '25.1200', '28.26'))
 
-    def test_later_ai_run_does_not_overwrite_human_effective_value(self):
+    def test_later_ai_run_requires_amendment_and_preserves_all_reviewed_values(self):
         self.assertEqual(self.correct().status_code, 200)
-        corrected = self.field()
+        before = self.field(), self.state(), self.history()
+        with connect() as db:
+            runs = db.execute('SELECT * FROM raw_extractions WHERE document_id=%s ORDER BY run_number', (self.document,)).fetchall()
         result = deepcopy(self.result)
         result['provenance']['service_run_id'] = 'c1pg-' + uuid4().hex
         result['fields']['invoice_number']['value'] = 'LATER-AI'
-        self.persist(result)
-        current = self.field()
-        self.assertEqual(current['normalized_value'], 'LATER-AI')
-        self.assertEqual(current['current_value'], corrected['current_value'])
-        self.assertEqual(current['corrected_by'], corrected['corrected_by'])
-        self.assertEqual(current['corrected_at'], corrected['corrected_at'])
-        self.assertEqual(self.field(current=False)['current_value'], 'SYN-CORRECTED')
-        self.assertEqual(self.state()['content_revision'], 4)
-        self.assertEqual(self.standardise().status_code, 422)  # new review still required
+        with self.assertRaisesRegex(ValueError, 'AMENDMENT_REQUIRED'):
+            self.persist(result)
+        self.assertEqual((self.field(), self.state(), self.history()), before)
+        with connect() as db:
+            self.assertEqual(db.execute('SELECT * FROM raw_extractions WHERE document_id=%s ORDER BY run_number', (self.document,)).fetchall(), runs)
+        self.assertEqual(self.standardise().status_code, 422)
 
     def test_ap_ar_customer_requirement_remains_distinct(self):
         self.document, self.result = self.document_fixture('accounts_receivable')
@@ -388,8 +431,11 @@ class PostgreSQLContractTests(unittest.TestCase):
                     db.execute('ROLLBACK TO SAVEPOINT immutable_probe')
         self.assertEqual(self.record(), before)
         self.assertEqual(self.correct(revision=2).status_code, 409)
-        with self.assertRaises(ValueError):
-            self.persist()
+        later=deepcopy(self.result)
+        later['provenance']['service_run_id']='after-approved-'+uuid4().hex
+        with self.assertRaisesRegex(ValueError,'AMENDMENT_REQUIRED'):
+            self.persist(later)
+        self.assertEqual(self.record(),before)
 
     def test_postgresql_approval_trigger_rejects_unreviewed_record(self):
         with connect() as db:
@@ -398,6 +444,217 @@ class PostgreSQLContractTests(unittest.TestCase):
                     db.execute("""INSERT INTO standardised_records(document_id,tenant_id,category,snapshot,created_by)
                         VALUES (%s,%s,'accounts_payable','{}'::jsonb,%s)""", (self.document, self.tenant, self.owner['id']))
         self.assertIsNone(self.record())
+
+
+    def test_line_correction_requires_revision_and_preserves_raw_evidence_and_audit(self):
+        client=self.client()
+        with connect() as db:
+            line=db.execute('SELECT li.* FROM line_items li JOIN raw_extractions re ON re.id=li.extraction_id WHERE li.document_id=%s AND re.is_current', (self.document,)).fetchone()
+            raw=db.execute('SELECT raw_json FROM raw_extractions WHERE document_id=%s AND is_current', (self.document,)).fetchone()
+        route=f"/api/documents/{self.document}/line-items/{line['id']}/unit_price"
+        self.assertEqual(client.patch(route,json={'value':'26'}).status_code,422)
+        response=client.patch(route,json={'value':'26.0000','expectedContentRevision':2})
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertEqual(response.json()['contentRevision'],3)
+        self.assertEqual(client.patch(route,json={'value':'27','expectedContentRevision':2}).status_code,409)
+        with connect() as db:
+            after=db.execute('SELECT * FROM line_items WHERE id=%s',(line['id'],)).fetchone()
+            audit=db.execute('SELECT * FROM line_item_corrections WHERE line_item_id=%s',(line['id'],)).fetchall()
+            self.assertEqual(db.execute('SELECT raw_json FROM raw_extractions WHERE document_id=%s AND is_current',(self.document,)).fetchone(),raw)
+        self.assertEqual(len(audit),1)
+        self.assertEqual(audit[0]['corrected_by'],self.owner['id'])
+        for key in ('evidence','field_states','candidates'):
+            self.assertEqual(after[key],line[key])
+
+    def test_foreign_and_unassigned_line_corrections_are_denied(self):
+        with connect() as db:
+            line=db.execute('SELECT id FROM line_items WHERE document_id=%s',(self.document,)).fetchone()['id']
+        before=self.state()
+        for user in (self.foreign,self.unrelated):
+            response=self.client(user).patch(f'/api/documents/{self.document}/line-items/{line}/amount',json={'value':'51','expectedContentRevision':2})
+            self.assertEqual(response.status_code,404,response.text)
+        self.assertEqual(self.state(),before)
+
+    def test_concurrent_retry_with_queued_pending_job_is_non_mutating(self):
+        clients=[self.client(),self.client(self.assignee)]
+        with connect() as db:
+            db.execute("UPDATE documents SET status='queued' WHERE id=%s",(self.document,))
+            job=db.execute('INSERT INTO pending_jobs(document_id,tenant_id) VALUES (%s,%s) RETURNING id',(self.document,self.tenant)).fetchone()['id']
+            before=db.execute('SELECT * FROM pending_jobs WHERE document_id=%s ORDER BY created_at,id',(self.document,)).fetchall()
+        state=self.state()
+        barrier=Barrier(2)
+        def attempt(index):
+            barrier.wait(timeout=5)
+            return clients[index].post(f'/api/documents/{self.document}/retry')
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            responses=list(executor.map(attempt,range(2)))
+        for response in responses:
+            self.assertEqual(response.status_code,409,response.text)
+            self.assertEqual(response.json()['detail']['jobId'],str(job))
+        self.assertEqual(self.state(),state)
+        with connect() as db:
+            self.assertEqual(db.execute('SELECT * FROM pending_jobs WHERE document_id=%s ORDER BY created_at,id',(self.document,)).fetchall(),before)
+
+    def test_protocol_terminal_failed_retry_uses_new_job_and_one_dispatch(self):
+        claim=self.protocol_start()
+        self.assertTrue(attempts.fail_claim(claim))
+        cpu=Mock()
+        client=self.client()
+        with patch('infrastructure.queue.config.get_queues',return_value=(cpu,None)):
+            response=client.post(f'/api/documents/{self.document}/retry')
+            self.assertEqual(response.status_code,200,response.text)
+            self.assertNotEqual(response.json()['jobId'],claim.delivery.job_id)
+            self.assertEqual(client.post(f'/api/documents/{self.document}/retry').status_code,409)
+        cpu.enqueue_call.assert_called_once()
+        with connect() as db:
+            self.assertEqual(db.execute('SELECT status FROM pending_jobs WHERE id=%s',(claim.delivery.job_id,)).fetchone()['status'],'failed')
+            self.assertEqual(db.execute("SELECT count(*) AS n FROM pending_jobs WHERE document_id=%s AND status IN ('pending','dispatched','processing')",(self.document,)).fetchone()['n'],1)
+
+    def test_protocol_success_is_bound_to_claim_and_retains_old_current_history(self):
+        before=self.protocol_snapshot()
+        claim=self.protocol_start()
+        result=persistence.persist_extraction_result(self.document,self.protocol_artifact(),claim=claim)
+        with connect() as db:
+            job=db.execute('SELECT * FROM pending_jobs WHERE id=%s',(claim.delivery.job_id,)).fetchone()
+            runs=db.execute('SELECT * FROM raw_extractions WHERE document_id=%s ORDER BY run_number',(self.document,)).fetchall()
+            self.assertEqual(job['status'],'succeeded')
+            self.assertEqual(job['attempt_count'],1)
+            self.assertEqual([r['is_current'] for r in runs],[False,True])
+            self.assertEqual(runs[0]['raw_json'],before['raw_extractions'][0]['raw_json'])
+            self.assertEqual(str(runs[1]['pending_job_id']),claim.delivery.job_id)
+            self.assertEqual(result['extraction_id'],str(runs[1]['id']))
+
+    def test_protocol_duplicate_concurrent_delivery_has_exactly_one_database_claim(self):
+        delivery=self.protocol_delivery()
+        barrier=Barrier(2)
+        def run(_):
+            barrier.wait(timeout=5)
+            try: attempts.claim_delivery(delivery,delivery.dispatch_token); return 'claimed'
+            except attempts.AttemptRejected: return 'rejected'
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results=list(executor.map(run,range(2)))
+        self.assertEqual(sorted(results),['claimed','rejected'])
+        with connect() as db:
+            self.assertEqual(db.execute('SELECT attempt_count FROM pending_jobs WHERE id=%s',(delivery.job_id,)).fetchone()['attempt_count'],1)
+
+    def test_protocol_expired_old_success_and_failure_cannot_touch_new_success(self):
+        old=self.protocol_start(); artifact=self.protocol_artifact()
+        with connect() as db:
+            db.execute("UPDATE pending_jobs SET processing_expires_at=clock_timestamp()-interval '1 second' WHERE id=%s",(old.delivery.job_id,))
+        with patch('infrastructure.queue.config.get_queues',return_value=(Mock(),None)):
+            response=self.client().post(f'/api/documents/{self.document}/retry')
+        self.assertEqual(response.status_code,200,response.text)
+        body=response.json()
+        delivery=attempts.Delivery(self.document,body['jobId'],str(self.tenant),body['queueJobId'])
+        fresh=attempts.claim_delivery(delivery,delivery.dispatch_token)
+        persistence.persist_extraction_result(self.document,self.protocol_artifact(),claim=fresh)
+        before=self.protocol_snapshot()
+        with self.assertRaisesRegex(attempts.AttemptRejected,'STALE_ATTEMPT'):
+            persistence.persist_extraction_result(self.document,artifact,claim=old)
+        self.assertFalse(attempts.fail_claim(old))
+        self.assertEqual(self.protocol_snapshot(),before)
+
+    def test_protocol_terminal_cancelled_job_replay_is_read_only_rejection(self):
+        delivery=self.protocol_delivery()
+        with connect() as db:
+            db.execute("UPDATE pending_jobs SET status='cancelled',finished_at=now() WHERE id=%s",(delivery.job_id,))
+        before=self.protocol_snapshot()
+        with self.assertRaisesRegex(attempts.AttemptRejected,'STALE_DELIVERY'):
+            attempts.claim_delivery(delivery,delivery.dispatch_token)
+        self.assertEqual(self.protocol_snapshot(),before)
+
+    def test_protocol_cross_tenant_and_foreign_job_binding_is_rejected(self):
+        delivery=self.protocol_delivery(); before=self.protocol_snapshot()
+        for forged in (replace(delivery,tenant_id=str(self.other_tenant)),replace(delivery,job_id=str(uuid4())),
+                       replace(delivery,document_id=str(uuid4()))):
+            with self.assertRaises(attempts.AttemptRejected):
+                attempts.claim_delivery(forged,delivery.dispatch_token)
+        self.assertEqual(self.protocol_snapshot(),before)
+
+    def test_protocol_corrected_document_cancels_valid_delivery_without_modifying_evidence(self):
+        delivery=self.protocol_delivery()
+        # Existing current run remains editable while waiting for a worker.
+        self.assertEqual(self.correct().status_code,200)
+        before=self.field(),self.history(),self.state()
+        with self.assertRaisesRegex(attempts.AttemptRejected,'AMENDMENT_REQUIRED'):
+            attempts.claim_delivery(delivery,delivery.dispatch_token)
+        self.assertEqual((self.field(),self.history(),self.state()),before)
+        with connect() as db:
+            self.assertEqual(db.execute('SELECT status FROM pending_jobs WHERE id=%s',(delivery.job_id,)).fetchone()['status'],'cancelled')
+
+    def test_protocol_real_canonical_constraint_failure_rolls_back_every_write(self):
+        claim=self.protocol_start(); artifact=self.protocol_artifact()
+        before=self.protocol_snapshot()
+        with connect() as db:
+            document_before=db.execute('SELECT * FROM documents WHERE id=%s',(self.document,)).fetchone()
+        value=json.loads(Path(artifact['public_result_path']).read_text())
+        mapped=persistence.map_m2_result(value,self.document)
+        mapped['fields'][0]['field_key']=None  # actual schema NOT NULL violation
+        with patch.object(persistence,'map_m2_result',return_value=mapped):
+            with self.assertRaises(psycopg.errors.NotNullViolation):
+                persistence.persist_extraction_result(self.document,artifact,claim=claim)
+        self.assertEqual(self.protocol_snapshot(),before)
+        with connect() as db:
+            self.assertEqual(db.execute('SELECT * FROM documents WHERE id=%s',(self.document,)).fetchone(),document_before)
+
+    def test_protocol_lease_expiry_after_switch_rolls_back_triggers_revision_and_job(self):
+        claim=self.protocol_start(); before=self.protocol_snapshot()
+        with connect() as db:
+            document_before=db.execute('SELECT * FROM documents WHERE id=%s',(self.document,)).fetchone()
+        original=attempts.complete
+        def expire(db,proof,document):
+            db.execute("UPDATE pending_jobs SET processing_expires_at=clock_timestamp()-interval '1 second' WHERE id=%s",(proof.delivery.job_id,))
+            return original(db,proof,document)
+        with patch.object(attempts,'complete',side_effect=expire):
+            with self.assertRaisesRegex(attempts.AttemptRejected,'STALE_ATTEMPT'):
+                persistence.persist_extraction_result(self.document,self.protocol_artifact(),claim=claim)
+        self.assertEqual(self.protocol_snapshot(),before)
+        with connect() as db:
+            self.assertEqual(db.execute('SELECT * FROM documents WHERE id=%s',(self.document,)).fetchone(),document_before)
+
+    def test_protocol_retry_completion_race_uses_postgresql_document_lock(self):
+        claim=self.protocol_start(); artifact=self.protocol_artifact()
+        client=self.client(); barrier=Barrier(2)
+        def finish():
+            barrier.wait(timeout=5)
+            return persistence.persist_extraction_result(self.document,artifact,claim=claim)
+        def retry():
+            barrier.wait(timeout=5)
+            return client.post(f'/api/documents/{self.document}/retry')
+        with patch('infrastructure.queue.config.get_queues',side_effect=AssertionError('Active work must not redispatch')):
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                finished=executor.submit(finish); refused=executor.submit(retry)
+                self.assertFalse(finished.result()['idempotent'])
+                self.assertEqual(refused.result().status_code,409)
+        with connect() as db:
+            self.assertEqual(db.execute('SELECT status FROM pending_jobs WHERE id=%s',(claim.delivery.job_id,)).fetchone()['status'],'succeeded')
+            self.assertEqual(db.execute('SELECT count(*) AS n FROM raw_extractions WHERE document_id=%s AND is_current',(self.document,)).fetchone()['n'],1)
+
+    def test_protocol_dispatch_failure_fences_ambiguous_delivery_with_real_sql(self):
+        claim=self.protocol_start(); attempts.fail_claim(claim)
+        cpu=Mock(); cpu.enqueue_call.side_effect=ConnectionError('synthetic private transport detail')
+        with patch('infrastructure.queue.config.get_queues',return_value=(cpu,None)):
+            response=self.client().post(f'/api/documents/{self.document}/retry')
+        self.assertEqual(response.status_code,503,response.text)
+        self.assertFalse(response.json()['detail']['dispatchAccepted'])
+        self.assertNotIn('private transport detail',response.text)
+        delivery=attempts.Delivery(*cpu.enqueue_call.call_args.kwargs['args'])
+        with self.assertRaisesRegex(attempts.AttemptRejected,'STALE_DELIVERY'):
+            attempts.claim_delivery(delivery,delivery.dispatch_token)
+
+    def test_protocol_concurrent_retries_after_failure_publish_once(self):
+        attempts.fail_claim(self.protocol_start())
+        clients=[self.client(),self.client(self.assignee)]
+        barrier=Barrier(2); cpu=Mock()
+        def retry(i):
+            barrier.wait(timeout=5)
+            return clients[i].post(f'/api/documents/{self.document}/retry')
+        with patch('infrastructure.queue.config.get_queues',return_value=(cpu,None)):
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                responses=list(executor.map(retry,range(2)))
+        self.assertEqual(sorted(r.status_code for r in responses),[200,409])
+        cpu.enqueue_call.assert_called_once()
+
 
 
 if __name__ == '__main__':

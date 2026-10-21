@@ -53,6 +53,7 @@ class OfflineDatabase:
                 corrected_by TEXT, corrected_at TEXT,
                 CHECK (resolution IS NOT 'candidate_for_review' OR current_value IS NULL OR corrected_at IS NOT NULL)
             );
+            CREATE TABLE standardised_records (document_id TEXT);
             CREATE TABLE field_corrections (
                 old_value TEXT, new_value TEXT, corrected_by TEXT, corrected_at TEXT
             );
@@ -122,7 +123,7 @@ class FieldCorrectionTests(unittest.TestCase):
         self.addCleanup(self.db.connection.close)
         self.patch_db = patch.object(api, 'connect', return_value=self.db)
         self.patch_user = patch.object(api, 'require_workspace_user', side_effect=lambda _request, _roles: self.user)
-        self.patch_startup = patch.object(api, 'apply_compatibility_migrations', side_effect=AssertionError('No startup SQL'))
+        self.patch_startup = patch.object(api, 'check_schema_compatibility', side_effect=AssertionError('No startup SQL'))
         for patcher in (self.patch_db, self.patch_user, self.patch_startup):
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -266,7 +267,7 @@ class FieldCorrectionTests(unittest.TestCase):
     def test_revision_write_failure_rolls_back_field_and_audit(self):
         before = self.db.snapshot()
         self.db.fail_revision_update = True
-        self.assertEqual(self.correct().status_code, 503)
+        self.assertEqual(self.correct().status_code, 500)
         self.unchanged(before)
 
     def test_completed_documents_cannot_be_corrected(self):

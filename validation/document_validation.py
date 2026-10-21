@@ -108,7 +108,8 @@ def load_current(db, document_id, user=None, *, lock=False):
 
 def validate_document(db, document_id, user=None):
     document, extraction, fields, items = load_current(db, document_id, user, lock=True)
-    if document['status'] in {'completed', 'standardised'}:
+    if document['status'] in {'completed', 'standardised'} or db.execute(
+            'SELECT 1 FROM standardised_records WHERE document_id=%s LIMIT 1', (document_id,)).fetchone():
         raise HTTPException(409, 'Approved records require an amendment.')
     result = evaluate_document(document, extraction, fields, items, db)
     db.execute("""UPDATE exceptions SET status='resolved',resolved_at=now(), note=COALESCE(note,'') || %s

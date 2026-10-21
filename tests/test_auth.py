@@ -1,4 +1,4 @@
-"""Run with TEST_DATABASE_URL set; creates and removes only a unique test schema."""
+"""Phase 4A auth fixtures: explicit guarded selector; per-case schemas retained."""
 import os
 import hashlib
 from pathlib import Path
@@ -11,6 +11,7 @@ from psycopg import sql
 from psycopg.rows import dict_row
 from fastapi.testclient import TestClient
 import app as api
+from tests.p4a_support import prepare_runtime, create_auth_schema, connect_target
 from auth.security import (
     ACCESS_TOKEN_SECONDS,
     create_access_token,
@@ -64,45 +65,26 @@ class SecurityTests(unittest.TestCase):
         self.assertNotEqual(otp_hash("a", "one@example.com", "123456"), otp_hash("b", "one@example.com", "123456"))
 
 
-@unittest.skipUnless(os.getenv("TEST_DATABASE_URL"), "Set TEST_DATABASE_URL to run PostgreSQL integration tests")
+@unittest.skipUnless(os.getenv("P4A_CONFIG"), "BLOCKED: approved Phase 4A selector required")
 class AccountTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.url = os.environ["TEST_DATABASE_URL"]
-        cls.schema = "auth_test_" + uuid.uuid4().hex
-        with psycopg.connect(cls.url) as db:
-            db.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
-            db.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
-            db.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(cls.schema)))
-        cls.db_patch = patch.object(api, "connect", cls.connect)
+        prepare_runtime()
+        cls.db_patch = patch.object(api,"connect",cls.connect)
         cls.db_patch.start()
-        with cls.connect() as db:
-            base = Path(__file__).resolve().parents[1]
-            schema = (base / "database/PostgreSQL Database schema.sql").read_text(encoding="utf-8-sig")
-            # Omit the destructive reset preamble. All objects live in our unique schema.
-            db.execute(schema[schema.index("CREATE TABLE tenants ("):])
-        cls.env_patch = patch.dict(os.environ, {"AUTH_SECRET": "test-secret-" * 5, "COOKIE_SECURE": "false", "FRONTEND_ORIGIN": "http://localhost:3000"})
-        cls.env_patch.start()
 
     @classmethod
     def connect(cls):
-        # Neon pooled endpoints reject startup options such as
-        # `options=-c search_path=...`. Set the temporary test schema after
-        # connecting instead, while still keeping every test isolated.
-        db = psycopg.connect(cls.url, row_factory=dict_row)
-        db.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(cls.schema)))
-        return db
+        return connect_target(database='auth',schema=cls.schema)
 
     @classmethod
     def tearDownClass(cls):
         cls.db_patch.stop()
-        cls.env_patch.stop()
-        with psycopg.connect(cls.url) as db:
-            db.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(cls.schema)))
+        # All per-case schemas retained for failure investigation.
 
     def setUp(self):
-        with self.connect() as db:
-            db.execute("TRUNCATE users,tenants,company_requests,auth_rate_limits,auth_challenges CASCADE")
+        type(self).schema=create_auth_schema()
+        with connect_target(fixture=True,database='auth',schema=self.schema) as db:
             tenant = db.execute("INSERT INTO tenants(name,registration_number,admin_email) VALUES ('Test Co','REG123','user@example.com') RETURNING id").fetchone()
             self.uid = db.execute("""INSERT INTO users(tenant_id,name,email,password_hash,role,status)
                 VALUES (%s,'Test User','user@example.com',%s,'accountant','active') RETURNING id""",
@@ -268,7 +250,7 @@ class AccountTests(unittest.TestCase):
 
     def test_suspended_company_blocks_existing_session(self):
         self.login()
-        with self.connect() as db:
+        with connect_target(fixture=True,database='auth',schema=self.schema) as db:
             db.execute("UPDATE tenants SET status='suspended'")
         self.assertEqual(self.client.get("/api/auth/me").status_code, 401)
         self.assertEqual(self.login().status_code, 401)

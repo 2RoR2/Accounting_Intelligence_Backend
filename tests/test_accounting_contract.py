@@ -13,7 +13,9 @@ import sqlite3
 import tempfile
 import unittest
 from unittest.mock import patch
-from uuid import UUID
+from uuid import UUID, uuid4
+from datetime import datetime, timezone
+from infrastructure.queue import attempts
 
 from fastapi.testclient import TestClient
 from psycopg.types.json import Jsonb
@@ -25,6 +27,7 @@ from services.extraction.accounting_contract import (
 )
 
 DOCUMENT = '11111111-1111-4111-8111-111111111111'
+JOB = '11111111-1111-4111-8111-111111111112'
 TENANT = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
 USER = {'id': 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'tenant_id': TENANT, 'role': 'accountant'}
 FIXTURE = Path(__file__).parent/'extraction/data/contracts/syn001_m2.json'
@@ -51,14 +54,22 @@ class ContractDatabase:
         self.db = sqlite3.connect(':memory:', check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.calls = []
+        self.db.create_function('clock_timestamp',0,lambda:datetime.now(timezone.utc).isoformat(' '))
         self.db.executescript('''
         CREATE TABLE documents (id TEXT PRIMARY KEY, tenant_id TEXT, owner_id TEXT, assigned_to TEXT,
           kind TEXT, category TEXT, status TEXT, content_revision INTEGER,
           uploaded_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT, processing_seconds TEXT, processing_completed_at TEXT);
-        CREATE TABLE pending_jobs (id TEXT PRIMARY KEY, tenant_id TEXT, document_id TEXT, status TEXT,
-          created_at TEXT DEFAULT CURRENT_TIMESTAMP, finished_at TEXT, last_error TEXT, updated_at TEXT);
+        CREATE TABLE pending_jobs (id TEXT PRIMARY KEY, tenant_id TEXT, document_id TEXT, status TEXT DEFAULT 'pending',
+          created_at TEXT DEFAULT CURRENT_TIMESTAMP, finished_at TEXT, last_error TEXT, updated_at TEXT,
+          attempt_count INTEGER DEFAULT 0, max_attempts INTEGER DEFAULT 3,
+          dispatch_count INTEGER DEFAULT 0, next_attempt_at TEXT DEFAULT CURRENT_TIMESTAMP,
+          dispatch_token TEXT,dispatched_at TEXT,dispatch_expires_at TEXT,claim_token TEXT,claimed_at TEXT,
+          heartbeat_at TEXT,processing_expires_at TEXT);
+        CREATE UNIQUE INDEX uq_pending_open ON pending_jobs(document_id) WHERE status IN ('pending','dispatched','processing');
+        CREATE TABLE audit_logs (tenant_id TEXT,user_id TEXT,user_name TEXT,role TEXT,action TEXT,resource TEXT,details TEXT);
         CREATE TABLE raw_extractions (id TEXT PRIMARY KEY, document_id TEXT, run_number INTEGER, is_current BOOLEAN,
           routing_decision TEXT, service_run_id TEXT UNIQUE, schema_version TEXT, pending_job_id TEXT, raw_json TEXT);
+        CREATE UNIQUE INDEX uq_raw_extractions_current ON raw_extractions(document_id) WHERE is_current;
         CREATE TABLE field_predictions (id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
           extraction_id TEXT, document_id TEXT, field_key TEXT, field_label TEXT, extraction_state TEXT,
           resolution TEXT, raw_value TEXT, normalized_value TEXT, current_value TEXT, confidence TEXT,
@@ -83,7 +94,7 @@ class ContractDatabase:
         ''')
         self.db.execute('INSERT INTO documents(id,tenant_id,owner_id,kind,category,status,content_revision) VALUES (?,?,?,?,?,?,?)',
                         (DOCUMENT, TENANT, USER['id'], 'invoice', 'accounts_payable', 'queued', 1))
-        self.db.execute('INSERT INTO pending_jobs(id,tenant_id,document_id,status) VALUES (?,?,?,?)', ('job-1', TENANT, DOCUMENT, 'pending'))
+        self.db.execute('INSERT INTO pending_jobs(id,tenant_id,document_id,status) VALUES (?,?,?,?)', (JOB, TENANT, DOCUMENT, 'pending'))
         self.db.commit()
 
     def __enter__(self):
@@ -96,15 +107,27 @@ class ContractDatabase:
 
     def execute(self, sql, params=()):
         self.calls.append((sql, params))
+        if sql=='SELECT clock_timestamp() AS instant':
+            return Rows([{'instant':datetime.now(timezone.utc)}])
         if 'set_config(' in sql:
             return Rows([])
+        if sql.strip() == 'SELECT switch_current_extraction(%s)':
+            # SQLite adapter only: executes the switch for persistence-order and
+            # rollback tests. PostgreSQL function/locking proof is a separate gate.
+            target = self.db.execute('SELECT document_id FROM raw_extractions WHERE id=?', (str(params[0]),)).fetchone()
+            self.db.execute('UPDATE raw_extractions SET is_current=FALSE WHERE document_id=? AND is_current', (target[0],))
+            self.db.execute('UPDATE raw_extractions SET is_current=TRUE WHERE id=?', (str(params[0]),))
+            return Rows([{'switch_current_extraction': 0}])
         sql = sql.replace(' FOR UPDATE', '').replace('%s', '?').replace('now()', 'CURRENT_TIMESTAMP')
         sql = re.sub(r'EXTRACT\(EPOCH FROM \(CURRENT_TIMESTAMP - uploaded_at\)\)', '0', sql)
-        sql = sql.replace('::date', '').replace('::numeric', '').replace('::text', '').replace('RETURNING fp.*', 'RETURNING *')
+        sql = sql.replace('::date', '').replace('::numeric', '').replace('::text', '').replace('RETURNING fp.*', 'RETURNING *').replace('RETURNING li.*', 'RETURNING *')
         params = [json.dumps(p.obj) if isinstance(p, Jsonb) else str(p) if isinstance(p, (Decimal, UUID)) else p for p in params]
         cursor = self.db.execute(sql, params)
         rows = [dict(row) for row in cursor.fetchall()] if cursor.description else []
         for row in rows:
+            for key in ('next_attempt_at','dispatched_at','dispatch_expires_at','claimed_at','heartbeat_at','processing_expires_at'):
+                if row.get(key) is not None:
+                    row[key]=datetime.fromisoformat(row[key]).replace(tzinfo=timezone.utc)
             for key in ('raw_json', 'snapshot', 'evidence', 'candidates', 'field_states'):
                 if row.get(key) is not None:
                     row[key] = json.loads(row[key])
@@ -117,22 +140,40 @@ class AccountingContractTests(unittest.TestCase):
         self.addCleanup(self.database.db.close)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.patchers = [patch.object(persistence, 'connect', return_value=self.database),
+        self.patchers = [patch.object(attempts, 'connect', return_value=self.database),
+                         patch.object(persistence, 'connect', return_value=self.database),
                          patch.object(api, 'connect', return_value=self.database),
                          patch.object(api, 'require_workspace_user', return_value=USER),
-                         patch.object(api, 'apply_compatibility_migrations', side_effect=AssertionError('No startup SQL'))]
+                         patch.object(api, 'check_schema_compatibility', side_effect=AssertionError('No startup SQL'))]
         for patcher in self.patchers:
             patcher.start()
             self.addCleanup(patcher.stop)
         self.client = TestClient(api.app, raise_server_exceptions=False)
         self.addCleanup(self.client.close)
 
+    def claim_pending(self):
+        with self.database as db:
+            job=db.execute("SELECT id FROM pending_jobs WHERE document_id=%s AND status='pending'",(DOCUMENT,)).fetchone()
+            if not job:
+                raise attempts.AttemptRejected('ATTEMPT_IDENTITY_REQUIRED')
+            delivery=attempts.reserve_dispatch(db,DOCUMENT,TENANT,job_id=job['id'])
+        self.processing_claim=attempts.claim_delivery(delivery,delivery.dispatch_token)
+
     def persist(self, result=None):
         result = fixture() if result is None else result
         target = Path(self.temp.name)/'public.json'
         target.write_text(json.dumps(result))
+        if not getattr(self,'processing_claim',None):
+            AccountingContractTests.claim_pending(self)
         return persistence.persist_extraction_result(DOCUMENT, {'service_run_id': result['provenance']['service_run_id'],
-                                                                'public_result_path': str(target)})
+            'public_result_path':str(target)},claim=self.processing_claim)
+
+    def queue_new_job(self):
+        self.database.db.execute('INSERT INTO pending_jobs(id,tenant_id,document_id,status) VALUES (?,?,?,?)',
+                                 (str(uuid4()),TENANT,DOCUMENT,'pending'))
+        self.database.db.execute("UPDATE documents SET status='queued'")
+        self.database.db.commit()
+        AccountingContractTests.claim_pending(self)
 
     def reviewed_fixture(self, revision=None):
         # Explicit synthetic starting state for exercising the unchanged gate SQL.
@@ -364,7 +405,7 @@ class AccountingContractTests(unittest.TestCase):
         self.database.db.commit()
         result = fixture()
         result['provenance']['service_run_id'] = 'new-run-after-correction'
-        with self.assertRaisesRegex(ValueError, 'Reviewed corrections exist'):
+        with self.assertRaisesRegex(ValueError, 'AMENDMENT_REQUIRED'):
             self.persist(result)
         self.assertEqual(self.database.execute('SELECT count(*) AS n FROM raw_extractions').fetchone()['n'], 1)
         self.assertEqual(self.database.execute("SELECT current_value FROM field_predictions WHERE field_key='invoice'").fetchone()['current_value'], 'REVIEWED')
@@ -375,7 +416,7 @@ class AccountingContractTests(unittest.TestCase):
         self.database.db.commit()
         result = fixture()
         result['provenance']['service_run_id'] = 'new-run-after-line-correction'
-        with self.assertRaisesRegex(ValueError, 'Reviewed corrections exist'):
+        with self.assertRaisesRegex(ValueError, 'AMENDMENT_REQUIRED'):
             self.persist(result)
         self.assertEqual(self.database.execute('SELECT content_revision FROM documents').fetchone()['content_revision'], 2)
 
@@ -411,6 +452,90 @@ class AccountingContractTests(unittest.TestCase):
         self.assertEqual(self.standardise().status_code, 201)
         self.assertEqual(self.saved_record()['invoice_number'], 'SYN-001')
         self.assertIsNotNone(self.database.execute("SELECT * FROM field_predictions WHERE field_key='invoice_number'").fetchone())
+
+
+
+
+class IntegrationPersistenceTests(unittest.TestCase):
+    setUp = AccountingContractTests.setUp
+    persist = AccountingContractTests.persist
+    reviewed_fixture = AccountingContractTests.reviewed_fixture
+    queue_new_job = AccountingContractTests.queue_new_job
+    # Reuse only fixtures/helpers; baseline tests are collected separately.
+    def test_new_run_switches_once_preserves_history_and_advances_revision(self):
+        first = self.persist()
+        self.queue_new_job()
+        result = fixture()
+        result['provenance']['service_run_id'] = 'second-synthetic-run'
+        second = self.persist(result)
+        runs = self.database.execute('SELECT * FROM raw_extractions ORDER BY run_number').fetchall()
+        self.assertEqual([row['is_current'] for row in runs], [0, 1])
+        self.assertEqual([row['id'] for row in runs], [first['extraction_id'], second['extraction_id']])
+        self.assertEqual(runs[0]['raw_json'], fixture())
+        self.assertEqual(self.database.execute('SELECT content_revision FROM documents').fetchone()['content_revision'], 3)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.database.db.execute('UPDATE raw_extractions SET is_current=TRUE')
+        self.database.db.rollback()
+
+    def test_validation_failure_after_switch_rolls_back_entire_new_run(self):
+        first = self.persist()
+        self.queue_new_job()
+        before = {table: self.database.execute('SELECT * FROM '+table).fetchall()
+                  for table in ('documents','raw_extractions','field_predictions','line_items','exceptions','pending_jobs')}
+        result = fixture()
+        result['provenance']['service_run_id'] = 'failed-new-run'
+        with patch('validation.document_validation.validate_document', side_effect=RuntimeError('synthetic validation failure')):
+            with self.assertRaisesRegex(RuntimeError, 'synthetic validation failure'):
+                self.persist(result)
+        after = {table: self.database.execute('SELECT * FROM '+table).fetchall() for table in before}
+        self.assertEqual(after, before)
+        self.assertEqual(after['raw_extractions'][0]['id'], first['extraction_id'])
+        sql = [query for query, _ in self.database.calls]
+        switch = max(i for i,query in enumerate(sql) if 'SELECT switch_current_extraction' in query)
+        self.assertTrue(any('INSERT INTO field_predictions' in query for query in sql[:switch]))
+        self.assertTrue(any('INSERT INTO line_items' in query for query in sql[:switch]))
+
+    def test_approved_review_blocks_new_run_before_record_creation(self):
+        self.persist()
+        self.reviewed_fixture()
+        result = fixture()
+        result['provenance']['service_run_id'] = 'after-approval'
+        with self.assertRaisesRegex(ValueError, 'AMENDMENT_REQUIRED'):
+            self.persist(result)
+        self.assertEqual(self.database.execute('SELECT count(*) AS n FROM raw_extractions').fetchone()['n'], 1)
+
+    def test_job_tenant_mismatch_fails_closed(self):
+        self.database.db.execute("UPDATE pending_jobs SET tenant_id='foreign-tenant'")
+        self.database.db.commit()
+        with self.assertRaisesRegex(ValueError, 'MISMATCH'):
+            self.persist()
+        self.assertIsNone(self.database.execute('SELECT * FROM raw_extractions').fetchone())
+
+    def test_failure_marker_cannot_downgrade_approved_review(self):
+        self.persist()
+        self.reviewed_fixture()
+        before = self.database.execute('SELECT * FROM documents').fetchone()
+        persistence.mark_extraction_job_failed(DOCUMENT, 'synthetic rejected rerun')
+        self.assertEqual(self.database.execute('SELECT * FROM documents').fetchone(), before)
+
+    def test_failure_marker_cannot_downgrade_approved_record_even_if_status_changed(self):
+        self.persist()
+        self.reviewed_fixture()
+        self.assertEqual(AccountingContractTests.standardise(self).status_code, 201)
+        self.database.db.execute("UPDATE documents SET status='queued'")
+        self.database.db.commit()
+        before = self.database.execute('SELECT * FROM documents').fetchone()
+        persistence.mark_extraction_job_failed(DOCUMENT, 'synthetic rejected rerun')
+        self.assertEqual(self.database.execute('SELECT * FROM documents').fetchone(), before)
+
+    def test_foreign_document_run_id_cannot_be_replayed(self):
+        foreign = '22222222-2222-4222-8222-222222222222'
+        service = fixture()['provenance']['service_run_id']
+        self.database.db.execute("INSERT INTO raw_extractions(id,document_id,run_number,is_current,service_run_id) VALUES ('foreign-run',?,1,FALSE,?)", (foreign, service))
+        self.database.db.commit()
+        with self.assertRaisesRegex(ValueError, 'STALE_ATTEMPT'):
+            self.persist()
+        self.assertEqual(self.database.execute('SELECT status FROM pending_jobs').fetchone()['status'], 'processing')
 
 
 if __name__ == '__main__':

@@ -9,8 +9,19 @@ from services.email.resend_sender import send_email as send_resend_email
 log = logging.getLogger(__name__)
 
 def _send_code(recipient: str, code: str, subject: str, label: str, expiry: str):
+    provider = os.environ.get("EMAIL_PROVIDER", "auto").strip().lower()
     resend_key = os.environ.get("RESEND_API_KEY", "").strip()
-    if resend_key:
+    if provider == "resend":
+        if not resend_key:
+            raise RuntimeError("EMAIL_PROVIDER=resend requires RESEND_API_KEY.")
+        text = f"Your {label} is {code}.\n\nIt expires in {expiry}. Do not share this code."
+        html = (f"<p>Your {label} is:</p><p><strong style='font-size:32px;letter-spacing:8px'>{code}</strong></p>"
+                f"<p>This code expires in <strong>{expiry}</strong>. Never share it.</p>")
+        send_resend_email(recipient=recipient, subject=subject, text=text, html=html)
+        return
+    if provider not in {"smtp", "auto"}:
+        raise RuntimeError("EMAIL_PROVIDER must be resend, smtp, or auto.")
+    if provider == "auto" and resend_key:
         text = f"Your {label} is {code}.\n\nIt expires in {expiry}. Do not share this code."
         html = (f"<p>Your {label} is:</p><p><strong style='font-size:32px;letter-spacing:8px'>{code}</strong></p>"
                 f"<p>This code expires in <strong>{expiry}</strong>. Never share it.</p>")
@@ -18,10 +29,8 @@ def _send_code(recipient: str, code: str, subject: str, label: str, expiry: str)
             send_resend_email(recipient=recipient, subject=subject, text=text, html=html)
             return
         except Exception as exc:
-            # Resend is preferred, but a transient provider or TLS failure
-            # should not prevent OTP delivery when SMTP is configured.
-            log.warning("Resend OTP delivery failed: %s: %s", type(exc).__name__, str(exc)[:300])
-            pass
+            # Preserve legacy SMTP fallback without logging provider payloads.
+            log.warning("Resend OTP delivery failed (%s); trying SMTP.", type(exc).__name__)
     username = os.environ.get("SMTP_USER", "").strip()
     # Gmail displays App Passwords in groups separated by spaces; normalize them
     # so either the grouped or ungrouped form works in .env.

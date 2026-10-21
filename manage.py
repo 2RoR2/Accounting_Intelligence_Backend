@@ -53,25 +53,9 @@ def main():
             )
     with connect() as db:
         if args.command == "migrate":
-            migrations = Path(__file__).parent / "database" / "migrations"
-            schema = Path(__file__).parent / "database" / "PostgreSQL Database schema.sql"
-            schema_exists = db.execute("SELECT to_regclass('public.tenants') AS table_name").fetchone()["table_name"]
-            if schema_exists is None:
-                if not schema.is_file():
-                    parser.error(f"Database schema file not found: {schema}")
-                db.execute(schema.read_text(encoding="utf-8-sig"))
-                print("Applied the full PostgreSQL schema to the empty database.")
-            db.execute("""CREATE TABLE IF NOT EXISTS schema_migrations (
-                name TEXT PRIMARY KEY,
-                applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
-            )""")
-            for migration in sorted(migrations.glob("*.sql")) if migrations.is_dir() else []:
-                applied = db.execute("SELECT 1 FROM schema_migrations WHERE name=%s",
-                                     (migration.name,)).fetchone()
-                if not applied:
-                    db.execute(migration.read_text(encoding="utf-8-sig"))
-                    db.execute("INSERT INTO schema_migrations(name) VALUES (%s)", (migration.name,))
-                    print(f"Applied {migration.name}.")
+            from database.schema_compatibility import apply_migrations
+            root=Path(__file__).parent
+            applied=apply_migrations(db,root/"database/PostgreSQL Database schema.sql",root/"database/migrations")
         elif args.command == "create-admin":
             password = getpass.getpass("New administrator password: ")
             if not strong_password(password) or password != getpass.getpass("Confirm password: "):
@@ -158,6 +142,11 @@ def main():
                         (tenant_id, name, email, hash_password(demo_password), role),
                     )
             print("Demo accounts are ready. Admin and Local Admin sign-in require TOTP enrollment.")
+    # Report success only after the connection context committed the complete upgrade.
+    if args.command == "migrate":
+        for name in applied:
+            print(f"Applied {name}.")
+        print("Schema prerequisites verified.")
 
 
 if __name__ == "__main__":

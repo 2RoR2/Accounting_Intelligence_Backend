@@ -113,73 +113,57 @@ def process_document_mock(document_uuid: str) -> Dict[str, Any]:
     }
 
 
-def process_document_extraction_job(document_id: str) -> Dict[str, Any]:
-    """
-    Offline/development extraction job adapter.
-
-    Accepts ONLY an immutable document identifier (never an arbitrary raw file path from Redis).
-
-    FAIL-CLOSED SAFETY:
-    In production, durable outbox leases (pending_jobs), tenant ownership authorization,
-    and a backend document storage resolver are required. Without these, this worker
-    fails closed immediately.
-
-    In isolated offline tests, a trusted test resolver can be injected via
-    set_test_extraction_environment().
-
-    The returned payload is minimal metadata only — no financial amounts, invoice numbers,
-    filesystem paths, or extracted PII are stored in Redis.
-    """
-    logger.info("Executing extraction job for document: %s", document_id)
-
-    resolver = _TEST_DOCUMENT_RESOLVER or resolve_document_from_database
-    resolved_path = resolver(document_id)
-    if not resolved_path or not Path(resolved_path).is_file():
-        logger.error("Trusted document resolver could not locate file for: %s", document_id)
-        raise ExtractionResolutionError(
-            f"Trusted document file could not be resolved for document_id={document_id}."
-        )
+def process_document_extraction_job(document_id: str, job_id: Optional[str] = None,
+                                    tenant_id: Optional[str] = None, dispatch_token: Optional[str] = None) -> Dict[str, Any]:
+    """JSON-safe v1 delivery. Legacy document-only jobs are rejected before IO."""
+    from infrastructure.queue import attempts
+    if not all((job_id,tenant_id,dispatch_token)):
+        return {"status":"REJECTED","reason":"LEGACY_PAYLOAD"}
+    from rq import get_current_job
+    rq_job = get_current_job()
+    if rq_job is None:
+        return {"status":"REJECTED","reason":"RQ_CONTEXT_REQUIRED"}
+    delivery = attempts.Delivery(document_id,job_id,tenant_id,dispatch_token)
+    try:
+        claim = attempts.claim_delivery(delivery,rq_job.id)
+    except attempts.AttemptRejected as exc:
+        return {"status":"REJECTED","reason":exc.code,"document_id":document_id,"job_id":job_id}
+    except Exception:
+        raise ExtractionJobError("Attempt verification unavailable; processing did not start.") from None
 
     from services.extraction.execution import execute_document_extraction
     from services.extraction.persistence import mark_extraction_job_failed, persist_extraction_result
-
     try:
-        result = execute_document_extraction(
-            document_id=document_id,
-            file_path=Path(resolved_path),
-            parser=_TEST_PARSER,
-        )
-
-        if result.get("execution_status") != "EXTRACTED":
-            error_msg = result.get("error") or "Extraction execution failed."
-            raise ExtractionExecutionError(f"Extraction execution failed: {error_msg}")
-
-        # Offline queue tests use opaque non-UUID identifiers and an injected
-        # resolver/parser. They intentionally do not exercise PostgreSQL. Real
-        # production jobs always resolve through PostgreSQL and use UUID IDs.
+        resolved_path = resolve_document_from_database(document_id)
+        if not resolved_path or not Path(resolved_path).is_file():
+            raise ExtractionResolutionError("Document source is unavailable.")
+        # Production workers never use the optional offline resolver/parser hooks.
+        result = execute_document_extraction(document_id=document_id,file_path=Path(resolved_path))
+        if result.get("execution_status")!="EXTRACTED":
+            raise ExtractionExecutionError("Extraction failed.")
+        saved = persist_extraction_result(document_id,result,claim=claim)
+    except Exception:
         try:
-            uuid.UUID(str(document_id))
-            persistence = persist_extraction_result(document_id, result)
-        except (ValueError, AttributeError, TypeError):
-            if not (_TEST_DOCUMENT_RESOLVER or _TEST_PARSER):
-                raise
-            persistence = {"skipped": "offline test document id"}
-    except Exception as exc:
-        try:
-            if not (_TEST_DOCUMENT_RESOLVER or _TEST_PARSER):
-                mark_extraction_job_failed(document_id, str(exc))
+            mark_extraction_job_failed(document_id,claim=claim)
         except Exception:
-            logger.exception("Could not persist failed status for extraction job %s", document_id)
-        raise
+            logger.error("Attempt failure state could not be persisted for job %s",job_id)
+        # Do not let RQ store provider exceptions, paths or source text in Redis.
+        raise ExtractionExecutionError("Extraction attempt failed; inspect private worker evidence.") from None
+    return {"status":"EXTRACTED","document_id":document_id,"job_id":job_id,
+            "service_run_id":result.get("service_run_id"),"persistence":saved,
+            "review_required":True,"accounting_approval_performed":False}
 
-    # Return minimal JSON-safe metadata (no filesystem paths, financial amounts, or PII in Redis)
-    return {
-        "status": result["execution_status"],
-        "extraction_status": result.get("extraction_status"),
-        "document_id": document_id,
-        "service_run_id": result.get("service_run_id"),
-        "persistence": persistence,
-        "review_required": result.get("review_required", True),
-        "accounting_approval_performed": False,
-    }
 
+def process_document_extraction_test_job(document_id: str) -> Dict[str, Any]:
+    """Explicit offline adapter, never enqueued by an API or production worker."""
+    if not _TEST_DOCUMENT_RESOLVER or not _TEST_PARSER:
+        raise ExtractionUnauthorizedError("Offline test adapters must be explicitly configured.")
+    path = _TEST_DOCUMENT_RESOLVER(document_id)
+    if not path or not Path(path).is_file():
+        raise ExtractionResolutionError("Offline fixture not found.")
+    from services.extraction.execution import execute_document_extraction
+    result = execute_document_extraction(document_id=document_id,file_path=Path(path),parser=_TEST_PARSER)
+    return {"status":result["execution_status"],"document_id":document_id,
+            "extraction_status":result.get("extraction_status"),
+            "service_run_id":result.get("service_run_id"),"review_required":True,
+            "accounting_approval_performed":False}

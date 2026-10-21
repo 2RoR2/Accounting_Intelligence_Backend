@@ -21,7 +21,8 @@ INSERT INTO users (id, tenant_id, name, email, password_hash, role, status, must
 
 ('00000000-0000-4000-8000-001000000001', '00000000-0000-4000-8000-000100000001', 'Demo Accountant', 'accountant.demo@saic.example', 'scrypt$mock-salt-2026$d0da1f0a7dbdf504be03a70dd2cdeb37807890588917a8f342ed5fe0a82c6c377d4f9a580c91a387feed98c56ab1314a185e1c83fb43f77f7ca77a9b86d989a8', 'accountant', 'active', FALSE),
 ('00000000-0000-4000-8000-001000000002', '00000000-0000-4000-8000-000100000001', 'Demo Local Admin', 'reviewer.demo@saic.example', 'scrypt$mock-salt-2026$d0da1f0a7dbdf504be03a70dd2cdeb37807890588917a8f342ed5fe0a82c6c377d4f9a580c91a387feed98c56ab1314a185e1c83fb43f77f7ca77a9b86d989a8', 'local_admin', 'active', FALSE),
-('00000000-0000-4000-8000-001000000003', NULL, 'Demo Platform Admin', 'platform.demo@saic.example', 'scrypt$mock-salt-2026$d0da1f0a7dbdf504be03a70dd2cdeb37807890588917a8f342ed5fe0a82c6c377d4f9a580c91a387feed98c56ab1314a185e1c83fb43f77f7ca77a9b86d989a8', 'super_admin', 'active', FALSE);
+('00000000-0000-4000-8000-001000000003', NULL, 'Demo Platform Admin', 'platform.demo@saic.example', 'scrypt$mock-salt-2026$d0da1f0a7dbdf504be03a70dd2cdeb37807890588917a8f342ed5fe0a82c6c377d4f9a580c91a387feed98c56ab1314a185e1c83fb43f77f7ca77a9b86d989a8', 'super_admin', 'active', FALSE),
+('00000000-0000-4000-8000-001000000005', '00000000-0000-4000-8000-000100000001', 'AI Admin Portal', 'ai.adminportal@gmail.com', 'scrypt$mock-salt-2026$d0da1f0a7dbdf504be03a70dd2cdeb37807890588917a8f342ed5fe0a82c6c377d4f9a580c91a387feed98c56ab1314a185e1c83fb43f77f7ca77a9b86d989a8', 'accountant', 'active', FALSE);
 
 -- Resend OTP test account. Password: DemoPass!2026
 INSERT INTO tenants (id, tenant_code, name, registration_number, admin_email, seat_limit, status) VALUES
