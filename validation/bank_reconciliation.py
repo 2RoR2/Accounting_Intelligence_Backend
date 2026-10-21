@@ -132,4 +132,3 @@ def reconcile_records(accounting_records, bank_transactions):
         "results": results,
         "used_bank_transaction_ids": sorted(used_transaction_ids),
     }
-

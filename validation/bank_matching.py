@@ -36,7 +36,7 @@ def match_bank_transaction(accounting_record, bank_transaction):
             "status": "REVIEW_REQUIRED",
             "matched_bank_transaction_id": None,
             "bank_match_score": 0.0,
-            "reconciliation_difference": float(difference),
+            "reconciliation_difference": format(difference, 'f'),
             "variances": [{"type": "CURRENCY_MISSING"}],
         }
 
@@ -45,7 +45,7 @@ def match_bank_transaction(accounting_record, bank_transaction):
             "status": "UNMATCHED",
             "matched_bank_transaction_id": None,
             "bank_match_score": 0.0,
-            "reconciliation_difference": float(difference),
+            "reconciliation_difference": format(difference, 'f'),
             "variances": [{
                 "type": "CURRENCY_MISMATCH",
                 "accounting_currency": accounting_currency,
@@ -57,7 +57,7 @@ def match_bank_transaction(accounting_record, bank_transaction):
     if accounting_amount != bank_amount:
         variances.append({
             "type": "AMOUNT_VARIANCE",
-            "difference": float(difference),
+            "difference": format(difference, 'f'),
         })
 
     # References must be present and match for automatic matching.
@@ -78,7 +78,7 @@ def match_bank_transaction(accounting_record, bank_transaction):
             "status": "REVIEW_REQUIRED",
             "matched_bank_transaction_id": None,
             "bank_match_score": 0.0,
-            "reconciliation_difference": float(difference),
+            "reconciliation_difference": format(difference, 'f'),
             "variances": variances,
         }
 
@@ -88,6 +88,6 @@ def match_bank_transaction(accounting_record, bank_transaction):
             "transaction_id"
         ),
         "bank_match_score": 1.0,
-        "reconciliation_difference": float(difference),
+        "reconciliation_difference": format(difference, 'f'),
         "variances": [],
     }

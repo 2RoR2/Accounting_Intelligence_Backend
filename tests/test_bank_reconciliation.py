@@ -161,4 +161,3 @@ def test_reconciliation_returns_result_for_every_record():
     assert len(result["results"]) == 2
     assert result["results"][0]["status"] == "MATCHED"
     assert result["results"][1]["status"] == "UNMATCHED"
-

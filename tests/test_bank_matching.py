@@ -33,7 +33,7 @@ def test_bank_match_success():
 
     assert result["status"] == "MATCHED"
     assert result["matched_bank_transaction_id"] == "bank-001"
-    assert result["reconciliation_difference"] == 0.0
+    assert result["reconciliation_difference"] == "0.00"
     assert result["variances"] == []
 
 
@@ -44,7 +44,7 @@ def test_bank_match_any_amount_difference_requires_review():
     )
 
     assert result["status"] == "REVIEW_REQUIRED"
-    assert result["reconciliation_difference"] == 0.01
+    assert result["reconciliation_difference"] == "0.01"
     assert any(
         variance["type"] == "AMOUNT_VARIANCE"
         for variance in result["variances"]
