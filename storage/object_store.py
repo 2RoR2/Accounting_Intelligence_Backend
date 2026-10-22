@@ -14,7 +14,8 @@ def _client():
     return boto3.client(
         "s3",
         region_name=os.getenv("AWS_REGION", "us-east-1"),
-        endpoint_url=os.getenv("S3_ENDPOINT_URL") or os.getenv("AWS_ENDPOINT_URL") or None,
+        endpoint_url=(os.getenv("S3_ENDPOINT_URL") or os.getenv("AWS_ENDPOINT_URL")
+                      or os.getenv("AWS_ENDPOINT_URL_S3") or None),
     )
 
 
