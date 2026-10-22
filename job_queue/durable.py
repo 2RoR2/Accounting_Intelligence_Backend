@@ -20,7 +20,7 @@ def dispatch_due_jobs(limit: int = 50) -> int:
     queued = []
     with connect() as db:
         rows = db.execute("""
-            SELECT id FROM pending_jobs
+            SELECT id, document_id FROM pending_jobs
             WHERE status='pending' AND next_attempt_at <= now()
             ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT %s
         """, (limit,)).fetchall()
