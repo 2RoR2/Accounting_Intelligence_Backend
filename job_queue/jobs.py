@@ -74,6 +74,10 @@ def resolve_document_from_database(document_id: str) -> Optional[Path]:
     if not row or not row["storage_path"]:
         return None
 
+    if str(row["storage_path"]).startswith("s3://"):
+        from storage.object_store import download
+        return download(str(row["storage_path"]))
+
     storage_root = Path(os.getenv("DOCUMENT_STORAGE_PATH", str(BACKEND_ROOT / "storage"))).expanduser()
     if not storage_root.is_absolute():
         storage_root = (BACKEND_ROOT / storage_root).resolve()
