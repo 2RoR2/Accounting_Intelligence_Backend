@@ -13,7 +13,7 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 import app as api
-from infrastructure.queue import attempts, jobs
+from job_queue import attempts, jobs
 from services.extraction import persistence
 from tests import test_accounting_contract as contract
 from tests.test_phase3d_mutations import MutationDatabase
@@ -33,7 +33,7 @@ class AttemptProtocolTests(unittest.TestCase):
                       patch.object(persistence,'connect',return_value=self.database),
                       patch.object(api,'connect',return_value=self.database),
                       patch.object(api,'session_user',return_value=contract.USER),
-                      patch('infrastructure.queue.config.get_queues',return_value=(self.cpu,None)),
+                      patch('job_queue.config.get_queues',return_value=(self.cpu,None)),
                       patch.object(api,'check_schema_compatibility',side_effect=AssertionError('No startup SQL'))):
             guard.start(); self.addCleanup(guard.stop)
         self.client=TestClient(api.app,raise_server_exceptions=False,headers={'X-Requested-With':'AccountingIntelligence'})

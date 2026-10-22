@@ -258,7 +258,7 @@ def prepare_runtime():
     connection.connect=connect_runtime
     import app
     from services.extraction import persistence
-    from infrastructure.queue import attempts
+    from job_queue import attempts
     for module in (app,persistence,attempts):
         if not Path(module.__file__).resolve().is_relative_to(ROOT):
             raise IsolationError('Imported source outside staged candidate')

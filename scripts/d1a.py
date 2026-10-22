@@ -44,7 +44,7 @@ def configure():
                 or identity['system_identifier'] != saved['system_identifier']
                 or not identity['documents'] or db.info.server_version // 10000 != 18):
             raise RuntimeError('Unexpected/uninitialized D1A server')
-    from infrastructure.queue.config import get_redis_connection
+    from job_queue.config import get_redis_connection
     redis = get_redis_connection()
     redis.ping()
     redis.close()
@@ -93,7 +93,7 @@ def main():
         import uvicorn
         uvicorn.run('app:app', host='127.0.0.1', port=8002, access_log=False)
     else:
-        from infrastructure.queue.config import get_queues
+        from job_queue.config import get_queues
         from rq import SimpleWorker
         from rq.serializers import JSONSerializer
         cpu, _ = get_queues()

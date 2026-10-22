@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import patch, Mock
 from uuid import uuid4
 from datetime import datetime, timezone, timedelta
-from infrastructure.queue import attempts
+from job_queue import attempts
 
 import psycopg
 from fastapi.testclient import TestClient
@@ -91,7 +91,7 @@ class Phase3DMutationTests(unittest.TestCase):
                      'email':'synthetic@example.invalid','status':'active','must_change_password':False,'invited_by':None,
                      'invited_at':None,'last_login_at':None}
         for patcher in (patch.object(attempts,'connect',return_value=self.database),
-                        patch('infrastructure.queue.config.get_queues',return_value=(Mock(),None)),
+                        patch('job_queue.config.get_queues',return_value=(Mock(),None)),
                         patch.object(api,'connect',return_value=self.database),
                         patch.object(persistence,'connect',return_value=self.database),
                         patch.object(api,'session_user',side_effect=lambda db,request: self.user),
@@ -319,7 +319,7 @@ class Phase3DMutationTests(unittest.TestCase):
 
     def test_retry_transport_failure_is_not_queued_success(self):
         self.mark_failed(); self.add_open_job()
-        with patch('infrastructure.queue.config.get_queues',side_effect=ConnectionError('synthetic private error')) as queues:
+        with patch('job_queue.config.get_queues',side_effect=ConnectionError('synthetic private error')) as queues:
             response=self.post(f'/api/documents/{DOCUMENT}/retry')
         self.assertEqual(response.status_code,503,response.text)
         queues.assert_called_once()
@@ -398,7 +398,7 @@ class Phase3DMutationTests(unittest.TestCase):
         self.assertEqual(self.database.snapshot(),before)
 
     def test_worker_rejects_legacy_payload_before_any_source_or_database_access(self):
-        from infrastructure.queue import jobs
+        from job_queue import jobs
         with patch.object(jobs,'resolve_document_from_database',side_effect=AssertionError('No file access')), patch.object(attempts,'connect',side_effect=AssertionError('No database access')):
             self.assertEqual(jobs.process_document_extraction_job(DOCUMENT),
                              {'status':'REJECTED','reason':'LEGACY_PAYLOAD'})

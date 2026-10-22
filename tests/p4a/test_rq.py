@@ -12,7 +12,7 @@ from tests.test_postgresql_contract import PostgreSQLContractTests as Base,api,p
 from tests import p4a_support as h
 from tests.p4a.worker import source_fingerprint
 E=h.RUN/'evidence/gate6b'
-FUNCTION='infrastructure.queue.jobs.process_document_extraction_job'
+FUNCTION='job_queue.jobs.process_document_extraction_job'
 
 def digest(value):
  return hashlib.sha256(json.dumps(value,default=str,sort_keys=True).encode()).hexdigest()
@@ -243,7 +243,7 @@ class RQTests(Base):
   self.assertEqual(n,2)
   self.note('retry_history',http=[r.status_code for r in responses],jobs=2,old=self.job_evidence(old['jobId']),new=self.job_evidence(fresh['jobId']))
  def test_11_dispatch_uncertainty(self):
-  import infrastructure.queue.config as config
+  import job_queue.config as config
   bad=Redis(host='127.0.0.1',port=6383,password='deliberately-wrong-synthetic',socket_timeout=4,socket_connect_timeout=4)
   try:
    with patch.object(config,'get_redis_connection',return_value=bad):

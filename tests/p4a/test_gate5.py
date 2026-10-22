@@ -198,7 +198,7 @@ class Gate5Tests(Base):
                 return cursor
         cpu=Mock()
         def upload(i):return clients[i].post('/api/documents',files={'file':('gate5-synthetic.pdf',body,'application/pdf')})
-        with h.connect_fixture() as observer,patch.object(api,'connect',Proxy),patch('infrastructure.queue.config.get_queues',return_value=(cpu,None)):
+        with h.connect_fixture() as observer,patch.object(api,'connect',Proxy),patch('job_queue.config.get_queues',return_value=(cpu,None)):
             with ThreadPoolExecutor(2) as pool:
                 first=pool.submit(upload,0)
                 try:
@@ -252,7 +252,7 @@ class Gate5Tests(Base):
         with h.connect_fixture() as holder,h.connect_fixture() as observer:
             holder.execute('SELECT id FROM documents WHERE id=%s FOR UPDATE',(self.document,))
             pid=holder.info.backend_pid
-            with patch('infrastructure.queue.config.get_queues',side_effect=AssertionError('No Redis dispatch for active work')):
+            with patch('job_queue.config.get_queues',side_effect=AssertionError('No Redis dispatch for active work')):
                 with ThreadPoolExecutor(2) as pool:
                     finished=pool.submit(persistence.persist_extraction_result,self.document,artifact,claim=claim)
                     retry=pool.submit(client.post,f'/api/documents/{self.document}/retry')
@@ -268,7 +268,7 @@ class Gate5Tests(Base):
         body=b'%PDF-1.4\\n% cross-tenant synthetic '+uuid4().hex.encode()+b'\\n%%EOF'
         clients=[self.client(),self.client(self.foreign)]
         cpu=Mock()
-        with patch('infrastructure.queue.config.get_queues',return_value=(cpu,None)):
+        with patch('job_queue.config.get_queues',return_value=(cpu,None)):
             responses=[c.post('/api/documents',files={'file':('tenant-test.pdf',body,'application/pdf')}) for c in clients]
         self.assertEqual([r.status_code for r in responses],[201,201])
         ids=[r.json()['id'] for r in responses]
@@ -307,7 +307,7 @@ class Gate5Tests(Base):
         def upload(i):return clients[i].post('/api/documents',files={'file':(filename,body,'application/pdf')})
         with h.connect_fixture() as observer,patch.object(api,'connect',Proxy),patch.object(
                 attempts,'reserve_dispatch',side_effect=fail_first),patch(
-                'infrastructure.queue.config.get_queues',return_value=(cpu,None)):
+                'job_queue.config.get_queues',return_value=(cpu,None)):
             with ThreadPoolExecutor(2) as pool:
                 first=pool.submit(upload,0)
                 try:
