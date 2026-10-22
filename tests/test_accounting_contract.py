@@ -27,6 +27,8 @@ from services.extraction.accounting_contract import (
 DOCUMENT = '11111111-1111-4111-8111-111111111111'
 TENANT = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
 USER = {'id': 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'tenant_id': TENANT, 'role': 'accountant'}
+# Stable synthetic pending-job identity shared by the phase-3 queue contracts.
+JOB = '11111111-1111-4111-8111-111111111113'
 FIXTURE = Path(__file__).parent/'extraction/data/contracts/syn001_m2.json'
 
 

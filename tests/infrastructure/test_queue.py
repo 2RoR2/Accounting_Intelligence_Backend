@@ -17,6 +17,12 @@ from job_queue.jobs import (
     ExtractionExecutionError,
 )
 
+DOC_UNAUTH = "11111111-1111-4111-8111-111111111101"
+DOC_MISSING = "11111111-1111-4111-8111-111111111102"
+DOC_RQ_UNAUTH = "11111111-1111-4111-8111-111111111103"
+DOC_RQ_MISSING = "11111111-1111-4111-8111-111111111104"
+DOC_QUEUED = "11111111-1111-4111-8111-111111111105"
+
 @pytest.fixture(autouse=True)
 def isolated_extraction_env():
     """Ensure a clean extraction test environment before and after every test."""
@@ -67,18 +73,20 @@ def test_invalid_serialization(fake_cpu_queue):
         fake_cpu_queue.enqueue('job_queue.jobs.process_document_mock', args=(NonSerializableObj(),))
 
 
-def test_extraction_job_fails_closed_by_default():
-    """Case G: Production default fails closed by raising ExtractionUnauthorizedError."""
-    with pytest.raises(ExtractionUnauthorizedError) as exc_info:
-        process_document_extraction_job("DOC-UNAUTH-001")
-    assert "resolver not available" in str(exc_info.value).lower()
+def test_extraction_job_fails_closed_by_default(monkeypatch):
+    """Production jobs require a dispatched durable queue claim."""
+    monkeypatch.setattr("job_queue.durable.claim_document", lambda document_id: ("job-id", "claim-token"))
+    with pytest.raises(ExtractionResolutionError) as exc_info:
+        process_document_extraction_job(DOC_UNAUTH)
+    assert "could not be resolved" in str(exc_info.value).lower()
 
 
-def test_extraction_job_fails_when_resolver_returns_missing_file():
+def test_extraction_job_fails_when_resolver_returns_missing_file(monkeypatch):
     """Case G: Fails closed by raising ExtractionResolutionError when resolver returns missing file."""
     set_test_extraction_environment(resolver=lambda doc_id: Path("non_existent_file.pdf"))
+    monkeypatch.setattr("job_queue.durable.claim_document", lambda document_id: ("job-id", "claim-token"))
     with pytest.raises(ExtractionResolutionError) as exc_info:
-        process_document_extraction_job("DOC-MISSING-001")
+        process_document_extraction_job(DOC_MISSING)
     assert "could not be resolved" in str(exc_info.value).lower()
     # Ensure no local absolute paths are leaked in the exception message
     assert "non_existent_file" not in str(exc_info.value)
@@ -88,7 +96,7 @@ def test_extraction_job_unauthorized_fails_in_rq(fake_redis, fake_cpu_queue):
     """Verify that an unauthorized extraction job is marked as FAILED by RQ."""
     job = fake_cpu_queue.enqueue(
         "job_queue.jobs.process_document_extraction_job",
-        args=("DOC-UNAUTH-RQ",),
+        args=(DOC_RQ_UNAUTH,),
     )
     worker = SimpleWorker([fake_cpu_queue], connection=fake_redis, serializer=JSONSerializer)
     worker.work(burst=True)
@@ -102,7 +110,7 @@ def test_extraction_job_unresolvable_fails_in_rq(fake_redis, fake_cpu_queue):
     set_test_extraction_environment(resolver=lambda doc_id: Path("non_existent_file.pdf"))
     job = fake_cpu_queue.enqueue(
         "job_queue.jobs.process_document_extraction_job",
-        args=("DOC-MISSING-RQ",),
+        args=(DOC_RQ_MISSING,),
     )
     worker = SimpleWorker([fake_cpu_queue], connection=fake_redis, serializer=JSONSerializer)
     worker.work(burst=True)
@@ -111,7 +119,7 @@ def test_extraction_job_unresolvable_fails_in_rq(fake_redis, fake_cpu_queue):
     assert job.get_status() == "failed"
 
 
-def test_extraction_job_offline_queued_execution(fake_redis, fake_cpu_queue, tmp_path):
+def test_extraction_job_offline_queued_execution(fake_redis, fake_cpu_queue, tmp_path, monkeypatch):
     """Cases I & J: Offline queued execution with fakeredis, RQ finished status, and path exclusion."""
     doc_json_path = Path(__file__).resolve().parents[2] / "baseline" / "runs" / "docling-20261006T173339Z-d3d82235" / "document.json"
     doc_dict = json.loads(doc_json_path.read_text(encoding="utf-8"))
@@ -128,14 +136,15 @@ def test_extraction_job_offline_queued_execution(fake_redis, fake_cpu_queue, tmp
         resolver=lambda doc_id: pdf_file,
         parser=test_parser,
     )
+    monkeypatch.setattr("job_queue.durable.claim_document", lambda document_id: ("job-id", "claim-token"))
 
     # Case J: Payload is strictly opaque/minimal identifier tuple (no raw file paths)
     job = fake_cpu_queue.enqueue(
         "job_queue.jobs.process_document_extraction_job",
-        args=("DOC-QUEUED-001",),
+        args=(DOC_QUEUED,),
     )
     assert job.id is not None
-    assert job.args == ("DOC-QUEUED-001",)
+    assert job.args == (DOC_QUEUED,)
 
     # Execute using offline RQ worker with JSONSerializer
     worker = SimpleWorker([fake_cpu_queue], connection=fake_redis, serializer=JSONSerializer)
@@ -146,7 +155,7 @@ def test_extraction_job_offline_queued_execution(fake_redis, fake_cpu_queue, tmp
     result = job.return_value()
 
     assert result["status"] == "EXTRACTED"
-    assert result["document_id"] == "DOC-QUEUED-001"
+    assert result["document_id"] == DOC_QUEUED
     assert result["extraction_status"] == "parser_only_needs_review"
     assert result["review_required"] is True
     assert result["accounting_approval_performed"] is False

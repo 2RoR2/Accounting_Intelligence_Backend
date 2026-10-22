@@ -26,9 +26,8 @@ This repository contains the FastAPI backend. The companion frontend is in `../A
 - Qwen/Ollama is an implemented optional pathway, but automatic routing is disabled by default with `allow_vlm_inference=false` until accuracy is measured.
 - Validation supports document-specific profiles and structured revisioned results. Missing optional evidence is `NOT_CHECKED`; it is not treated as a failed rule.
 - Currency validation accepts only the configured supported ISO-style codes and applies their configured minor-unit policy.
-- Extended financial checks cover the available allowance, charge, tax, prepayment, rounding, total, and amount-due evidence. This is not a claim of full EN 16931 or Peppol compliance.
+- Extended financial checks cover the available allowance, charge, tax, prepayment, rounding, total, and amount-due evidence. 
 - PO/GRN and approval-limit database structures are present. They require tenant data and policy configuration before they can produce matching or approval decisions.
-- LHDN/MyInvois submission is outside this application’s scope.
 
 The workflow is human-in-the-loop. AI candidates are never automatically treated as approved accounting records.
 

@@ -28,6 +28,7 @@ with patch('fastapi.dependencies.utils.ensure_multipart_is_installed'):
 from auth.security import create_access_token
 from services.extraction import persistence
 from services.extraction.accounting_contract import record_values
+from job_queue import attempts
 from tests.c1pg_support import connect
 
 FIXTURE = Path(__file__).parent / 'extraction/data/contracts/syn001_m2.json'

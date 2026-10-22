@@ -891,8 +891,14 @@ async def upload_document(request: Request, file: UploadFile = File(...), kind: 
     storage_dir.mkdir(parents=True, exist_ok=True)
     # Never allow a client filename to create directories or escape private storage.
     original_filename = Path(file.filename or "document").name
+    object_key = f"documents/{tenant_id}/{uuid.uuid4()}_{original_filename}"
     storage_path = storage_dir / f"{uuid.uuid4()}_{original_filename}"
-    storage_path.write_bytes(data)
+    if os.getenv("S3_BUCKET"):
+        from storage.object_store import put_bytes
+        stored_path = put_bytes(object_key, data, file.content_type or "application/octet-stream")
+    else:
+        storage_path.write_bytes(data)
+        stored_path = str(storage_path)
     try:
         with connect() as db:
             duplicate = db.execute("SELECT id,document_code,original_filename FROM documents WHERE tenant_id=%s AND file_hash_sha256=%s", (tenant_id, file_hash)).fetchone()
@@ -900,10 +906,11 @@ async def upload_document(request: Request, file: UploadFile = File(...), kind: 
                 raise HTTPException(409, {"message": "This document is already uploaded.", "existingDocumentId": str(duplicate["id"]), "existingDocumentCode": duplicate["document_code"], "existingFilename": duplicate["original_filename"]})
             row = db.execute("""INSERT INTO documents(tenant_id,owner_id,original_filename,kind,category,storage_path,mime_type,file_size_bytes,file_hash_sha256,status)
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,'queued') RETURNING *""",
-                (tenant_id, user["id"], original_filename, kind, category, str(storage_path), file.content_type or "application/octet-stream", len(data), file_hash)).fetchone()
+                (tenant_id, user["id"], original_filename, kind, category, stored_path, file.content_type or "application/octet-stream", len(data), file_hash)).fetchone()
             job = db.execute("INSERT INTO pending_jobs(tenant_id,document_id) VALUES (%s,%s) RETURNING id", (tenant_id, row["id"])).fetchone()
     except Exception:
-        storage_path.unlink(missing_ok=True)
+        if not os.getenv("S3_BUCKET"):
+            storage_path.unlink(missing_ok=True)
         raise
     queue_job_id = None
     try:

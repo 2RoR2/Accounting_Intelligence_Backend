@@ -21,7 +21,7 @@ def configure():
  import database.connection as conn
  conn.connect=h.connect_runtime
  import app
- from infrastructure.queue import attempts
+ from job_queue import attempts
  from services.extraction import persistence
  for m in (app,attempts,persistence):m.connect=h.connect_runtime
  event('runtime_identity',mode=sys.argv[1],pid=os.getpid(),python=sys.executable,role=h.RUNTIME,db=h.MAIN,origin='http://127.0.0.1:3117')
@@ -54,7 +54,7 @@ def worker():
  configure()
  from rq import Queue,SimpleWorker,get_current_job
  from rq.serializers import JSONSerializer
- from infrastructure.queue import jobs,attempts
+ from job_queue import jobs,attempts
  from services.extraction import execution,persistence
  claim_real=attempts.claim_delivery
  def claim(delivery,rqid):

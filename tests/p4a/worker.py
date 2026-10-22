@@ -30,7 +30,7 @@ def main():
   facts['events'].append(dict(event=kind,**data));record.write_text(json.dumps(facts,indent=2))
  from rq import SimpleWorker,Queue,get_current_job
  from rq.serializers import JSONSerializer
- from infrastructure.queue import attempts,jobs
+ from job_queue import attempts,jobs
  from services.extraction import persistence,execution
  import psycopg
  original_execute=psycopg.Connection.execute
