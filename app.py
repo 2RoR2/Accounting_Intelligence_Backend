@@ -1,4 +1,4 @@
-﻿"""Public account API. Run: uvicorn app:app --host 127.0.0.1 --port 8000."""
+"""Public account API. Run: uvicorn app:app --host 127.0.0.1 --port 8000."""
 import hmac
 import logging
 import os
@@ -48,6 +48,14 @@ from auth.security import (
 from database.connection import connect
 from validation.bank_reconciliation import reconcile_records
 from notifications.mailer import send_login_code, send_reset_code
+
+
+def auth_cookie_samesite():
+    """Allow the Vercel frontend to send Render auth cookies in production."""
+    configured = os.getenv("COOKIE_SAMESITE", "").strip().lower()
+    if configured in {"strict", "lax", "none"}:
+        return configured
+    return "none" if os.getenv("COOKIE_SECURE", "false").lower() == "true" else "lax"
 
 def check_schema_compatibility():
     """Read-only prerequisites; owner migrations are an explicit manage.py action."""
@@ -195,11 +203,11 @@ def set_user_session_cookies(response: Response, user, session_id: str, refresh_
     response.set_cookie(ACCESS, create_access_token(str(user["id"]), session_id),
                         max_age=ACCESS_TOKEN_SECONDS, httponly=True,
                         secure=os.getenv("COOKIE_SECURE", "false").lower() == "true",
-                        samesite="strict", path="/api")
+                        samesite=auth_cookie_samesite(), path="/api")
     response.delete_cookie(SESSION, path="/api")
     response.set_cookie(REFRESH, refresh_token, max_age=max(1, int((expires_at - utcnow()).total_seconds())),
                         httponly=True, secure=os.getenv("COOKIE_SECURE", "false").lower() == "true",
-                        samesite="strict", path="/api/auth")
+                        samesite=auth_cookie_samesite(), path="/api/auth")
 
 
 def clear_auth_cookies(response: Response):
@@ -1557,7 +1565,7 @@ def login(data: Credentials, request: Request, response: Response):
         clear_auth_cookies(response)
         response.set_cookie(MFA, challenge, max_age=600, httponly=True,
                             secure=os.getenv("COOKIE_SECURE", "false").lower() == "true",
-                            samesite="strict", path="/api/auth")
+                            samesite=auth_cookie_samesite(), path="/api/auth")
         result = {"mfaRequired": True, "enrollmentRequired": setup}
         if setup:
             totp_secret = decrypt_totp_secret(pending_secret)
@@ -1570,7 +1578,7 @@ def login(data: Credentials, request: Request, response: Response):
         return result
     if user["role"] == "accountant":
         clear_auth_cookies(response)
-        response.set_cookie(MFA, challenge, max_age=600, httponly=True, secure=os.getenv("COOKIE_SECURE", "false").lower() == "true", samesite="strict", path="/api/auth")
+        response.set_cookie(MFA, challenge, max_age=600, httponly=True, secure=os.getenv("COOKIE_SECURE", "false").lower() == "true", samesite=auth_cookie_samesite(), path="/api/auth")
         return {"mfaRequired": True, "enrollmentRequired": False, "mfaMethod": "email"}
     set_user_session_cookies(response, user, session_id, refresh_token, expires_at)
     response.delete_cookie(MFA, path="/api/auth")
@@ -1621,7 +1629,7 @@ def resend_mfa(request: Request, response: Response):
             raise HTTPException(503, "Unable to send a new sign-in code. Please try again.")
     response.set_cookie(MFA, new_challenge, max_age=600, httponly=True,
                         secure=os.getenv("COOKIE_SECURE", "false").lower() == "true",
-                        samesite="strict", path="/api/auth")
+                        samesite=auth_cookie_samesite(), path="/api/auth")
     return {"message": "A new sign-in code has been sent.", "expiresIn": 60}
 
 
@@ -1802,7 +1810,7 @@ def verify_reset_code(data: VerifyInput, response: Response):
         raise HTTPException(400, "Code is invalid, expired or already used. Request a new code.")
     response.set_cookie(RESET, token, max_age=600, httponly=True,
                         secure=os.getenv("COOKIE_SECURE", "false").lower() == "true",
-                        samesite="strict", path="/api/auth")
+                        samesite=auth_cookie_samesite(), path="/api/auth")
     return {"success": True}
 
 
