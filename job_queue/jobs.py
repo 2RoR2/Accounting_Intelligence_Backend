@@ -116,7 +116,8 @@ def process_document_mock(document_uuid: str) -> Dict[str, Any]:
     }
 
 
-def process_document_extraction_job(document_id: str) -> Dict[str, Any]:
+def process_document_extraction_job(document_id: str, pending_job_id: str | None = None,
+                                    dispatch_token: str | None = None) -> Dict[str, Any]:
     """
     Offline/development extraction job adapter.
 
@@ -134,8 +135,12 @@ def process_document_extraction_job(document_id: str) -> Dict[str, Any]:
     filesystem paths, or extracted PII are stored in Redis.
     """
     logger.info("Executing extraction job for document: %s", document_id)
-    from job_queue.durable import claim_document
-    claim = claim_document(document_id)
+    from job_queue.durable import claim_document, claim_job
+    if pending_job_id and dispatch_token:
+        claim_token = claim_job(pending_job_id, "rq-worker", dispatch_token)
+        claim = (pending_job_id, claim_token) if claim_token else None
+    else:
+        claim = claim_document(document_id)
     if not claim:
         raise ExtractionResolutionError("Job is not dispatched or its lease has expired.")
 

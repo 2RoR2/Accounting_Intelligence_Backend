@@ -33,13 +33,13 @@ def dispatch_due_jobs(limit: int = 50) -> int:
                 WHERE id=%s AND status='pending' RETURNING id
             """, (token, DISPATCH_LEASE_SECONDS, row['id'])).fetchone()
             if updated:
-                queued.append((str(row['id']), str(token)))
+                queued.append((str(row['id']), str(token), str(row['document_id'])))
     if not queued:
         return 0
     cpu, _ = get_queues()
-    for job_id, token in queued:
+    for job_id, token, document_id in queued:
         try:
-            cpu.enqueue('job_queue.jobs.process_document_extraction_job', job_id,
+            cpu.enqueue('job_queue.jobs.process_document_extraction_job', document_id, job_id, token,
                         job_id=token, job_timeout=PROCESSING_LEASE_SECONDS)
         except Exception as exc:
             with connect() as db:
@@ -49,17 +49,20 @@ def dispatch_due_jobs(limit: int = 50) -> int:
     return len(queued)
 
 
-def claim_job(job_id: str, worker_id: str) -> str | None:
+def claim_job(job_id: str, worker_id: str, dispatch_token: str | None = None) -> str | None:
     """Atomically claim a dispatched job and return its claim token."""
     token = uuid4()
     with connect() as db:
-        row = db.execute("""UPDATE pending_jobs SET status='processing', claim_token=%s,
+        token_filter = " AND dispatch_token=%s" if dispatch_token else ""
+        params = [token, PROCESSING_LEASE_SECONDS, job_id]
+        if dispatch_token:
+            params.append(dispatch_token)
+        row = db.execute(f"""UPDATE pending_jobs SET status='processing', claim_token=%s,
             claimed_at=now(), heartbeat_at=now(),
             processing_expires_at=now() + (%s || ' seconds')::interval,
             attempt_count=attempt_count+1, updated_at=now()
             WHERE id=%s AND status='dispatched' AND dispatch_expires_at>now()
-            AND attempt_count < max_attempts RETURNING id""",
-            (token, PROCESSING_LEASE_SECONDS, job_id)).fetchone()
+            AND attempt_count < max_attempts{token_filter} RETURNING id""", params).fetchone()
     return str(token) if row else None
 
 
