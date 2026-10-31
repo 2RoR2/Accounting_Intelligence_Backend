@@ -1,0 +1,55 @@
+{
+  "original_id": "6984bad10f763d83586fde36",
+  "original_filepath": "data/batch1-0002.jpg",
+  "json_annotation": {
+    "invoice": {
+      "client_name": "Duncan PLC",
+      "client_address": "Unit 8799 Box 0703\nDPO AP 81970",
+      "seller_name": "Fitzpatrick and Sons",
+      "seller_address": "00480 Cook Cove\nSpencerport, UT 12036",
+      "invoice_number": "12847181",
+      "invoice_date": "03/03/2012",
+      "due_date": ""
+    },
+    "items": [
+      {
+        "description": "HP Desktop Computer PC Core i5 16GB 2TB HD 256GB SSD 22\" LCD Windows 10",
+        "quantity": "4.00",
+        "total_price": "615.78"
+      },
+      {
+        "description": "CUSTOM BUILT AMD RYZEN THREADRIPPER GAMING COMPUTER, 32 GB RAM,",
+        "quantity": "3.00",
+        "total_price": "4 620.00"
+      },
+      {
+        "description": "Fast Dell Optiplex Desktop PC Computer Dual Core 3.4Ghz 8GB 1TB Win 10 Pro WIFI",
+        "quantity": "1.00",
+        "total_price": "238.70"
+      },
+      {
+        "description": "Dell Optiplex 790 Computer i7 @3.40 Ghz Quad Core 250GB 4GB Working",
+        "quantity": "3.00",
+        "total_price": "527.97"
+      },
+      {
+        "description": "Vintage Microsolutions Pentium 133mhz Desktop Tower PC Windows 95 5.25 Floppy",
+        "quantity": "2.00",
+        "total_price": "858.00"
+      }
+    ],
+    "subtotal": {
+      "tax": "623.68",
+      "discount": "",
+      "total": "6 860.45"
+    },
+    "payment_instructions": {
+      "due_date": "",
+      "bank_name": "",
+      "account_number": "",
+      "payment_method": ""
+    }
+  },
+  "original_json_annotation_text": "{\n  \"invoice\": {\n    \"client_name\": \"Duncan PLC\",\n    \"client_address\": \"Unit 8799 Box 0703\\nDPO AP 81970\",\n    \"seller_name\": \"Fitzpatrick and Sons\",\n    \"seller_address\": \"00480 Cook Cove\\nSpencerport, UT 12036\",\n    \"invoice_number\": \"12847181\",\n    \"invoice_date\": \"03/03/2012\",\n    \"due_date\": \"\"\n  },\n  \"items\": [\n    {\n      \"description\": \"HP Desktop Computer PC Core i5 16GB 2TB HD 256GB SSD 22\\\" LCD Windows 10\",\n      \"quantity\": \"4.00\",\n      \"total_price\": \"615.78\"\n    },\n    {\n      \"description\": \"CUSTOM BUILT AMD RYZEN THREADRIPPER GAMING COMPUTER, 32 GB RAM,\",\n      \"quantity\": \"3.00\",\n      \"total_price\": \"4 620.00\"\n    },\n    {\n      \"description\": \"Fast Dell Optiplex Desktop PC Computer Dual Core 3.4Ghz 8GB 1TB Win 10 Pro WIFI\",\n      \"quantity\": \"1.00\",\n      \"total_price\": \"238.70\"\n    },\n    {\n      \"description\": \"Dell Optiplex 790 Computer i7 @3.40 Ghz Quad Core 250GB 4GB Working\",\n      \"quantity\": \"3.00\",\n      \"total_price\": \"527.97\"\n    },\n    {\n      \"description\": \"Vintage Microsolutions Pentium 133mhz Desktop Tower PC Windows 95 5.25 Floppy\",\n      \"quantity\": \"2.00\",\n      \"total_price\": \"858.00\"\n    }\n  ],\n  \"subtotal\": {\n    \"tax\": \"623.68\",\n    \"discount\": \"\",\n    \"total\": \"6 860.45\"\n  },\n  \"payment_instructions\": {\n    \"due_date\": \"\",\n    \"bank_name\": \"\",\n    \"account_number\": \"\",\n    \"payment_method\": \"\"\n  }\n}",
+  "ocr_text": "Invoice no: 12847181 Date of issue: 03/03/2012 Seller: Client: Fitzpatrick and Sons Duncan PLC 00480 Cook Cove Unit 8799 Box 0703 Spencerport; UT 12036 DPO AP 81970 Tax Id: 998-99-5253 Tax Id: 911-82-7132 IBAN: GB9ZPBPQ73499358975916 ITEMS No. Description Qty UM Net price Net worth VAT [%] Gross worth HP Desktop Computer PC [] 4,00 each 139,95 559,80 10% 615,78 Core i5 16GB 2TB HD 256GB SSD 22\" LCD [] Windows 10 2 CUSTOM BUILT AMD RYZEN 3,00 each 1 400,00 4 200,00 10% 620,00 THREADRIPPER GAMING COMPUTER 32 GB RAM; 3 Fast Dell Optiplex Desktop PC 1,00 each 217,00 217,00 10% 238,70 Computer Dual Core 3.4Ghz 8GB 1TB Win 10 Pro WIFI Dell Optiplex 790 Computer i7 3,00 each 159,99 479,97 10% 527,97 3.40 Ghz Quad Core 250GB 4GB Working 5 Vintage Microsolutions Pentium 2,00 each 390,00 780,00 10% 858,00 133mhz Desktop Tower PC Windows 95 5.25 Floppy SUMMARY VAT [%] Net worth VAT Gross worth 10% 6 236,77 623,68 6 860,45 Total $ 6 236,77 623,68 $ 6 860,45"
+}

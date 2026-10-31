@@ -1,0 +1,157 @@
+{
+  "source_row_index": 34,
+  "row": {
+    "file_name": "synth_0035_a5ac881a.png",
+    "supplier_name": "Energia Ireland Ltd.",
+    "supplier_address": "25 Green Street, Dublin 2",
+    "supplier_phone": null,
+    "supplier_email": "billing@energia.ie",
+    "supplier_website": null,
+    "supplier_company_registrations": "IE 3298401F",
+    "customer_name": null,
+    "customer_id": "CUST-12345",
+    "customer_address": null,
+    "billing_address": null,
+    "shipping_address": null,
+    "customer_company_registrations": null,
+    "document_type_extended": null,
+    "document_number": "20230715-001",
+    "invoice_number": "INV-20230715-001",
+    "receipt_number": null,
+    "reference_numbers": null,
+    "po_number": null,
+    "document_date": "2023-07-15",
+    "document_time": null,
+    "due_date": null,
+    "payment_date": "2023-08-15",
+    "document_currency": "EUR",
+    "document_total_amount": "184.5",
+    "document_total_net": "150.0",
+    "document_total_tax": "34.5",
+    "document_category": "utilities",
+    "subcategory": "electricity",
+    "locale": "en",
+    "notes": "",
+    "_template_used": "utility_bill",
+    "_font_info": "Roboto",
+    "line_items": [
+      {
+        "description": "Electricity consumption for period 2023-06-01 to 2023-06-30",
+        "quantity": "1000.0",
+        "unit_price": "0.12",
+        "amount": "120.0",
+        "tax_rate": "23%",
+        "tax_amount": "27.6"
+      },
+      {
+        "description": "Connection charge",
+        "quantity": "1.0",
+        "unit_price": "50.0",
+        "amount": "50.0",
+        "tax_rate": "23%",
+        "tax_amount": "11.5"
+      },
+      {
+        "description": "Meter reading adjustment (credit)",
+        "quantity": "1.0",
+        "unit_price": "-20.0",
+        "amount": "-20.0",
+        "tax_rate": "23%",
+        "tax_amount": "-4.6"
+      }
+    ],
+    "taxes": [
+      {
+        "base": "150.0",
+        "rate": "23%",
+        "code": "VAT",
+        "value": "34.5"
+      }
+    ],
+    "image": {
+      "src": "https://datasets-server.huggingface.co/cached-assets/alamgirqazi/invoice-ocr-synthetic/--/673ff85be462eb7f3715ec188a295dd17ca11115/--/default/train/34/image/image.jpg",
+      "height": 2339,
+      "width": 1654
+    },
+    "quality": "clean"
+  },
+  "released_record_index": 34,
+  "released_record_decimal_strings": {
+    "file_name": "synth_0035_a5ac881a.png",
+    "supplier_name": "Energia Ireland Ltd.",
+    "document_date": "2023-07-15",
+    "document_time": null,
+    "document_currency": "EUR",
+    "document_total_amount": "184.5",
+    "document_total_net": "150.0",
+    "document_total_tax": "34.5",
+    "document_category": "utilities",
+    "subcategory": "electricity",
+    "due_date": null,
+    "payment_date": "2023-08-15",
+    "document_type_extended": null,
+    "document_number": "20230715-001",
+    "receipt_number": null,
+    "invoice_number": "INV-20230715-001",
+    "reference_numbers": null,
+    "po_number": null,
+    "locale": "en",
+    "customer_name": null,
+    "customer_id": "CUST-12345",
+    "customer_address": null,
+    "billing_address": null,
+    "shipping_address": null,
+    "customer_company_registrations": null,
+    "supplier_address": "25 Green Street, Dublin 2",
+    "supplier_phone": null,
+    "supplier_email": "billing@energia.ie",
+    "supplier_website": null,
+    "supplier_company_registrations": "IE 3298401F",
+    "line_items": [
+      {
+        "description": "Electricity consumption for period 2023-06-01 to 2023-06-30",
+        "quantity": "1000.0",
+        "unit_price": "0.12",
+        "amount": "120.0",
+        "tax_rate": "23%",
+        "tax_amount": "27.6"
+      },
+      {
+        "description": "Connection charge",
+        "quantity": "1.0",
+        "unit_price": "50.0",
+        "amount": "50.0",
+        "tax_rate": "23%",
+        "tax_amount": "11.5"
+      },
+      {
+        "description": "Meter reading adjustment (credit)",
+        "quantity": "1.0",
+        "unit_price": "-20.0",
+        "amount": "-20.0",
+        "tax_rate": "23%",
+        "tax_amount": "-4.6"
+      }
+    ],
+    "taxes": [
+      {
+        "base": "150.0",
+        "rate": "23%",
+        "code": "VAT",
+        "value": "34.5"
+      }
+    ],
+    "notes": "",
+    "mime_type": "image/png",
+    "labeled_at": "2026-03-16T07:57:11.520369",
+    "_template_used": "utility_bill",
+    "_synthetic": true,
+    "_font_info": "Roboto",
+    "degradation_variants": {
+      "clean": "synth_0035_a5ac881a.png",
+      "bad_scan": "synth_0035_a5ac881a.png",
+      "faded": "synth_0035_a5ac881a.png"
+    }
+  },
+  "representation": "Publisher-hosted full-size JPEG viewer asset of original embedded PNG; no local conversion."
+}

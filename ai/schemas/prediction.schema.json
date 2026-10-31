@@ -1,0 +1,632 @@
+{
+  "$defs": {
+    "Evidence": {
+      "additionalProperties": false,
+      "properties": {
+        "page": {
+          "exclusiveMinimum": 0,
+          "title": "Page",
+          "type": "integer"
+        },
+        "source_reference": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Source Reference",
+          "type": "string"
+        },
+        "printed_text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Printed Text"
+        },
+        "bbox": {
+          "anyOf": [
+            {
+              "items": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "maxItems": 4,
+              "minItems": 4,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Bbox"
+        },
+        "coordinate_convention": {
+          "anyOf": [
+            {
+              "const": "xyxy_top_left",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Coordinate Convention"
+        },
+        "coordinate_units": {
+          "anyOf": [
+            {
+              "enum": [
+                "pixel",
+                "pdf_point",
+                "normalized"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Coordinate Units"
+        },
+        "page_width": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Page Width"
+        },
+        "page_height": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Page Height"
+        }
+      },
+      "required": [
+        "page",
+        "source_reference",
+        "printed_text",
+        "bbox",
+        "coordinate_convention",
+        "coordinate_units",
+        "page_width",
+        "page_height"
+      ],
+      "title": "Evidence",
+      "type": "object"
+    },
+    "PredictionCandidate": {
+      "additionalProperties": false,
+      "properties": {
+        "candidate_id": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Candidate Id",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "boolean"
+            }
+          ],
+          "title": "Value"
+        },
+        "raw_text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Raw Text"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "method": {
+          "enum": [
+            "PARSER",
+            "OCR",
+            "VLM"
+          ],
+          "title": "Method",
+          "type": "string"
+        },
+        "model_name": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Model Name"
+        },
+        "model_version": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Model Version"
+        }
+      },
+      "required": [
+        "candidate_id",
+        "value",
+        "raw_text",
+        "evidence",
+        "method",
+        "model_name",
+        "model_version"
+      ],
+      "title": "PredictionCandidate",
+      "type": "object"
+    },
+    "PredictionCell": {
+      "additionalProperties": false,
+      "properties": {
+        "field_key": {
+          "enum": [
+            "invoice_number",
+            "invoice_type",
+            "invoice_reference",
+            "supplier_name",
+            "supplier_address",
+            "customer_name",
+            "customer_address",
+            "invoice_date",
+            "due_date",
+            "currency",
+            "subtotal",
+            "tax",
+            "total",
+            "discount",
+            "supplier_registration_id",
+            "supplier_tax_id",
+            "customer_registration_id",
+            "customer_tax_id",
+            "purchase_order_number",
+            "contract_reference",
+            "delivery_reference",
+            "payment_terms",
+            "payment_instructions",
+            "payment_reference",
+            "payment_method",
+            "payment_bank_name",
+            "payment_account_number",
+            "billing_address",
+            "shipping_address",
+            "allowance_total",
+            "charge_total",
+            "tax_exclusive_total",
+            "tax_inclusive_total",
+            "prepaid_amount",
+            "paid_amount",
+            "amount_due",
+            "rounding",
+            "service_start_date",
+            "service_end_date",
+            "delivery_date",
+            "payment_date",
+            "myinvois_uuid",
+            "myinvois_long_id",
+            "myinvois_validation_reference",
+            "myinvois_qr_payload",
+            "supplier_tin",
+            "customer_tin",
+            "supplier_sst_id",
+            "customer_sst_id",
+            "supplier_msic_code",
+            "supplier_business_activity",
+            "credit_note_number",
+            "debit_note_number",
+            "original_invoice_number",
+            "original_invoice_uuid",
+            "note_reason",
+            "industry_reference",
+            "myinvois_validation_datetime",
+            "bill_number",
+            "bill_reference",
+            "provider_name",
+            "provider_address",
+            "bill_date",
+            "customer_account_number",
+            "service_address",
+            "billing_period",
+            "meter_number",
+            "consumption_unit",
+            "tariff_name",
+            "billing_period_start",
+            "billing_period_end",
+            "previous_reading_date",
+            "current_reading_date",
+            "previous_reading",
+            "current_reading",
+            "consumption",
+            "tariff_rate",
+            "previous_balance",
+            "arrears",
+            "current_charges",
+            "adjustment_total",
+            "credit_total",
+            "late_fee",
+            "payment_amount",
+            "service_charge",
+            "tips",
+            "jompay_biller_code",
+            "jompay_reference_1",
+            "jompay_reference_2",
+            "biller_reference",
+            "table_number",
+            "order_number",
+            "merchant_name",
+            "merchant_address",
+            "receipt_number",
+            "receipt_reference",
+            "transaction_date",
+            "transaction_time",
+            "branch_name",
+            "branch_id",
+            "cashier_name",
+            "cashier_id",
+            "terminal_id",
+            "register_id",
+            "original_receipt_reference",
+            "refund_reference",
+            "void_reference",
+            "refund_reason",
+            "customer_id",
+            "loyalty_reference",
+            "total_sales",
+            "amount_paid",
+            "tender",
+            "change",
+            "refund_amount",
+            "refund_indicator",
+            "void_indicator",
+            "refund_date",
+            "void_date",
+            "description",
+            "quantity",
+            "unit_price",
+            "line_total",
+            "item_code",
+            "unit",
+            "tax_category",
+            "line_discount",
+            "line_discount_rate",
+            "line_tax",
+            "line_tax_rate",
+            "line_allowance",
+            "line_charge",
+            "myinvois_item_classification",
+            "tax_exemption_reason",
+            "tax_rate",
+            "taxable_amount",
+            "tax_amount",
+            "charge_category",
+            "charge_amount",
+            "attribute_name",
+            "attribute_value"
+          ],
+          "title": "Field Key",
+          "type": "string"
+        },
+        "value_type": {
+          "enum": [
+            "text",
+            "decimal",
+            "date",
+            "time",
+            "currency",
+            "boolean"
+          ],
+          "title": "Value Type",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Value"
+        },
+        "raw_text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Raw Text"
+        },
+        "state": {
+          "enum": [
+            "resolved",
+            "missing",
+            "ambiguous",
+            "conflict",
+            "unsupported",
+            "unreadable"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "method": {
+          "enum": [
+            "PARSER",
+            "OCR",
+            "VLM"
+          ],
+          "title": "Method",
+          "type": "string"
+        },
+        "model_name": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Model Name"
+        },
+        "model_version": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Model Version"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "candidates": {
+          "items": {
+            "$ref": "#/$defs/PredictionCandidate"
+          },
+          "title": "Candidates",
+          "type": "array"
+        }
+      },
+      "required": [
+        "field_key",
+        "value_type",
+        "value",
+        "raw_text",
+        "state",
+        "method",
+        "model_name",
+        "model_version",
+        "evidence",
+        "candidates"
+      ],
+      "title": "PredictionCell",
+      "type": "object"
+    },
+    "PredictionGroup": {
+      "additionalProperties": false,
+      "properties": {
+        "prediction_group_id": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Prediction Group Id",
+          "type": "string"
+        },
+        "scope": {
+          "enum": [
+            "tax_breakdown",
+            "charge_breakdown",
+            "meter_readings",
+            "additional_attributes"
+          ],
+          "title": "Scope",
+          "type": "string"
+        },
+        "order": {
+          "exclusiveMinimum": 0,
+          "title": "Order",
+          "type": "integer"
+        },
+        "cells": {
+          "items": {
+            "$ref": "#/$defs/PredictionCell"
+          },
+          "title": "Cells",
+          "type": "array"
+        }
+      },
+      "required": [
+        "prediction_group_id",
+        "scope",
+        "order",
+        "cells"
+      ],
+      "title": "PredictionGroup",
+      "type": "object"
+    },
+    "PredictionRow": {
+      "additionalProperties": false,
+      "properties": {
+        "prediction_row_id": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Prediction Row Id",
+          "type": "string"
+        },
+        "order": {
+          "exclusiveMinimum": 0,
+          "title": "Order",
+          "type": "integer"
+        },
+        "cells": {
+          "items": {
+            "$ref": "#/$defs/PredictionCell"
+          },
+          "title": "Cells",
+          "type": "array"
+        }
+      },
+      "required": [
+        "prediction_row_id",
+        "order",
+        "cells"
+      ],
+      "title": "PredictionRow",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "artifact_type": {
+      "const": "frozen_pre_review_prediction",
+      "title": "Artifact Type",
+      "type": "string"
+    },
+    "sample_id": {
+      "minLength": 1,
+      "pattern": "\\S",
+      "title": "Sample Id",
+      "type": "string"
+    },
+    "source_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Source Sha256",
+      "type": "string"
+    },
+    "extraction_run_id": {
+      "minLength": 1,
+      "pattern": "\\S",
+      "title": "Extraction Run Id",
+      "type": "string"
+    },
+    "captured_at": {
+      "minLength": 1,
+      "pattern": "\\S",
+      "title": "Captured At",
+      "type": "string"
+    },
+    "extractor_version": {
+      "minLength": 1,
+      "pattern": "\\S",
+      "title": "Extractor Version",
+      "type": "string"
+    },
+    "configuration_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Configuration Sha256",
+      "type": "string"
+    },
+    "predicted_document_type": {
+      "enum": [
+        "invoice",
+        "bill",
+        "receipt",
+        "credit_note",
+        "debit_note",
+        "unknown"
+      ],
+      "title": "Predicted Document Type",
+      "type": "string"
+    },
+    "fields": {
+      "items": {
+        "$ref": "#/$defs/PredictionCell"
+      },
+      "title": "Fields",
+      "type": "array"
+    },
+    "rows": {
+      "items": {
+        "$ref": "#/$defs/PredictionRow"
+      },
+      "title": "Rows",
+      "type": "array"
+    },
+    "repeated_groups": {
+      "items": {
+        "$ref": "#/$defs/PredictionGroup"
+      },
+      "title": "Repeated Groups",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "artifact_type",
+    "sample_id",
+    "source_sha256",
+    "extraction_run_id",
+    "captured_at",
+    "extractor_version",
+    "configuration_sha256",
+    "predicted_document_type",
+    "fields",
+    "rows",
+    "repeated_groups"
+  ],
+  "title": "FrozenPrediction",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:cos40005:module2:prediction:1.0.0",
+  "$comment": "Structural schema. Release validation MUST also use the Pydantic validator for field/type/scope, label semantics, geometry and file integrity."
+}

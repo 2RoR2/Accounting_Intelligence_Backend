@@ -1,0 +1,205 @@
+{
+  "source_row_index": 129,
+  "row": {
+    "file_name": "synth_0137_6bbd647e.png",
+    "supplier_name": "Cedar Ridge Utility Co.",
+    "supplier_address": "1234 Oak Street, Springfield, IL 62704",
+    "supplier_phone": "(555) 123-4567",
+    "supplier_email": null,
+    "supplier_website": null,
+    "supplier_company_registrations": "IE 3298401F",
+    "customer_name": "John Doe",
+    "customer_id": null,
+    "customer_address": "5678 Maple Ave, Springfield, IL 62704",
+    "billing_address": null,
+    "shipping_address": null,
+    "customer_company_registrations": null,
+    "document_type_extended": null,
+    "document_number": "INV-20230915-001",
+    "invoice_number": "INV-20230915-001",
+    "receipt_number": null,
+    "reference_numbers": null,
+    "po_number": "PO-987654",
+    "document_date": "2023-09-15",
+    "document_time": null,
+    "due_date": null,
+    "payment_date": null,
+    "document_currency": "USD",
+    "document_total_amount": "394.67",
+    "document_total_net": "368.0",
+    "document_total_tax": "26.67",
+    "document_category": "utilities",
+    "subcategory": "electricity",
+    "locale": "en",
+    "notes": "Payment due within 30 days",
+    "_template_used": "utility_bill",
+    "_font_info": "Noto Sans",
+    "line_items": [
+      {
+        "description": "Electricity Consumption",
+        "quantity": "350.0",
+        "unit_price": "0.12",
+        "amount": "42.0",
+        "tax_rate": "7.25%",
+        "tax_amount": "3.04"
+      },
+      {
+        "description": "Gas Consumption",
+        "quantity": "200.0",
+        "unit_price": "1.08",
+        "amount": "216.0",
+        "tax_rate": "7.25%",
+        "tax_amount": "15.66"
+      },
+      {
+        "description": "Water Consumption",
+        "quantity": "30000.0",
+        "unit_price": "0.002",
+        "amount": "60.0",
+        "tax_rate": "7.25%",
+        "tax_amount": "4.35"
+      },
+      {
+        "description": "Sewer Charge",
+        "quantity": "1.0",
+        "unit_price": "30.0",
+        "amount": "30.0",
+        "tax_rate": "7.25%",
+        "tax_amount": "2.17"
+      },
+      {
+        "description": "Customer Service Fee",
+        "quantity": "1.0",
+        "unit_price": "15.0",
+        "amount": "15.0",
+        "tax_rate": "7.25%",
+        "tax_amount": "1.09"
+      },
+      {
+        "description": "Late Payment Fee",
+        "quantity": "1.0",
+        "unit_price": "5.0",
+        "amount": "5.0",
+        "tax_rate": "7.25%",
+        "tax_amount": "0.36"
+      }
+    ],
+    "taxes": [
+      {
+        "base": "368.0",
+        "rate": "7.25%",
+        "code": "SALES_TAX",
+        "value": "26.67"
+      }
+    ],
+    "image": {
+      "src": "https://datasets-server.huggingface.co/cached-assets/alamgirqazi/invoice-ocr-synthetic/--/673ff85be462eb7f3715ec188a295dd17ca11115/--/default/train/129/image/image.jpg",
+      "height": 2339,
+      "width": 1654
+    },
+    "quality": "clean"
+  },
+  "released_record_index": 129,
+  "released_record_decimal_strings": {
+    "file_name": "synth_0137_6bbd647e.png",
+    "supplier_name": "Cedar Ridge Utility Co.",
+    "document_date": "2023-09-15",
+    "document_time": null,
+    "document_currency": "USD",
+    "document_total_amount": "394.67",
+    "document_total_net": "368.0",
+    "document_total_tax": "26.67",
+    "document_category": "utilities",
+    "subcategory": "electricity",
+    "due_date": null,
+    "payment_date": null,
+    "document_type_extended": null,
+    "document_number": "INV-20230915-001",
+    "receipt_number": null,
+    "invoice_number": "INV-20230915-001",
+    "reference_numbers": null,
+    "po_number": "PO-987654",
+    "locale": "en",
+    "customer_name": "John Doe",
+    "customer_id": null,
+    "customer_address": "5678 Maple Ave, Springfield, IL 62704",
+    "billing_address": null,
+    "shipping_address": null,
+    "customer_company_registrations": null,
+    "supplier_address": "1234 Oak Street, Springfield, IL 62704",
+    "supplier_phone": "(555) 123-4567",
+    "supplier_email": null,
+    "supplier_website": null,
+    "supplier_company_registrations": "IE 3298401F",
+    "line_items": [
+      {
+        "description": "Electricity Consumption",
+        "quantity": "350.0",
+        "unit_price": "0.12",
+        "amount": "42.0",
+        "tax_rate": "7.25%",
+        "tax_amount": "3.04"
+      },
+      {
+        "description": "Gas Consumption",
+        "quantity": "200.0",
+        "unit_price": "1.08",
+        "amount": "216.0",
+        "tax_rate": "7.25%",
+        "tax_amount": "15.66"
+      },
+      {
+        "description": "Water Consumption",
+        "quantity": "30000.0",
+        "unit_price": "0.002",
+        "amount": "60.0",
+        "tax_rate": "7.25%",
+        "tax_amount": "4.35"
+      },
+      {
+        "description": "Sewer Charge",
+        "quantity": "1.0",
+        "unit_price": "30.0",
+        "amount": "30.0",
+        "tax_rate": "7.25%",
+        "tax_amount": "2.17"
+      },
+      {
+        "description": "Customer Service Fee",
+        "quantity": "1.0",
+        "unit_price": "15.0",
+        "amount": "15.0",
+        "tax_rate": "7.25%",
+        "tax_amount": "1.09"
+      },
+      {
+        "description": "Late Payment Fee",
+        "quantity": "1.0",
+        "unit_price": "5.0",
+        "amount": "5.0",
+        "tax_rate": "7.25%",
+        "tax_amount": "0.36"
+      }
+    ],
+    "taxes": [
+      {
+        "base": "368.0",
+        "rate": "7.25%",
+        "code": "SALES_TAX",
+        "value": "26.67"
+      }
+    ],
+    "notes": "Payment due within 30 days",
+    "mime_type": "image/png",
+    "labeled_at": "2026-03-16T08:01:34.718847",
+    "_template_used": "utility_bill",
+    "_synthetic": true,
+    "_font_info": "Noto Sans",
+    "degradation_variants": {
+      "clean": "synth_0137_6bbd647e.png",
+      "bad_scan": "synth_0137_6bbd647e.png",
+      "faded": "synth_0137_6bbd647e.png"
+    }
+  },
+  "representation": "Publisher-hosted full-size JPEG viewer asset of original embedded PNG; no local conversion."
+}

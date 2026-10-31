@@ -1,0 +1,41 @@
+{
+  "filename": "invoice_51109306.pdf",
+  "json_data": {
+    "invoice_no": "51109306",
+    "date_of_issue": "02/02/2024",
+    "seller": {
+      "name": "TechVision Distributors Pvt Ltd",
+      "address": "Plot 14, MIDC Industrial Area, Andheri East, Mumbai, Maharashtra - 400093",
+      "tax_id": "27AABCT1234F1Z5",
+      "gstin": "27AABCT1234F1Z5"
+    },
+    "client": {
+      "name": "Kolkata Electronics Hub",
+      "address": "34 Park Street, Kolkata, West Bengal - 700016",
+      "tax_id": "595-39-6952"
+    },
+    "items": [
+      {
+        "item_no": "1.",
+        "description": "Samsung Galaxy Watch6 Classic 47mm",
+        "quantity": "7.00",
+        "unit_measure": "pcs",
+        "net_price": "34,304.00",
+        "net_worth": "240,128.00",
+        "vat_pct": "10%",
+        "gross_worth": "264,140.80"
+      }
+    ],
+    "summary": {
+      "vat_pct": "10%",
+      "net_worth": "240,128.00",
+      "vat_amount": "24,012.80",
+      "gross_worth": "264,140.80",
+      "total_net_worth": "INR 240,128.00",
+      "total_vat": "INR 24,012.80",
+      "total_gross_worth": "INR 264,140.80"
+    }
+  },
+  "original_json_annotation_text": "{\n  \"invoice_no\": \"51109306\",\n  \"date_of_issue\": \"02/02/2024\",\n  \"seller\": {\n    \"name\": \"TechVision Distributors Pvt Ltd\",\n    \"address\": \"Plot 14, MIDC Industrial Area, Andheri East, Mumbai, Maharashtra - 400093\",\n    \"tax_id\": \"27AABCT1234F1Z5\",\n    \"gstin\": \"27AABCT1234F1Z5\"\n  },\n  \"client\": {\n    \"name\": \"Kolkata Electronics Hub\",\n    \"address\": \"34 Park Street, Kolkata, West Bengal - 700016\",\n    \"tax_id\": \"595-39-6952\"\n  },\n  \"items\": [\n    {\n      \"item_no\": \"1.\",\n      \"description\": \"Samsung Galaxy Watch6 Classic 47mm\",\n      \"quantity\": \"7.00\",\n      \"unit_measure\": \"pcs\",\n      \"net_price\": \"34,304.00\",\n      \"net_worth\": \"240,128.00\",\n      \"vat_pct\": \"10%\",\n      \"gross_worth\": \"264,140.80\"\n    }\n  ],\n  \"summary\": {\n    \"vat_pct\": \"10%\",\n    \"net_worth\": \"240,128.00\",\n    \"vat_amount\": \"24,012.80\",\n    \"gross_worth\": \"264,140.80\",\n    \"total_net_worth\": \"INR 240,128.00\",\n    \"total_vat\": \"INR 24,012.80\",\n    \"total_gross_worth\": \"INR 264,140.80\"\n  }\n}",
+  "published_ocred_text": "Invoice no: 51109306\nDate of issue: 02/02/2024\nSeller: Client:\nTechVision Distributors Pvt Ltd Kolkata Electronics Hub\nPlot 14, MIDC Industrial Area, Andheri East 34 Park Street\nMumbai, Maharashtra - 400093 Kolkata, West Bengal - 700016\nTax Id: 27AABCT1234F1Z5 Tax Id: 595-39-6952\nGSTIN: 27AABCT1234F1Z5\nITEMS\nNo. Description Qty UM Net Price Net Worth VAT % Gross\nWorth\n1. Samsung Galaxy Watch6 Classic 47mm 7.00 pcs 34,304.00 240,128.00 10% 264,140.80\nSUMMARY\nVAT % Net Worth VAT Gross Worth\n10% 240,128.00 24,012.80 264,140.80\nTotal INR 240,128.00 INR 24,012.80 INR 264,140.80"
+}

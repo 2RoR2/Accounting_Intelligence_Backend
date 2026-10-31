@@ -1,0 +1,141 @@
+{
+  "source_row_index": 143,
+  "row": {
+    "file_name": "synth_0151_7f157ddf.png",
+    "supplier_name": "BrightEnergy Ltd",
+    "supplier_address": "12 Westfield Road, Birmingham, B15 4XZ",
+    "supplier_phone": null,
+    "supplier_email": null,
+    "supplier_website": "https://www.brightenergy.co.uk",
+    "supplier_company_registrations": "GB 123456789",
+    "customer_name": null,
+    "customer_id": "CUST-2023-0001",
+    "customer_address": "45 Meadow Lane, London, SE1 2AB",
+    "billing_address": "45 Meadow Lane, London, SE1 2AB",
+    "shipping_address": null,
+    "customer_company_registrations": null,
+    "document_type_extended": null,
+    "document_number": "20230405-001",
+    "invoice_number": "INV-2023-0456",
+    "receipt_number": null,
+    "reference_numbers": null,
+    "po_number": null,
+    "document_date": "2024-03-05",
+    "document_time": null,
+    "due_date": "2024-04-04",
+    "payment_date": null,
+    "document_currency": "GBP",
+    "document_total_amount": "78.0",
+    "document_total_net": "65.0",
+    "document_total_tax": "13.0",
+    "document_category": "utilities",
+    "subcategory": "electricity",
+    "locale": "en",
+    "notes": "",
+    "_template_used": "utility_bill",
+    "_font_info": "Noto Sans",
+    "line_items": [
+      {
+        "description": "Electricity Consumption \u2013 March 2024",
+        "quantity": "1.0",
+        "unit_price": "50.0",
+        "amount": "50.0",
+        "tax_rate": "20%",
+        "tax_amount": "10.0"
+      },
+      {
+        "description": "Service Charge",
+        "quantity": "1.0",
+        "unit_price": "15.0",
+        "amount": "15.0",
+        "tax_rate": "20%",
+        "tax_amount": "3.0"
+      }
+    ],
+    "taxes": [
+      {
+        "base": "65.0",
+        "rate": "20%",
+        "code": "VAT",
+        "value": "13.0"
+      }
+    ],
+    "image": {
+      "src": "https://datasets-server.huggingface.co/cached-assets/alamgirqazi/invoice-ocr-synthetic/--/673ff85be462eb7f3715ec188a295dd17ca11115/--/default/train/143/image/image.jpg",
+      "height": 2339,
+      "width": 1654
+    },
+    "quality": "clean"
+  },
+  "released_record_index": 143,
+  "released_record_decimal_strings": {
+    "file_name": "synth_0151_7f157ddf.png",
+    "supplier_name": "BrightEnergy Ltd",
+    "document_date": "2024-03-05",
+    "document_time": null,
+    "document_currency": "GBP",
+    "document_total_amount": "78.0",
+    "document_total_net": "65.0",
+    "document_total_tax": "13.0",
+    "document_category": "utilities",
+    "subcategory": "electricity",
+    "due_date": "2024-04-04",
+    "payment_date": null,
+    "document_type_extended": null,
+    "document_number": "20230405-001",
+    "receipt_number": null,
+    "invoice_number": "INV-2023-0456",
+    "reference_numbers": null,
+    "po_number": null,
+    "locale": "en",
+    "customer_name": null,
+    "customer_id": "CUST-2023-0001",
+    "customer_address": "45 Meadow Lane, London, SE1 2AB",
+    "billing_address": "45 Meadow Lane, London, SE1 2AB",
+    "shipping_address": null,
+    "customer_company_registrations": null,
+    "supplier_address": "12 Westfield Road, Birmingham, B15 4XZ",
+    "supplier_phone": null,
+    "supplier_email": null,
+    "supplier_website": "https://www.brightenergy.co.uk",
+    "supplier_company_registrations": "GB 123456789",
+    "line_items": [
+      {
+        "description": "Electricity Consumption \u2013 March 2024",
+        "quantity": "1.0",
+        "unit_price": "50.0",
+        "amount": "50.0",
+        "tax_rate": "20%",
+        "tax_amount": "10.0"
+      },
+      {
+        "description": "Service Charge",
+        "quantity": "1.0",
+        "unit_price": "15.0",
+        "amount": "15.0",
+        "tax_rate": "20%",
+        "tax_amount": "3.0"
+      }
+    ],
+    "taxes": [
+      {
+        "base": "65.0",
+        "rate": "20%",
+        "code": "VAT",
+        "value": "13.0"
+      }
+    ],
+    "notes": "",
+    "mime_type": "image/png",
+    "labeled_at": "2026-03-16T08:02:09.710524",
+    "_template_used": "utility_bill",
+    "_synthetic": true,
+    "_font_info": "Noto Sans",
+    "degradation_variants": {
+      "clean": "synth_0151_7f157ddf.png",
+      "bad_scan": "synth_0151_7f157ddf.png",
+      "faded": "synth_0151_7f157ddf.png"
+    }
+  },
+  "representation": "Publisher-hosted full-size JPEG viewer asset of original embedded PNG; no local conversion."
+}

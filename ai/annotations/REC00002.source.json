@@ -1,0 +1,347 @@
+{
+  "source_row_index": 4,
+  "row": {
+    "image": {
+      "src": "https://datasets-server.huggingface.co/cached-assets/jsdnrs/ICDAR2019-SROIE/--/bffe40c26759f3376ec2b3ae9031dbba54cd587c/--/default/test/4/image/image.jpg",
+      "height": 1830,
+      "width": 608
+    },
+    "key": "X51005230616",
+    "image_size": {
+      "width": 608,
+      "height": 1830
+    },
+    "entities": {
+      "company": "GERBANG ALAF RESTAURANTS SDN BHD",
+      "date": "18/01/2018",
+      "address": "LEVEL 6, BANGUNAN TH, DAMANSARA UPTOWN3 NO.3, JALAN SS21/39,47400 PETALING JAYA SELANGOR",
+      "total": "38.90"
+    },
+    "words": [
+      "190",
+      "GERBANG ALAF RESTAURANTS SDN BHD",
+      "(65351-M)",
+      "FORMERLY KNOWN AS",
+      "GOLDEN ARCHES RESTAURANTS SDN BHD",
+      "LICENSEE OF MCDONALD'S",
+      "LEVEL 6",
+      "NO.3",
+      "SELANGOR",
+      "(GST ID NO: 000504664064)",
+      "MCDONALD'S PETRONAS TAMAN MELATI DT",
+      "TEL NO. : 03-4147-3107",
+      "TAX INVOICE",
+      "MFY SIDE 1",
+      "INV# 141900016842",
+      "ORD #90 -REG #19- 18/01/2018 17:09:21",
+      "QTY ITEM",
+      "2 M SPICYDELUXE",
+      "2 M COKE",
+      "2 M FRIES",
+      "1 M GRILCHICBGR",
+      "1 M COKE",
+      "1 M FRIES",
+      "1 SMALL CONE",
+      "TAKEOUT TOTAL (INCL GST)",
+      "TOTAL ROUNDED",
+      "CASH TENDERED",
+      "CHANGE",
+      "TOTAL INCLUDES 6% GST",
+      "TOTAL",
+      "25.40",
+      "12.50",
+      "1.00",
+      "38.90",
+      "38.90",
+      "50.00",
+      "11.10",
+      "2.20",
+      "LOVE TO HEAR YOUR FEEDBACK!",
+      "VISIT WWW.MCDFEEDBACK.COM.MY",
+      "OR",
+      "DOWNLOAD MY MCD FEEDBACK FROM",
+      "GOOGLE PLAY/APP STORE",
+      "TO SHARE YOUR EXPERIENCE",
+      "THANK YOU AND PLEASE COME AGAIN.",
+      "CUSTOMER SERVICE HOTLINE : 03-2726-5600"
+    ],
+    "bboxes": [
+      [
+        244,
+        105,
+        327,
+        167
+      ],
+      [
+        37,
+        188,
+        477,
+        225
+      ],
+      [
+        192,
+        227,
+        310,
+        260
+      ],
+      [
+        136,
+        256,
+        366,
+        289
+      ],
+      [
+        27,
+        287,
+        480,
+        324
+      ],
+      [
+        103,
+        323,
+        419,
+        362
+      ],
+      [
+        4,
+        356,
+        529,
+        391
+      ],
+      [
+        2,
+        389,
+        533,
+        428
+      ],
+      [
+        205,
+        422,
+        313,
+        453
+      ],
+      [
+        101,
+        451,
+        434,
+        486
+      ],
+      [
+        23,
+        484,
+        505,
+        519
+      ],
+      [
+        112,
+        517,
+        418,
+        550
+      ],
+      [
+        188,
+        552,
+        345,
+        583
+      ],
+      [
+        194,
+        616,
+        347,
+        653
+      ],
+      [
+        4,
+        680,
+        277,
+        721
+      ],
+      [
+        4,
+        715,
+        502,
+        752
+      ],
+      [
+        4,
+        751,
+        118,
+        782
+      ],
+      [
+        29,
+        782,
+        240,
+        813
+      ],
+      [
+        50,
+        819,
+        166,
+        850
+      ],
+      [
+        52,
+        848,
+        191,
+        887
+      ],
+      [
+        31,
+        881,
+        238,
+        914
+      ],
+      [
+        54,
+        914,
+        168,
+        945
+      ],
+      [
+        56,
+        949,
+        186,
+        976
+      ],
+      [
+        27,
+        980,
+        205,
+        1015
+      ],
+      [
+        5,
+        1048,
+        321,
+        1080
+      ],
+      [
+        5,
+        1082,
+        183,
+        1111
+      ],
+      [
+        2,
+        1110,
+        190,
+        1143
+      ],
+      [
+        5,
+        1148,
+        90,
+        1179
+      ],
+      [
+        8,
+        1212,
+        285,
+        1249
+      ],
+      [
+        455,
+        751,
+        527,
+        784
+      ],
+      [
+        455,
+        788,
+        525,
+        817
+      ],
+      [
+        459,
+        881,
+        529,
+        916
+      ],
+      [
+        467,
+        982,
+        533,
+        1015
+      ],
+      [
+        451,
+        1048,
+        525,
+        1079
+      ],
+      [
+        451,
+        1084,
+        528,
+        1113
+      ],
+      [
+        447,
+        1112,
+        528,
+        1143
+      ],
+      [
+        455,
+        1150,
+        527,
+        1177
+      ],
+      [
+        465,
+        1214,
+        527,
+        1245
+      ],
+      [
+        108,
+        1307,
+        476,
+        1342
+      ],
+      [
+        66,
+        1375,
+        451,
+        1406
+      ],
+      [
+        238,
+        1408,
+        279,
+        1439
+      ],
+      [
+        66,
+        1443,
+        465,
+        1478
+      ],
+      [
+        116,
+        1476,
+        416,
+        1511
+      ],
+      [
+        93,
+        1541,
+        422,
+        1578
+      ],
+      [
+        27,
+        1600,
+        457,
+        1637
+      ],
+      [
+        19,
+        1644,
+        532,
+        1677
+      ]
+    ]
+  }
+}

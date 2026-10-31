@@ -1,0 +1,67 @@
+{
+  "status": "PASS",
+  "readiness": "READY_FOR_RACHEL_INTEGRATION_NOT_ALREADY_LIVE",
+  "test_invocations": [
+    {
+      "evidence_file": "final-tests.xml",
+      "passed": 367,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "evidence_file": "final-added-checks.xml",
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0
+    }
+  ],
+  "distinct_tests_passed": 370,
+  "failed": 0,
+  "skipped_in_executed_tests": 0,
+  "postgresql": "Real PostgreSQL 18 in a newly initialised disposable loopback cluster; verified task-owned data directory before base/proposed schema application",
+  "storage_and_rq": "TEST_DOUBLES; real existing SQL reservation/publish code exercised, no hosted object or Redis writes",
+  "source_preservation": {
+    "files_checked": 84,
+    "unchanged": true
+  },
+  "required_checks": {
+    "1": "PASS (see scope)",
+    "2": "PASS (see scope)",
+    "3": "PASS (see scope)",
+    "4": "PASS (see scope)",
+    "5": "PASS (see scope)",
+    "6": "PASS (see scope)",
+    "7": "PASS (see scope)",
+    "8": "PASS (see scope)",
+    "9": "PASS (see scope)",
+    "10": "PASS (see scope)",
+    "11": "PASS (see scope)",
+    "12": "PASS (see scope)",
+    "13": "PASS (see scope)",
+    "14": "PASS (see scope)",
+    "15": "PASS (see scope)"
+  },
+  "scope": {
+    "catalog": "Exactly 35; 15/10/10; unique stable demo codes; IDs/runs null",
+    "files": "All accepted binaries copied, opened, signatures/SHA-256 and gold references verified",
+    "contracts": "Original v1.0.0 and independent portable Pydantic validation; no predicted fields in gold",
+    "database": "Idempotent repeat import, collisions, wrong tenant/owner/actor, immutable registry/FK, object-orphan and dispatch-failure recovery",
+    "access": "Proposed read-only same-tenant demo predicate; negative access cases and real SQL query tested; not routed in application",
+    "dry_run": "Offline zero external calls; target SQL READ ONLY/S3 read-only test-double checks; no fake processing or accuracy",
+    "independent": "Portable subprocess with backend paths/config removed passed. Final external directory/ZIP verification is recorded alongside the delivered ZIP."
+  },
+  "not_executed": [
+    "Shared/Dr Sim/hosted DB or migrations",
+    "Real S3/R2/Redis service integration",
+    "OCR/Docling processing",
+    "Hosted Vercel/Render account workflow",
+    "Fine-tuning or production deployment"
+  ],
+  "known_hosted_blockers": [
+    "Local-only upload and preview endpoints",
+    "Configured supervisor obsolete three-argument job payload",
+    "Shared read registry and tenant-scoped API changes require Rachel/Aleeya review",
+    "Provider-specific storage and session/CORS end-to-end verification required"
+  ],
+  "metrics": "NOT_RUN; all metric numerators/denominators/confidence null; reference values are actual ground truth only"
+}

@@ -1,0 +1,1049 @@
+{
+  "$defs": {
+    "DemoComparison": {
+      "additionalProperties": false,
+      "properties": {
+        "demo_code": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Demo Code",
+          "type": "string"
+        },
+        "sample_id": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Sample Id",
+          "type": "string"
+        },
+        "document_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Document Id"
+        },
+        "document_code": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Document Code"
+        },
+        "raw_extraction_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Raw Extraction Id"
+        },
+        "extraction_run_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Extraction Run Id"
+        },
+        "frozen_prediction_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Frozen Prediction Sha256"
+        },
+        "ground_truth_manifest_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Ground Truth Manifest Sha256",
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "NOT_RUN",
+            "AWAITING_FROZEN_PREDICTION",
+            "EVALUATED"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "origin": {
+          "enum": [
+            "REAL",
+            "SYNTHETIC"
+          ],
+          "title": "Origin",
+          "type": "string"
+        },
+        "document_type": {
+          "enum": [
+            "invoice",
+            "bill",
+            "receipt"
+          ],
+          "title": "Document Type",
+          "type": "string"
+        },
+        "source_dataset": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Source Dataset",
+          "type": "string"
+        },
+        "evaluation_split": {
+          "enum": [
+            "development",
+            "calibration",
+            "held_out"
+          ],
+          "title": "Evaluation Split",
+          "type": "string"
+        },
+        "predicted_document_type": {
+          "anyOf": [
+            {
+              "enum": [
+                "invoice",
+                "bill",
+                "receipt",
+                "credit_note",
+                "debit_note",
+                "unknown"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Predicted Document Type"
+        },
+        "line_annotation_status": {
+          "enum": [
+            "NOT_LABELLED",
+            "CONFIRMED_EMPTY",
+            "LABELLED_ROWS"
+          ],
+          "title": "Line Annotation Status",
+          "type": "string"
+        },
+        "line_row_coverage": {
+          "enum": [
+            "UNKNOWN",
+            "PARTIAL",
+            "COMPLETE"
+          ],
+          "title": "Line Row Coverage",
+          "type": "string"
+        },
+        "fields": {
+          "items": {
+            "$ref": "#/$defs/FieldComparison"
+          },
+          "title": "Fields",
+          "type": "array"
+        },
+        "row_comparisons": {
+          "items": {
+            "$ref": "#/$defs/RowComparison"
+          },
+          "title": "Row Comparisons",
+          "type": "array"
+        },
+        "metrics": {
+          "$ref": "#/$defs/Metrics"
+        },
+        "line_item_metrics": {
+          "$ref": "#/$defs/Metrics"
+        },
+        "classification_metrics": {
+          "$ref": "#/$defs/Metrics"
+        },
+        "calibrated_confidence": {
+          "title": "Calibrated Confidence",
+          "type": "null"
+        }
+      },
+      "required": [
+        "demo_code",
+        "sample_id",
+        "document_id",
+        "document_code",
+        "raw_extraction_id",
+        "extraction_run_id",
+        "frozen_prediction_sha256",
+        "ground_truth_manifest_sha256",
+        "state",
+        "origin",
+        "document_type",
+        "source_dataset",
+        "evaluation_split",
+        "predicted_document_type",
+        "line_annotation_status",
+        "line_row_coverage",
+        "fields",
+        "row_comparisons",
+        "metrics",
+        "line_item_metrics",
+        "classification_metrics",
+        "calibrated_confidence"
+      ],
+      "title": "DemoComparison",
+      "type": "object"
+    },
+    "Evidence": {
+      "additionalProperties": false,
+      "properties": {
+        "page": {
+          "exclusiveMinimum": 0,
+          "title": "Page",
+          "type": "integer"
+        },
+        "source_reference": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Source Reference",
+          "type": "string"
+        },
+        "printed_text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Printed Text"
+        },
+        "bbox": {
+          "anyOf": [
+            {
+              "items": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "maxItems": 4,
+              "minItems": 4,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Bbox"
+        },
+        "coordinate_convention": {
+          "anyOf": [
+            {
+              "const": "xyxy_top_left",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Coordinate Convention"
+        },
+        "coordinate_units": {
+          "anyOf": [
+            {
+              "enum": [
+                "pixel",
+                "pdf_point",
+                "normalized"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Coordinate Units"
+        },
+        "page_width": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Page Width"
+        },
+        "page_height": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Page Height"
+        }
+      },
+      "required": [
+        "page",
+        "source_reference",
+        "printed_text",
+        "bbox",
+        "coordinate_convention",
+        "coordinate_units",
+        "page_width",
+        "page_height"
+      ],
+      "title": "Evidence",
+      "type": "object"
+    },
+    "FieldComparison": {
+      "additionalProperties": false,
+      "properties": {
+        "field_key": {
+          "enum": [
+            "invoice_number",
+            "invoice_type",
+            "invoice_reference",
+            "supplier_name",
+            "supplier_address",
+            "customer_name",
+            "customer_address",
+            "invoice_date",
+            "due_date",
+            "currency",
+            "subtotal",
+            "tax",
+            "total",
+            "discount",
+            "supplier_registration_id",
+            "supplier_tax_id",
+            "customer_registration_id",
+            "customer_tax_id",
+            "purchase_order_number",
+            "contract_reference",
+            "delivery_reference",
+            "payment_terms",
+            "payment_instructions",
+            "payment_reference",
+            "payment_method",
+            "payment_bank_name",
+            "payment_account_number",
+            "billing_address",
+            "shipping_address",
+            "allowance_total",
+            "charge_total",
+            "tax_exclusive_total",
+            "tax_inclusive_total",
+            "prepaid_amount",
+            "paid_amount",
+            "amount_due",
+            "rounding",
+            "service_start_date",
+            "service_end_date",
+            "delivery_date",
+            "payment_date",
+            "myinvois_uuid",
+            "myinvois_long_id",
+            "myinvois_validation_reference",
+            "myinvois_qr_payload",
+            "supplier_tin",
+            "customer_tin",
+            "supplier_sst_id",
+            "customer_sst_id",
+            "supplier_msic_code",
+            "supplier_business_activity",
+            "credit_note_number",
+            "debit_note_number",
+            "original_invoice_number",
+            "original_invoice_uuid",
+            "note_reason",
+            "industry_reference",
+            "myinvois_validation_datetime",
+            "bill_number",
+            "bill_reference",
+            "provider_name",
+            "provider_address",
+            "bill_date",
+            "customer_account_number",
+            "service_address",
+            "billing_period",
+            "meter_number",
+            "consumption_unit",
+            "tariff_name",
+            "billing_period_start",
+            "billing_period_end",
+            "previous_reading_date",
+            "current_reading_date",
+            "previous_reading",
+            "current_reading",
+            "consumption",
+            "tariff_rate",
+            "previous_balance",
+            "arrears",
+            "current_charges",
+            "adjustment_total",
+            "credit_total",
+            "late_fee",
+            "payment_amount",
+            "service_charge",
+            "tips",
+            "jompay_biller_code",
+            "jompay_reference_1",
+            "jompay_reference_2",
+            "biller_reference",
+            "table_number",
+            "order_number",
+            "merchant_name",
+            "merchant_address",
+            "receipt_number",
+            "receipt_reference",
+            "transaction_date",
+            "transaction_time",
+            "branch_name",
+            "branch_id",
+            "cashier_name",
+            "cashier_id",
+            "terminal_id",
+            "register_id",
+            "original_receipt_reference",
+            "refund_reference",
+            "void_reference",
+            "refund_reason",
+            "customer_id",
+            "loyalty_reference",
+            "total_sales",
+            "amount_paid",
+            "tender",
+            "change",
+            "refund_amount",
+            "refund_indicator",
+            "void_indicator",
+            "refund_date",
+            "void_date",
+            "description",
+            "quantity",
+            "unit_price",
+            "line_total",
+            "item_code",
+            "unit",
+            "tax_category",
+            "line_discount",
+            "line_discount_rate",
+            "line_tax",
+            "line_tax_rate",
+            "line_allowance",
+            "line_charge",
+            "myinvois_item_classification",
+            "tax_exemption_reason",
+            "tax_rate",
+            "taxable_amount",
+            "tax_amount",
+            "charge_category",
+            "charge_amount",
+            "attribute_name",
+            "attribute_value"
+          ],
+          "title": "Field Key",
+          "type": "string"
+        },
+        "value_type": {
+          "enum": [
+            "text",
+            "decimal",
+            "date",
+            "time",
+            "currency",
+            "boolean"
+          ],
+          "title": "Value Type",
+          "type": "string"
+        },
+        "reference_value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Reference Value"
+        },
+        "predicted_value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Predicted Value"
+        },
+        "gold_row_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Gold Row Id"
+        },
+        "prediction_row_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Prediction Row Id"
+        },
+        "outcome": {
+          "enum": [
+            "CORRECT",
+            "INCORRECT",
+            "MISSING_PREDICTION",
+            "CORRECT_ABSTENTION",
+            "FALSE_FILL",
+            "NOT_MEASURABLE",
+            "AMBIGUOUS_REFERENCE",
+            "UNREADABLE_REFERENCE",
+            "NOT_RUN"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Reason"
+        },
+        "reference_state": {
+          "enum": [
+            "PRESENT",
+            "CONFIRMED_ABSENT",
+            "UNLABELLED",
+            "AMBIGUOUS",
+            "UNREADABLE"
+          ],
+          "title": "Reference State",
+          "type": "string"
+        },
+        "reference_verification_state": {
+          "enum": [
+            "PUBLISHED_AS_IS",
+            "INDEPENDENTLY_VERIFIED",
+            "UNVERIFIED",
+            "SCHEMA_TEST_ONLY"
+          ],
+          "title": "Reference Verification State",
+          "type": "string"
+        },
+        "evidence_available": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Evidence Available"
+        },
+        "reference_evidence": {
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          },
+          "title": "Reference Evidence",
+          "type": "array"
+        },
+        "prediction_evidence": {
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          },
+          "title": "Prediction Evidence",
+          "type": "array"
+        },
+        "method": {
+          "anyOf": [
+            {
+              "enum": [
+                "PARSER",
+                "OCR",
+                "VLM"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Method"
+        },
+        "model_version": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Model Version"
+        },
+        "calibrated_confidence": {
+          "title": "Calibrated Confidence",
+          "type": "null"
+        }
+      },
+      "required": [
+        "field_key",
+        "value_type",
+        "reference_value",
+        "predicted_value",
+        "gold_row_id",
+        "prediction_row_id",
+        "outcome",
+        "reason",
+        "reference_state",
+        "reference_verification_state",
+        "evidence_available",
+        "reference_evidence",
+        "prediction_evidence",
+        "method",
+        "model_version",
+        "calibrated_confidence"
+      ],
+      "title": "FieldComparison",
+      "type": "object"
+    },
+    "Metrics": {
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "enum": [
+            "NOT_RUN",
+            "NOT_MEASURABLE",
+            "EVALUATED"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "correct": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Correct"
+        },
+        "incorrect": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Incorrect"
+        },
+        "missing_prediction": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Missing Prediction"
+        },
+        "correct_abstention": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Correct Abstention"
+        },
+        "false_fill": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "False Fill"
+        },
+        "not_measurable": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Not Measurable"
+        },
+        "ambiguous_reference": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ambiguous Reference"
+        },
+        "unreadable_reference": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unreadable Reference"
+        },
+        "accuracy": {
+          "$ref": "#/$defs/Ratio"
+        },
+        "extraction_coverage": {
+          "$ref": "#/$defs/Ratio"
+        },
+        "exact_precision": {
+          "$ref": "#/$defs/Ratio"
+        },
+        "exact_recall": {
+          "$ref": "#/$defs/Ratio"
+        }
+      },
+      "required": [
+        "status",
+        "accuracy",
+        "extraction_coverage",
+        "exact_precision",
+        "exact_recall"
+      ],
+      "title": "Metrics",
+      "type": "object"
+    },
+    "Ratio": {
+      "additionalProperties": false,
+      "properties": {
+        "numerator": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Numerator"
+        },
+        "denominator": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Denominator"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "title": "Ratio",
+      "type": "object"
+    },
+    "RowComparison": {
+      "additionalProperties": false,
+      "properties": {
+        "gold_row_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Gold Row Id"
+        },
+        "prediction_row_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Prediction Row Id"
+        },
+        "outcome": {
+          "enum": [
+            "MATCHED",
+            "MISSING_ROW",
+            "EXTRA_ROW",
+            "NOT_MEASURABLE"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Reason"
+        }
+      },
+      "required": [
+        "gold_row_id",
+        "prediction_row_id",
+        "outcome",
+        "reason"
+      ],
+      "title": "RowComparison",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "contract_status": {
+      "const": "PROPOSED_NOT_ROUTED",
+      "title": "Contract Status",
+      "type": "string"
+    },
+    "dataset_id": {
+      "minLength": 1,
+      "pattern": "\\S",
+      "title": "Dataset Id",
+      "type": "string"
+    },
+    "benchmark_revision": {
+      "minLength": 1,
+      "pattern": "\\S",
+      "title": "Benchmark Revision",
+      "type": "string"
+    },
+    "state": {
+      "enum": [
+        "NOT_RUN",
+        "EVALUATED"
+      ],
+      "title": "State",
+      "type": "string"
+    },
+    "comparison_policy_version": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Comparison Policy Version"
+    },
+    "verification_policy_version": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Verification Policy Version"
+    },
+    "row_matching_policy_version": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Row Matching Policy Version"
+    },
+    "documents": {
+      "items": {
+        "$ref": "#/$defs/DemoComparison"
+      },
+      "title": "Documents",
+      "type": "array"
+    },
+    "overall": {
+      "$ref": "#/$defs/Metrics"
+    },
+    "per_field": {
+      "additionalProperties": {
+        "$ref": "#/$defs/Metrics"
+      },
+      "title": "Per Field",
+      "type": "object"
+    },
+    "per_document_type": {
+      "additionalProperties": {
+        "$ref": "#/$defs/Metrics"
+      },
+      "title": "Per Document Type",
+      "type": "object"
+    },
+    "per_source_cohort": {
+      "additionalProperties": {
+        "$ref": "#/$defs/Metrics"
+      },
+      "title": "Per Source Cohort",
+      "type": "object"
+    },
+    "classification_metrics": {
+      "$ref": "#/$defs/Metrics"
+    },
+    "calibrated_confidence": {
+      "title": "Calibrated Confidence",
+      "type": "null"
+    }
+  },
+  "required": [
+    "schema_version",
+    "contract_status",
+    "dataset_id",
+    "benchmark_revision",
+    "state",
+    "comparison_policy_version",
+    "verification_policy_version",
+    "row_matching_policy_version",
+    "documents",
+    "overall",
+    "per_field",
+    "per_document_type",
+    "per_source_cohort",
+    "classification_metrics",
+    "calibrated_confidence"
+  ],
+  "title": "AccuracyPreview",
+  "type": "object"
+}

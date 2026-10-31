@@ -1,0 +1,15 @@
+.env
+kaggle.json
+.venv/
+.venv-*/
+.python-packages/
+__pycache__/
+.pytest_cache/
+.pytest-tmp/
+.extraction-tmp/
+*.py[cod]
+runs/
+storage/
+*.log
+*.err
+logs/

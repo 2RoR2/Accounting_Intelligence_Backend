@@ -1,0 +1,2363 @@
+{
+  "schema_version": "1.0.0",
+  "fields": {
+    "invoice_number": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "core"
+        }
+      ],
+      "definition": "Printed identifier of this invoice; not an original invoice linked by a note."
+    },
+    "invoice_type": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "core"
+        }
+      ],
+      "definition": "Printed invoice or credit/debit-note type wording; not AP/AR or review status."
+    },
+    "invoice_reference": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "core"
+        }
+      ],
+      "definition": "Separately printed invoice reference other than its primary invoice number."
+    },
+    "supplier_name": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "core"
+        }
+      ],
+      "definition": "Invoice seller/issuer name; carries no AP/AR direction."
+    },
+    "supplier_address": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "core"
+        }
+      ],
+      "definition": "Printed address of the invoice seller, preserving all supplied address lines."
+    },
+    "customer_name": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "core"
+        },
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "document",
+          "tier": "core"
+        },
+        {
+          "document_types": [
+            "receipt"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed buyer/customer name; carries no AP/AR direction."
+    },
+    "customer_address": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "core"
+        },
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "document",
+          "tier": "core"
+        }
+      ],
+      "definition": "Printed customer/buyer address; not automatically billing or service address."
+    },
+    "invoice_date": {
+      "value_type": "date",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "core"
+        }
+      ],
+      "definition": "Issue date printed for this invoice; not due, service, payment or upload date."
+    },
+    "due_date": {
+      "value_type": "date",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "core"
+        },
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "document",
+          "tier": "core"
+        }
+      ],
+      "definition": "Explicit printed payment due date; do not calculate it from payment terms."
+    },
+    "currency": {
+      "value_type": "currency",
+      "uses": [
+        {
+          "document_types": [
+            "invoice",
+            "bill",
+            "receipt"
+          ],
+          "scope": "document",
+          "tier": "core"
+        }
+      ],
+      "definition": "Unambiguously printed currency normalized to a three-letter code; otherwise null."
+    },
+    "subtotal": {
+      "value_type": "decimal",
+      "uses": [
+        {
+          "document_types": [
+            "invoice",
+            "bill",
+            "receipt"
+          ],
+          "scope": "document",
+          "tier": "core"
+        }
+      ],
+      "definition": "Printed subtotal in its labelled scope; do not derive tax-exclusive total."
+    },
+    "tax": {
+      "value_type": "decimal",
+      "uses": [
+        {
+          "document_types": [
+            "invoice",
+            "bill",
+            "receipt"
+          ],
+          "scope": "document",
+          "tier": "core"
+        }
+      ],
+      "definition": "Printed document-level tax amount, distinct from each category or item tax and tax rates."
+    },
+    "total": {
+      "value_type": "decimal",
+      "uses": [
+        {
+          "document_types": [
+            "invoice",
+            "bill",
+            "receipt"
+          ],
+          "scope": "document",
+          "tier": "core"
+        }
+      ],
+      "definition": "Printed document grand total; never substitute amount due, sales, tender or payment."
+    },
+    "discount": {
+      "value_type": "decimal",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "core"
+        },
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        },
+        {
+          "document_types": [
+            "receipt"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed document-level discount amount, not a rate or a sum inferred from item discounts."
+    },
+    "supplier_registration_id": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed seller business-registration identifier, distinct from tax identifiers."
+    },
+    "supplier_tax_id": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed seller tax identifier with no more specific supported tax scheme; do not duplicate TIN or SST labels."
+    },
+    "customer_registration_id": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed customer business-registration identifier, distinct from tax identifiers."
+    },
+    "customer_tax_id": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed customer tax identifier with no more specific supported tax scheme; do not duplicate TIN or SST labels."
+    },
+    "purchase_order_number": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed purchase-order identifier; not a contract, invoice or delivery reference."
+    },
+    "contract_reference": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed identifier of an associated contract."
+    },
+    "delivery_reference": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed delivery-note/shipment reference; do not infer a goods-receipt record."
+    },
+    "payment_terms": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed terms of payment as text; do not convert them to a due date without that date being printed."
+    },
+    "payment_instructions": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed payment instruction text, distinct from the separately labelled account and method fields."
+    },
+    "payment_reference": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        },
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        },
+        {
+          "document_types": [
+            "receipt"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed reference for a payment/transaction; not evidence of settlement by itself."
+    },
+    "payment_method": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        },
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        },
+        {
+          "document_types": [
+            "receipt"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed payment method text; do not infer paid/approved status."
+    },
+    "payment_bank_name": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed bank named in invoice payment instructions, not a customer or utility account provider."
+    },
+    "payment_account_number": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed bank account in invoice payment instructions; preserve leading zeros."
+    },
+    "billing_address": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Explicitly labelled billing address; do not copy a generic customer address into this field."
+    },
+    "shipping_address": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Explicitly labelled ship-to address, distinct from billing and customer addresses."
+    },
+    "allowance_total": {
+      "value_type": "decimal",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Explicit printed document allowance total; not an inferred discount sum."
+    },
+    "charge_total": {
+      "value_type": "decimal",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Explicit printed invoice document charge total, excluding unrelated bill balances."
+    },
+    "tax_exclusive_total": {
+      "value_type": "decimal",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Explicit total excluding tax; do not alias a generic subtotal."
+    },
+    "tax_inclusive_total": {
+      "value_type": "decimal",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Explicit total including tax; keep distinct from grand total."
+    },
+    "prepaid_amount": {
+      "value_type": "decimal",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed advance/prepayment amount, distinct from paid amount."
+    },
+    "paid_amount": {
+      "value_type": "decimal",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed invoice paid amount; not an accounting settlement status."
+    },
+    "amount_due": {
+      "value_type": "decimal",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        },
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "document",
+          "tier": "core"
+        }
+      ],
+      "definition": "Printed balance requested for payment; distinct from total and previous balance."
+    },
+    "rounding": {
+      "value_type": "decimal",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        },
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        },
+        {
+          "document_types": [
+            "receipt"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed signed monetary rounding adjustment; no rounding is introduced by annotation."
+    },
+    "service_start_date": {
+      "value_type": "date",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        },
+        {
+          "document_types": [
+            "invoice",
+            "bill",
+            "receipt"
+          ],
+          "scope": "line",
+          "tier": "conditional"
+        }
+      ],
+      "definition": "Printed start date of the service interval at document or item scope."
+    },
+    "service_end_date": {
+      "value_type": "date",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        },
+        {
+          "document_types": [
+            "invoice",
+            "bill",
+            "receipt"
+          ],
+          "scope": "line",
+          "tier": "conditional"
+        }
+      ],
+      "definition": "Printed end date of the service interval at document or item scope."
+    },
+    "delivery_date": {
+      "value_type": "date",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        },
+        {
+          "document_types": [
+            "invoice",
+            "bill",
+            "receipt"
+          ],
+          "scope": "line",
+          "tier": "conditional"
+        }
+      ],
+      "definition": "Printed actual delivery date at document or item scope; not a received/upload timestamp."
+    },
+    "payment_date": {
+      "value_type": "date",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        },
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Explicit printed date of a payment; not inferred from issue date or payment method."
+    },
+    "myinvois_uuid": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "conditional"
+        }
+      ],
+      "definition": "Printed UUID assigned to this e-invoice; not the supplier invoice number or original invoice UUID."
+    },
+    "myinvois_long_id": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "conditional"
+        }
+      ],
+      "definition": "Printed MyInvois long identifier, kept distinct from the invoice UUID."
+    },
+    "myinvois_validation_reference": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "conditional"
+        }
+      ],
+      "definition": "Separately labelled validation reference; do not duplicate a UUID or long ID here."
+    },
+    "myinvois_qr_payload": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "conditional"
+        }
+      ],
+      "definition": "Exact payload independently decoded from a printed QR code; evidence must identify that code."
+    },
+    "supplier_tin": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "conditional"
+        }
+      ],
+      "definition": "Explicitly identified seller TIN; do not also count it as a generic supplier_tax_id."
+    },
+    "customer_tin": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "conditional"
+        }
+      ],
+      "definition": "Explicitly identified buyer TIN; do not also count it as a generic customer_tax_id."
+    },
+    "supplier_sst_id": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "conditional"
+        }
+      ],
+      "definition": "Explicitly identified seller SST registration identifier, distinct from TIN and company registration."
+    },
+    "customer_sst_id": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "conditional"
+        }
+      ],
+      "definition": "Explicitly identified buyer SST registration identifier, distinct from TIN and company registration."
+    },
+    "supplier_msic_code": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "conditional"
+        }
+      ],
+      "definition": "Printed seller business-classification code, kept as text including leading zeros."
+    },
+    "supplier_business_activity": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "conditional"
+        }
+      ],
+      "definition": "Printed seller business-activity description, not a model-inferred industry."
+    },
+    "credit_note_number": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "conditional"
+        }
+      ],
+      "definition": "Printed identifier of this credit note; invoice_number is reserved for invoice documents."
+    },
+    "debit_note_number": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "conditional"
+        }
+      ],
+      "definition": "Printed identifier of this debit note; invoice_number is reserved for invoice documents."
+    },
+    "original_invoice_number": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "conditional"
+        }
+      ],
+      "definition": "Printed number of an earlier invoice referenced by this document; not this document number."
+    },
+    "original_invoice_uuid": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "conditional"
+        }
+      ],
+      "definition": "Printed UUID of an earlier linked invoice, distinct from its invoice number."
+    },
+    "note_reason": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "conditional"
+        }
+      ],
+      "definition": "Printed reason for a credit/debit note or adjustment, without inferred accounting treatment."
+    },
+    "industry_reference": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "conditional"
+        }
+      ],
+      "definition": "Printed industry-specific reference with its original label retained in printed_text."
+    },
+    "myinvois_validation_datetime": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "document",
+          "tier": "conditional"
+        }
+      ],
+      "definition": "Printed timestamp preserved as text, including timezone if printed."
+    },
+    "bill_number": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "document",
+          "tier": "core"
+        }
+      ],
+      "definition": "Printed primary bill identifier; do not duplicate a generic bill reference unless separately printed."
+    },
+    "bill_reference": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "document",
+          "tier": "core"
+        }
+      ],
+      "definition": "Printed generic bill reference; a bill-number alias needs printed-role confirmation."
+    },
+    "provider_name": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "document",
+          "tier": "core"
+        }
+      ],
+      "definition": "Printed issuer/provider of the bill; carries no AP/AR or settlement inference."
+    },
+    "provider_address": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "document",
+          "tier": "core"
+        }
+      ],
+      "definition": "Printed address of the bill issuer/provider, not the customer service location."
+    },
+    "bill_date": {
+      "value_type": "date",
+      "uses": [
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "document",
+          "tier": "core"
+        }
+      ],
+      "definition": "Printed bill issue date; not due date or billing-period boundary."
+    },
+    "customer_account_number": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed customer/service account with the bill provider; not a bank payment account."
+    },
+    "service_address": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Explicit printed address where the billed service is supplied."
+    },
+    "billing_period": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Complete printed billing-period text; start/end dates are separately normalized components when supported."
+    },
+    "meter_number": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        },
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "meter_readings",
+          "tier": "conditional"
+        }
+      ],
+      "definition": "Printed meter identifier at document or repeated-meter scope; no value for documents without a meter."
+    },
+    "consumption_unit": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        },
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "meter_readings",
+          "tier": "conditional"
+        }
+      ],
+      "definition": "Printed unit for measured usage, preserving the source notation."
+    },
+    "tariff_name": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        },
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "meter_readings",
+          "tier": "conditional"
+        }
+      ],
+      "definition": "Printed tariff/plan name; not a numeric rate or an inferred service category."
+    },
+    "billing_period_start": {
+      "value_type": "date",
+      "uses": [
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Start date supported by an unambiguous printed billing interval; never derived from bill date."
+    },
+    "billing_period_end": {
+      "value_type": "date",
+      "uses": [
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "End date supported by an unambiguous printed billing interval; never derived from due date."
+    },
+    "previous_reading_date": {
+      "value_type": "date",
+      "uses": [
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        },
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "meter_readings",
+          "tier": "conditional"
+        }
+      ],
+      "definition": "Printed date associated with the previous meter reading."
+    },
+    "current_reading_date": {
+      "value_type": "date",
+      "uses": [
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        },
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "meter_readings",
+          "tier": "conditional"
+        }
+      ],
+      "definition": "Printed date associated with the current meter reading."
+    },
+    "previous_reading": {
+      "value_type": "decimal",
+      "uses": [
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        },
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "meter_readings",
+          "tier": "conditional"
+        }
+      ],
+      "definition": "Printed previous cumulative meter reading; not previous-period consumption."
+    },
+    "current_reading": {
+      "value_type": "decimal",
+      "uses": [
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        },
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "meter_readings",
+          "tier": "conditional"
+        }
+      ],
+      "definition": "Printed current cumulative meter reading; not current charges or usage."
+    },
+    "consumption": {
+      "value_type": "decimal",
+      "uses": [
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        },
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "meter_readings",
+          "tier": "conditional"
+        }
+      ],
+      "definition": "Explicit printed usage quantity; do not derive it by subtracting meter readings."
+    },
+    "tariff_rate": {
+      "value_type": "decimal",
+      "uses": [
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        },
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "meter_readings",
+          "tier": "conditional"
+        }
+      ],
+      "definition": "Printed monetary rate per stated consumption unit; preserve that unit and rate tier in evidence."
+    },
+    "previous_balance": {
+      "value_type": "decimal",
+      "uses": [
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed balance brought forward before current-period charges."
+    },
+    "arrears": {
+      "value_type": "decimal",
+      "uses": [
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed overdue amount; not assumed equal to previous balance."
+    },
+    "current_charges": {
+      "value_type": "decimal",
+      "uses": [
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed charges for the current billing period only."
+    },
+    "adjustment_total": {
+      "value_type": "decimal",
+      "uses": [
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed signed bill adjustment amount; do not substitute credits or calculate a net balance."
+    },
+    "credit_total": {
+      "value_type": "decimal",
+      "uses": [
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed bill credit amount with its source sign; never infer it from previous payments."
+    },
+    "late_fee": {
+      "value_type": "decimal",
+      "uses": [
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed late-payment fee amount; not an inferred overdue balance."
+    },
+    "payment_amount": {
+      "value_type": "decimal",
+      "uses": [
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed bill payment amount; not current charges or amount due."
+    },
+    "service_charge": {
+      "value_type": "decimal",
+      "uses": [
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        },
+        {
+          "document_types": [
+            "receipt"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed document-level service charge; not a sum of all charge rows."
+    },
+    "tips": {
+      "value_type": "decimal",
+      "uses": [
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        },
+        {
+          "document_types": [
+            "receipt"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Explicit printed tip/gratuity amount; do not infer it from tender minus total."
+    },
+    "jompay_biller_code": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "document",
+          "tier": "conditional"
+        }
+      ],
+      "definition": "Printed JomPAY biller code, preserved as text."
+    },
+    "jompay_reference_1": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "document",
+          "tier": "conditional"
+        }
+      ],
+      "definition": "Printed JomPAY Ref-1, preserved as text including leading zeros."
+    },
+    "jompay_reference_2": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "document",
+          "tier": "conditional"
+        }
+      ],
+      "definition": "Printed JomPAY Ref-2; not a copy of Ref-1 when unprinted."
+    },
+    "biller_reference": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "document",
+          "tier": "conditional"
+        }
+      ],
+      "definition": "Separately printed biller/payment reference with its original label; not a duplicated bill number."
+    },
+    "table_number": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "document",
+          "tier": "conditional"
+        }
+      ],
+      "definition": "Printed restaurant table identifier; not a utility account or order identifier."
+    },
+    "order_number": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "bill"
+          ],
+          "scope": "document",
+          "tier": "conditional"
+        }
+      ],
+      "definition": "Printed restaurant/service order identifier; not automatically the bill number."
+    },
+    "merchant_name": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "receipt"
+          ],
+          "scope": "document",
+          "tier": "core"
+        }
+      ],
+      "definition": "Printed merchant issuing the receipt; carries no AP/AR inference."
+    },
+    "merchant_address": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "receipt"
+          ],
+          "scope": "document",
+          "tier": "core"
+        }
+      ],
+      "definition": "Printed merchant address on the receipt, distinct from customer information."
+    },
+    "receipt_number": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "receipt"
+          ],
+          "scope": "document",
+          "tier": "core"
+        }
+      ],
+      "definition": "Printed primary receipt identifier; not an original/refunded receipt reference."
+    },
+    "receipt_reference": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "receipt"
+          ],
+          "scope": "document",
+          "tier": "core"
+        }
+      ],
+      "definition": "Separately printed generic receipt reference, not a duplicate primary receipt number."
+    },
+    "transaction_date": {
+      "value_type": "date",
+      "uses": [
+        {
+          "document_types": [
+            "receipt"
+          ],
+          "scope": "document",
+          "tier": "core"
+        }
+      ],
+      "definition": "Printed date of the receipt transaction, not refund, void, issue/upload or payment processing date."
+    },
+    "transaction_time": {
+      "value_type": "time",
+      "uses": [
+        {
+          "document_types": [
+            "receipt"
+          ],
+          "scope": "document",
+          "tier": "core"
+        }
+      ],
+      "definition": "Printed local transaction time in HH:MM[:SS]; do not invent timezone or missing seconds."
+    },
+    "branch_name": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "receipt"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed merchant branch/outlet name, distinct from merchant legal name."
+    },
+    "branch_id": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "receipt"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed branch/outlet code; preserve leading zeros."
+    },
+    "cashier_name": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "receipt"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed cashier/operator name; do not infer it from an operator code."
+    },
+    "cashier_id": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "receipt"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed cashier/operator identifier, distinct from cashier name."
+    },
+    "terminal_id": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "receipt"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed payment/POS terminal identifier, distinct from register identifier."
+    },
+    "register_id": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "receipt"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed cash register identifier, distinct from terminal identifier."
+    },
+    "original_receipt_reference": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "receipt"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed reference to an earlier receipt linked by a refund/void; not this receipt identifier."
+    },
+    "refund_reference": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "receipt"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed identifier of this refund transaction, distinct from the original receipt reference."
+    },
+    "void_reference": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "receipt"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed identifier of this void transaction, distinct from the original receipt reference."
+    },
+    "refund_reason": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "receipt"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed explanation for a refund; no invented accounting categorization."
+    },
+    "customer_id": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "receipt"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed customer identifier; not a loyalty reference unless explicitly identified as such."
+    },
+    "loyalty_reference": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "receipt"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Legitimately available printed loyalty/member reference; do not infer customer identity."
+    },
+    "total_sales": {
+      "value_type": "decimal",
+      "uses": [
+        {
+          "document_types": [
+            "receipt"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed sales aggregate; distinct from receipt total and amount paid."
+    },
+    "amount_paid": {
+      "value_type": "decimal",
+      "uses": [
+        {
+          "document_types": [
+            "receipt"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed receipt payment amount; not inferred from payment method or total."
+    },
+    "tender": {
+      "value_type": "decimal",
+      "uses": [
+        {
+          "document_types": [
+            "receipt"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed amount tendered; may exceed total or amount paid."
+    },
+    "change": {
+      "value_type": "decimal",
+      "uses": [
+        {
+          "document_types": [
+            "receipt"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed change returned."
+    },
+    "refund_amount": {
+      "value_type": "decimal",
+      "uses": [
+        {
+          "document_types": [
+            "receipt"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed monetary refund amount with original sign retained; not automatically negative total."
+    },
+    "refund_indicator": {
+      "value_type": "boolean",
+      "uses": [
+        {
+          "document_types": [
+            "receipt"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Boolean meaning of explicit printed refund wording; an unprinted indicator is not false."
+    },
+    "void_indicator": {
+      "value_type": "boolean",
+      "uses": [
+        {
+          "document_types": [
+            "receipt"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Boolean meaning of explicit printed void wording; an unprinted indicator is not false."
+    },
+    "refund_date": {
+      "value_type": "date",
+      "uses": [
+        {
+          "document_types": [
+            "receipt"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Explicit printed refund transaction date, distinct from original transaction date."
+    },
+    "void_date": {
+      "value_type": "date",
+      "uses": [
+        {
+          "document_types": [
+            "receipt"
+          ],
+          "scope": "document",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Explicit printed void transaction date, distinct from original transaction date."
+    },
+    "description": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice",
+            "bill",
+            "receipt"
+          ],
+          "scope": "line",
+          "tier": "core"
+        },
+        {
+          "document_types": [
+            "invoice",
+            "bill",
+            "receipt"
+          ],
+          "scope": "charge_breakdown",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed item or charge-row description in its own row/group, preserving multiline text."
+    },
+    "quantity": {
+      "value_type": "decimal",
+      "uses": [
+        {
+          "document_types": [
+            "invoice",
+            "bill",
+            "receipt"
+          ],
+          "scope": "line",
+          "tier": "core"
+        },
+        {
+          "document_types": [
+            "invoice",
+            "bill",
+            "receipt"
+          ],
+          "scope": "charge_breakdown",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Explicit printed row quantity as an exact decimal string; not inferred by dividing totals."
+    },
+    "unit_price": {
+      "value_type": "decimal",
+      "uses": [
+        {
+          "document_types": [
+            "invoice",
+            "bill",
+            "receipt"
+          ],
+          "scope": "line",
+          "tier": "core"
+        },
+        {
+          "document_types": [
+            "invoice",
+            "bill",
+            "receipt"
+          ],
+          "scope": "charge_breakdown",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Explicit printed price per stated row unit; not derived by dividing line amount by quantity."
+    },
+    "line_total": {
+      "value_type": "decimal",
+      "uses": [
+        {
+          "document_types": [
+            "invoice",
+            "bill",
+            "receipt"
+          ],
+          "scope": "line",
+          "tier": "core"
+        }
+      ],
+      "definition": "Printed row amount; preserve whether tax-inclusive in annotation notes."
+    },
+    "item_code": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice",
+            "bill",
+            "receipt"
+          ],
+          "scope": "line",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed item/SKU code, preserved as text including leading zeros."
+    },
+    "unit": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice",
+            "bill",
+            "receipt"
+          ],
+          "scope": "line",
+          "tier": "extended"
+        },
+        {
+          "document_types": [
+            "invoice",
+            "bill",
+            "receipt"
+          ],
+          "scope": "charge_breakdown",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed row unit of measure; not an inferred product category or currency."
+    },
+    "tax_category": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice",
+            "bill",
+            "receipt"
+          ],
+          "scope": "line",
+          "tier": "extended"
+        },
+        {
+          "document_types": [
+            "invoice",
+            "bill",
+            "receipt"
+          ],
+          "scope": "tax_breakdown",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed tax-category code/name for this item or tax breakdown; not inferred from the rate."
+    },
+    "line_discount": {
+      "value_type": "decimal",
+      "uses": [
+        {
+          "document_types": [
+            "invoice",
+            "bill",
+            "receipt"
+          ],
+          "scope": "line",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed item discount amount, distinct from document discount or item discount rate."
+    },
+    "line_discount_rate": {
+      "value_type": "decimal",
+      "uses": [
+        {
+          "document_types": [
+            "invoice",
+            "bill",
+            "receipt"
+          ],
+          "scope": "line",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed item discount percentage in percentage points."
+    },
+    "line_tax": {
+      "value_type": "decimal",
+      "uses": [
+        {
+          "document_types": [
+            "invoice",
+            "bill",
+            "receipt"
+          ],
+          "scope": "line",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed tax amount for this item, distinct from document/category tax."
+    },
+    "line_tax_rate": {
+      "value_type": "decimal",
+      "uses": [
+        {
+          "document_types": [
+            "invoice",
+            "bill",
+            "receipt"
+          ],
+          "scope": "line",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed item tax percentage in percentage points."
+    },
+    "line_allowance": {
+      "value_type": "decimal",
+      "uses": [
+        {
+          "document_types": [
+            "invoice",
+            "bill",
+            "receipt"
+          ],
+          "scope": "line",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed allowance amount for this item; not inferred from unit price and quantity."
+    },
+    "line_charge": {
+      "value_type": "decimal",
+      "uses": [
+        {
+          "document_types": [
+            "invoice",
+            "bill",
+            "receipt"
+          ],
+          "scope": "line",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed additional charge for this item, distinct from document charge total."
+    },
+    "myinvois_item_classification": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice"
+          ],
+          "scope": "line",
+          "tier": "conditional"
+        }
+      ],
+      "definition": "Printed classification code for this invoice item; not a predicted MSIC/business code."
+    },
+    "tax_exemption_reason": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice",
+            "bill",
+            "receipt"
+          ],
+          "scope": "tax_breakdown",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed reason/code for exemption in this tax category; never inferred from zero tax."
+    },
+    "tax_rate": {
+      "value_type": "decimal",
+      "uses": [
+        {
+          "document_types": [
+            "invoice",
+            "bill",
+            "receipt"
+          ],
+          "scope": "tax_breakdown",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed percentage expressed in percentage points (6% -> \"6\")."
+    },
+    "taxable_amount": {
+      "value_type": "decimal",
+      "uses": [
+        {
+          "document_types": [
+            "invoice",
+            "bill",
+            "receipt"
+          ],
+          "scope": "tax_breakdown",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed tax base for this category, distinct from document subtotal and tax amount."
+    },
+    "tax_amount": {
+      "value_type": "decimal",
+      "uses": [
+        {
+          "document_types": [
+            "invoice",
+            "bill",
+            "receipt"
+          ],
+          "scope": "tax_breakdown",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed tax amount within this repeated tax category, distinct from document tax and line_tax."
+    },
+    "charge_category": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice",
+            "bill",
+            "receipt"
+          ],
+          "scope": "charge_breakdown",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed category/reason for this charge or allowance row; preserve the label and sign."
+    },
+    "charge_amount": {
+      "value_type": "decimal",
+      "uses": [
+        {
+          "document_types": [
+            "invoice",
+            "bill",
+            "receipt"
+          ],
+          "scope": "charge_breakdown",
+          "tier": "extended"
+        }
+      ],
+      "definition": "Printed signed amount for this charge/allowance row; category distinguishes an allowance from a charge."
+    },
+    "attribute_name": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice",
+            "bill",
+            "receipt"
+          ],
+          "scope": "additional_attributes",
+          "tier": "conditional"
+        }
+      ],
+      "definition": "Original printed label of an additional attribute without an existing canonical key."
+    },
+    "attribute_value": {
+      "value_type": "text",
+      "uses": [
+        {
+          "document_types": [
+            "invoice",
+            "bill",
+            "receipt"
+          ],
+          "scope": "additional_attributes",
+          "tier": "conditional"
+        }
+      ],
+      "definition": "Additional printed attribute text; do not use to bypass known typed keys."
+    }
+  },
+  "production_aliases": [
+    {
+      "production": "supplier / supplier_name / vendor_name / seller",
+      "evaluation": {
+        "invoice": "supplier_name",
+        "bill": "provider_name",
+        "receipt": "merchant_name"
+      },
+      "status": "context_required",
+      "note": "Use confirmed kind and printed party role."
+    },
+    {
+      "production": "issuer / merchant",
+      "evaluation": {
+        "bill": "provider_name",
+        "receipt": "merchant_name"
+      },
+      "status": "context_required",
+      "note": "Preserve issuer versus merchant role."
+    },
+    {
+      "production": "invoice / invoice_number",
+      "evaluation": {
+        "invoice": "invoice_number"
+      },
+      "status": "supported",
+      "note": "Never use original_invoice_number for the current invoice number."
+    },
+    {
+      "production": "date / invoice_date / bill_date / transaction_date",
+      "evaluation": {
+        "invoice": "invoice_date",
+        "bill": "bill_date",
+        "receipt": "transaction_date"
+      },
+      "status": "context_required",
+      "note": "No filename date inference."
+    },
+    {
+      "production": "due / due_date",
+      "evaluation": {
+        "invoice": "due_date",
+        "bill": "due_date"
+      },
+      "status": "supported",
+      "note": "ISO date after unambiguous normalization."
+    },
+    {
+      "production": "customer / buyer / buyer_name",
+      "evaluation": {
+        "invoice": "customer_name",
+        "bill": "customer_name",
+        "receipt": "customer_name"
+      },
+      "status": "context_required",
+      "note": "Printed buyer only; no AP/AR inference."
+    },
+    {
+      "production": "reference / reference_number",
+      "evaluation": {
+        "invoice": "invoice_reference",
+        "bill": "bill_reference",
+        "receipt": "receipt_reference"
+      },
+      "status": "context_required",
+      "note": "Generic reference only. A stored short key loses primary-number versus reference role; require original printed label/key."
+    },
+    {
+      "production": "bill_reference / receipt_number",
+      "evaluation": {
+        "bill": "bill_reference",
+        "receipt": "receipt_number"
+      },
+      "status": "lossy_context",
+      "note": "Receipt number retains its role. Bill mapper also maps printed bill number to bill_reference: use bill_number only when original evidence confirms that label."
+    },
+    {
+      "production": "type",
+      "evaluation": {
+        "invoice": "invoice_type"
+      },
+      "status": "context_required",
+      "note": "Printed invoice type is not classification, business category or approval state."
+    },
+    {
+      "production": "tax / tax_amount",
+      "evaluation": {
+        "invoice": "tax",
+        "bill": "tax",
+        "receipt": "tax"
+      },
+      "status": "supported",
+      "note": "Document tax amount, never a percentage."
+    },
+    {
+      "production": "total / total_amount",
+      "evaluation": {
+        "invoice": "total",
+        "bill": "total",
+        "receipt": "total"
+      },
+      "status": "supported",
+      "note": "Never amount_due; historical mixed values require original raw key/evidence."
+    },
+    {
+      "production": "amount_due",
+      "evaluation": {
+        "invoice": "amount_due",
+        "bill": "amount_due"
+      },
+      "status": "supported",
+      "note": "Live accounting_contract final mapping is amount_due. No fallback into total or current_charges."
+    },
+    {
+      "production": "allowances / document_allowances",
+      "evaluation": {
+        "invoice": "allowance_total"
+      },
+      "status": "supported",
+      "note": "Document allowance sum only."
+    },
+    {
+      "production": "charges / document_charges",
+      "evaluation": {
+        "invoice": "charge_total",
+        "bill": "current_charges"
+      },
+      "status": "lossy_context",
+      "note": "Bill mapper uses document_charges for current charges; raw label required."
+    },
+    {
+      "production": "prepaid / prepaid_amount",
+      "evaluation": {
+        "invoice": "prepaid_amount"
+      },
+      "status": "supported",
+      "note": "Not paid_amount."
+    },
+    {
+      "production": "rounding / rounding_amount",
+      "evaluation": {
+        "invoice": "rounding",
+        "bill": "rounding",
+        "receipt": "rounding"
+      },
+      "status": "supported",
+      "note": "Printed rounding adjustment."
+    },
+    {
+      "production": "total_excluding_tax",
+      "evaluation": {
+        "invoice": "tax_exclusive_total"
+      },
+      "status": "supported",
+      "note": "Preserve scope."
+    },
+    {
+      "production": "total_including_tax",
+      "evaluation": {
+        "invoice": "tax_inclusive_total"
+      },
+      "status": "supported",
+      "note": "Preserve scope."
+    },
+    {
+      "production": "account_number",
+      "evaluation": {
+        "bill": "customer_account_number"
+      },
+      "status": "context_required",
+      "note": "Not an invoice payment bank account."
+    },
+    {
+      "production": "amount_paid",
+      "evaluation": {
+        "invoice": "paid_amount",
+        "bill": "payment_amount",
+        "receipt": "amount_paid"
+      },
+      "status": "context_required",
+      "note": "Boundary accepts key; current parsers have uneven coverage."
+    },
+    {
+      "production": "tendered_amount / change_given",
+      "evaluation": {
+        "receipt": [
+          "tender",
+          "change"
+        ]
+      },
+      "status": "adapter_required",
+      "note": "Two distinct source keys, respectively."
+    },
+    {
+      "production": "line_items.amount / line_total",
+      "evaluation": {
+        "invoice": "line_total",
+        "bill": "line_total",
+        "receipt": "line_total"
+      },
+      "status": "supported",
+      "note": "Use each row; never aggregate as document total."
+    },
+    {
+      "production": "currency / subtotal / discount / billing_period / transaction_time / payment_method / payment_terms / payment_reference / purchase_order_number / refund_indicator",
+      "evaluation": {},
+      "status": "same_key_if_applicable",
+      "note": "Allowed only in dictionary scope; boundary acceptance is not parser coverage."
+    },
+    {
+      "production": "received_date / expense_category / outstanding_amount / goods_receipt_reference",
+      "evaluation": {},
+      "status": "adapter_required",
+      "note": "Do not silently map to delivery date, amount_due or delivery_reference; semantics need approval."
+    },
+    {
+      "production": "credit_note_number / debit_note_number / original_invoice_number / related_invoice_number",
+      "evaluation": {
+        "invoice": [
+          "credit_note_number",
+          "debit_note_number",
+          "original_invoice_number"
+        ]
+      },
+      "status": "lossy_context",
+      "note": "Boundary collapses note reference to reference and related invoice to invoice. Retain raw identity; related invoice needs role confirmation."
+    }
+  ]
+}

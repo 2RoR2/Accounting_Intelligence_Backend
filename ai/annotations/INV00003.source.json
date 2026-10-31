@@ -1,0 +1,71 @@
+{
+  "filename": "invoice_51109308.pdf",
+  "json_data": {
+    "invoice_no": "51109308",
+    "date_of_issue": "31/07/2023",
+    "seller": {
+      "name": "TechVision Distributors Pvt Ltd",
+      "address": "Plot 14, MIDC Industrial Area, Andheri East, Mumbai, Maharashtra - 400093",
+      "tax_id": "27AABCT1234F1Z5",
+      "gstin": "27AABCT1234F1Z5"
+    },
+    "client": {
+      "name": "Ahmedabad Tech World",
+      "address": "12 CG Road, Ahmedabad, Gujarat - 380009",
+      "tax_id": "554-43-2584"
+    },
+    "items": [
+      {
+        "item_no": "1.",
+        "description": "Lenovo Tab P12 Pro 256GB Storm Grey",
+        "quantity": "5.00",
+        "unit_measure": "pcs",
+        "net_price": "39,537.00",
+        "net_worth": "197,685.00",
+        "vat_pct": "10%",
+        "gross_worth": "217,453.50"
+      },
+      {
+        "item_no": "2.",
+        "description": "Belkin MagSafe 3-in-1 Wireless Charger",
+        "quantity": "8.00",
+        "unit_measure": "pcs",
+        "net_price": "9,748.00",
+        "net_worth": "77,984.00",
+        "vat_pct": "10%",
+        "gross_worth": "85,782.40"
+      },
+      {
+        "item_no": "3.",
+        "description": "Apple iPhone 15 Pro 256GB Titanium",
+        "quantity": "1.00",
+        "unit_measure": "pcs",
+        "net_price": "117,132.00",
+        "net_worth": "117,132.00",
+        "vat_pct": "10%",
+        "gross_worth": "128,845.20"
+      },
+      {
+        "item_no": "4.",
+        "description": "Samsung Galaxy Tab S9 256GB Graphite",
+        "quantity": "6.00",
+        "unit_measure": "pcs",
+        "net_price": "81,743.00",
+        "net_worth": "490,458.00",
+        "vat_pct": "10%",
+        "gross_worth": "539,503.80"
+      }
+    ],
+    "summary": {
+      "vat_pct": "10%",
+      "net_worth": "883,259.00",
+      "vat_amount": "88,325.90",
+      "gross_worth": "971,584.90",
+      "total_net_worth": "INR 883,259.00",
+      "total_vat": "INR 88,325.90",
+      "total_gross_worth": "INR 971,584.90"
+    }
+  },
+  "original_json_annotation_text": "{\n  \"invoice_no\": \"51109308\",\n  \"date_of_issue\": \"31/07/2023\",\n  \"seller\": {\n    \"name\": \"TechVision Distributors Pvt Ltd\",\n    \"address\": \"Plot 14, MIDC Industrial Area, Andheri East, Mumbai, Maharashtra - 400093\",\n    \"tax_id\": \"27AABCT1234F1Z5\",\n    \"gstin\": \"27AABCT1234F1Z5\"\n  },\n  \"client\": {\n    \"name\": \"Ahmedabad Tech World\",\n    \"address\": \"12 CG Road, Ahmedabad, Gujarat - 380009\",\n    \"tax_id\": \"554-43-2584\"\n  },\n  \"items\": [\n    {\n      \"item_no\": \"1.\",\n      \"description\": \"Lenovo Tab P12 Pro 256GB Storm Grey\",\n      \"quantity\": \"5.00\",\n      \"unit_measure\": \"pcs\",\n      \"net_price\": \"39,537.00\",\n      \"net_worth\": \"197,685.00\",\n      \"vat_pct\": \"10%\",\n      \"gross_worth\": \"217,453.50\"\n    },\n    {\n      \"item_no\": \"2.\",\n      \"description\": \"Belkin MagSafe 3-in-1 Wireless Charger\",\n      \"quantity\": \"8.00\",\n      \"unit_measure\": \"pcs\",\n      \"net_price\": \"9,748.00\",\n      \"net_worth\": \"77,984.00\",\n      \"vat_pct\": \"10%\",\n      \"gross_worth\": \"85,782.40\"\n    },\n    {\n      \"item_no\": \"3.\",\n      \"description\": \"Apple iPhone 15 Pro 256GB Titanium\",\n      \"quantity\": \"1.00\",\n      \"unit_measure\": \"pcs\",\n      \"net_price\": \"117,132.00\",\n      \"net_worth\": \"117,132.00\",\n      \"vat_pct\": \"10%\",\n      \"gross_worth\": \"128,845.20\"\n    },\n    {\n      \"item_no\": \"4.\",\n      \"description\": \"Samsung Galaxy Tab S9 256GB Graphite\",\n      \"quantity\": \"6.00\",\n      \"unit_measure\": \"pcs\",\n      \"net_price\": \"81,743.00\",\n      \"net_worth\": \"490,458.00\",\n      \"vat_pct\": \"10%\",\n      \"gross_worth\": \"539,503.80\"\n    }\n  ],\n  \"summary\": {\n    \"vat_pct\": \"10%\",\n    \"net_worth\": \"883,259.00\",\n    \"vat_amount\": \"88,325.90\",\n    \"gross_worth\": \"971,584.90\",\n    \"total_net_worth\": \"INR 883,259.00\",\n    \"total_vat\": \"INR 88,325.90\",\n    \"total_gross_worth\": \"INR 971,584.90\"\n  }\n}",
+  "published_ocred_text": "Invoice no: 51109308\nDate of issue: 31/07/2023\nSeller: Client:\nTechVision Distributors Pvt Ltd Ahmedabad Tech World\nPlot 14, MIDC Industrial Area, Andheri East 12 CG Road\nMumbai, Maharashtra - 400093 Ahmedabad, Gujarat - 380009\nTax Id: 27AABCT1234F1Z5 Tax Id: 554-43-2584\nGSTIN: 27AABCT1234F1Z5\nITEMS\nNo. Description Qty UM Net Price Net Worth VAT % Gross\nWorth\n1. Lenovo Tab P12 Pro 256GB Storm Grey 5.00 pcs 39,537.00 197,685.00 10% 217,453.50\n2. Belkin MagSafe 3-in-1 Wireless Charger 8.00 pcs 9,748.00 77,984.00 10% 85,782.40\n3. Apple iPhone 15 Pro 256GB Titanium 1.00 pcs 117,132.00 117,132.00 10% 128,845.20\n4. Samsung Galaxy Tab S9 256GB 6.00 pcs 81,743.00 490,458.00 10% 539,503.80\nGraphite\nSUMMARY\nVAT % Net Worth VAT Gross Worth\n10% 883,259.00 88,325.90 971,584.90\nTotal INR 883,259.00 INR 88,325.90 INR 971,584.90"
+}
