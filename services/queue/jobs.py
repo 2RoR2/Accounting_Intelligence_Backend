@@ -195,6 +195,12 @@ def process_document_extraction_job(document_id: str, pending_job_id: str | None
 
         if result.get("execution_status") != "EXTRACTED":
             error_msg = result.get("error") or "Extraction execution failed."
+            logger.error(
+                "Extraction result rejected for %s: status=%s error=%s",
+                document_id,
+                result.get("execution_status"),
+                str(error_msg)[:240],
+            )
             raise ExtractionExecutionError(f"Extraction execution failed: {error_msg}")
 
         try:
