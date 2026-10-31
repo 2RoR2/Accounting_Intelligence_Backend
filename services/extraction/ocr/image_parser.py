@@ -52,7 +52,10 @@ def execute_image_extraction(document_id, file_path, project_root=None):
             raise ImageExtractionError('IMAGE_OCR_DISABLED')
         if os.name != 'posix':
             raise ImageExtractionError('IMAGE_OCR_REQUIRES_LOCAL_POSIX_AI_ENV')
-        root = (Path(project_root) if project_root else Path(__file__).resolve().parents[2]).resolve()
+        # image_parser.py is <backend>/services/extraction/ocr. The trusted
+        # S3 snapshot lives under <backend>/.extraction-tmp, so the default
+        # root must be the backend root, not <backend>/services.
+        root = (Path(project_root) if project_root else Path(__file__).resolve().parents[3]).resolve()
         path = Path(file_path).resolve()
         if not path.is_relative_to(root) or not path.is_file() or path.suffix.lower() not in IMAGE_SUFFIXES:
             raise ImageExtractionError('INVALID_IMAGE_SOURCE')
