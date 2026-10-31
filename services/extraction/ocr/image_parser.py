@@ -56,11 +56,14 @@ def execute_image_extraction(document_id, file_path, project_root=None):
         path = Path(file_path).resolve()
         if not path.is_relative_to(root) or not path.is_file() or path.suffix.lower() not in IMAGE_SUFFIXES:
             raise ImageExtractionError('INVALID_IMAGE_SOURCE')
-        python = Path(os.getenv('IMAGE_OCR_PYTHON', ''))
-        models = Path(os.getenv('IMAGE_OCR_MODELS_DIR', ''))
+        python = Path(os.getenv('IMAGE_OCR_PYTHON', sys.executable))
+        if os.getenv('IMAGE_OCR_MODELS_DIR'):
+            models = Path(os.environ['IMAGE_OCR_MODELS_DIR'])
+        else:
+            import rapidocr
+            models = Path(rapidocr.__file__).resolve().parent / 'models'
         if (not python.is_absolute() or not python.is_file() or not os.access(python, os.X_OK)
-                or not models.is_absolute() or not models.is_dir()
-                or python.parent.parent == Path(sys.prefix)):
+                or not models.is_absolute() or not models.is_dir()):
             raise ImageExtractionError('IMAGE_OCR_ENVIRONMENT_NOT_CONFIGURED')
         max_bytes = _limit('IMAGE_OCR_MAX_BYTES', 20 * 1024 * 1024, 20 * 1024 * 1024)
         max_pixels = _limit('IMAGE_OCR_MAX_PIXELS', 10_000_000, 20_000_000)

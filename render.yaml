@@ -16,6 +16,8 @@ services:
         value: "true"
       - key: PYTHON_VERSION
         value: "3.12.11"
+      - key: ENABLE_IMAGE_OCR
+        value: "true"
       - key: COOKIE_SAMESITE
         value: none
       - key: JWT_SECRET
@@ -32,6 +34,8 @@ services:
         sync: false
       - key: PYTHON_VERSION
         value: "3.12.11"
+      - key: ENABLE_IMAGE_OCR
+        value: "true"
 
   - type: worker
     name: accounting-intelligence-rq-worker
