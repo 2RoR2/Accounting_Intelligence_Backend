@@ -21,23 +21,29 @@ def get_processing_job(job_id: str, request: Request):
 def processing_health(request: Request):
     user = require_workspace_user(request, {"super_admin", "local_admin"})
     redis_status = "unavailable"
+    worker_online = False
     try:
         from services.queue.config import get_queues
+        from rq import Worker
         cpu_queue, io_queue = get_queues()
         cpu_queue.connection.ping()
         io_queue.connection.ping()
         redis_status = "healthy"
+        worker_online = any(
+            any(queue.name == "cpu_tasks" for queue in worker.queues)
+            for worker in Worker.all(connection=cpu_queue.connection)
+        )
     except Exception:
         pass
     with connect() as db:
         scope = tenant_scope(user)
         pending = db.execute("SELECT count(*) AS n FROM pending_jobs WHERE status IN ('pending','processing') AND (%s IS NULL OR tenant_id=%s)", (scope, scope)).fetchone()["n"]
-    return {"status": "healthy" if redis_status == "healthy" else "degraded", "worker": redis_status == "healthy", "redis": redis_status, "pendingJobs": int(pending)}
+    return {"status": "healthy" if redis_status == "healthy" and worker_online else "degraded", "worker": worker_online, "redis": redis_status, "pendingJobs": int(pending)}
 
 def processing_workers(request: Request):
     user = require_workspace_user(request, {"super_admin", "local_admin"})
     health = processing_health(request)
-    return [{"name": "default", "queue": "processing", "status": "healthy" if health["worker"] else "unavailable", "redis": health["redis"], "tenantScope": "platform" if user["role"] == "super_admin" else "tenant"}]
+    return [{"name": "default", "queue": "cpu_tasks", "status": "healthy" if health["worker"] else "unavailable", "redis": health["redis"], "tenantScope": "platform" if user["role"] == "super_admin" else "tenant"}]
 
 def processing_metrics(request: Request):
     user = require_workspace_user(request)
