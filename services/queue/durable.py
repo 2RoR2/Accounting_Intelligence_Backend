@@ -37,6 +37,7 @@ def dispatch_due_jobs(limit: int = 50) -> int:
     if not queued:
         return 0
     cpu, _ = get_queues()
+    dispatched = 0
     for job_id, token, document_id in queued:
         try:
             # The Redis payload is intentionally opaque: only the immutable
@@ -48,17 +49,25 @@ def dispatch_due_jobs(limit: int = 50) -> int:
                 'services.queue.jobs.process_document_extraction_job',
                 args=(document_id,),
                 job_id=str(token),
-                job_timeout=PROCESSING_LEASE_SECONDS,
+                timeout=PROCESSING_LEASE_SECONDS,
                 result_ttl=3600,
                 failure_ttl=86400,
                 description='Accounting extraction ' + document_id,
             )
+            dispatched += 1
         except Exception as exc:
+            # Do not report a database lease as dispatched when Redis rejected
+            # the publish. The supervisor must be able to retry it and the log
+            # must distinguish a successful enqueue from a publish failure.
+            import logging
+            logging.getLogger(__name__).exception(
+                "Could not enqueue extraction job %s", job_id
+            )
             with connect() as db:
                 db.execute("""UPDATE pending_jobs SET status='pending', dispatch_token=NULL,
                     dispatched_at=NULL, dispatch_expires_at=NULL, last_error=%s, updated_at=now()
                     WHERE id=%s AND status='dispatched'""", (str(exc)[:2000], job_id))
-    return len(queued)
+    return dispatched
 
 
 def claim_job(job_id: str, worker_id: str, dispatch_token: str | None = None) -> str | None:
