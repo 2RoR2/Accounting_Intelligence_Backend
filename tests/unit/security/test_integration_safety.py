@@ -1,15 +1,13 @@
 """Offline integration policy/route tests; no live auth, SMTP or PostgreSQL."""
 import os
-import types
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 import main as api
 from security.authentication import ACCESS_TOKEN_SECONDS, SESSION_SECONDS
 from services.notifications import mailer
-from services.email import resend_sender
 from validation.matching.bank_matching import match_bank_transaction
 
 
@@ -57,41 +55,17 @@ class IntegrationEmailTests(unittest.TestCase):
     def send(self):
         mailer._send_code('synthetic@example.invalid', '000000', 'Synthetic test', 'test code', 'one minute')
 
-    def test_default_without_resend_key_uses_existing_smtp(self):
-        env = {'SMTP_USER': 'synthetic@example.invalid', 'SMTP_PASSWORD': 'synthetic', 'SMTP_FROM': 'synthetic@example.invalid'}
-        with patch.dict(os.environ, env, clear=True), patch.object(mailer.smtplib, 'SMTP') as smtp, patch.object(mailer, 'send_resend_email') as resend:
+    def test_explicit_brevo_sends_transactional_email(self):
+        with patch.dict(os.environ, {'EMAIL_PROVIDER': 'brevo', 'BREVO_API_KEY': 'synthetic', 'BREVO_FROM_EMAIL': 'synthetic@example.invalid'}, clear=True), patch.object(mailer, 'send_brevo_email') as brevo:
             self.send()
-        resend.assert_not_called()
-        smtp.return_value.__enter__.return_value.send_message.assert_called_once()
+        brevo.assert_called_once()
 
-    def test_default_resend_failure_falls_back_without_logging_payload(self):
-        env = {'RESEND_API_KEY': 'synthetic', 'SMTP_USER': 'synthetic@example.invalid', 'SMTP_PASSWORD': 'synthetic'}
-        with patch.dict(os.environ, env, clear=True), patch.object(mailer.smtplib, 'SMTP') as smtp, patch.object(mailer, 'send_resend_email', side_effect=RuntimeError('private provider payload')):
-            with self.assertLogs(mailer.log, level='WARNING') as logs:
-                self.send()
-        self.assertNotIn('private provider payload', str(logs.output))
-        smtp.return_value.__enter__.return_value.send_message.assert_called_once()
-
-    def test_explicit_resend_failure_does_not_silently_select_smtp(self):
-        with patch.dict(os.environ, {'EMAIL_PROVIDER': 'resend', 'RESEND_API_KEY': 'synthetic'}, clear=True), patch.object(mailer, 'send_resend_email', side_effect=RuntimeError('synthetic failure')), patch.object(mailer.smtplib, 'SMTP') as smtp:
-            with self.assertRaises(RuntimeError):
-                self.send()
-        smtp.assert_not_called()
-
-    def test_explicit_smtp_does_not_use_configured_resend(self):
-        env = {'EMAIL_PROVIDER': 'smtp', 'RESEND_API_KEY': 'synthetic', 'SMTP_USER': 'synthetic@example.invalid', 'SMTP_PASSWORD': 'synthetic'}
-        with patch.dict(os.environ, env, clear=True), patch.object(mailer.smtplib, 'SMTP'), patch.object(mailer, 'send_resend_email') as resend:
+    def test_explicit_smtp_does_not_use_brevo(self):
+        env = {'EMAIL_PROVIDER': 'smtp', 'BREVO_API_KEY': 'synthetic', 'SMTP_USER': 'synthetic@example.invalid', 'SMTP_PASSWORD': 'synthetic', 'SMTP_PORT': '465'}
+        with patch.dict(os.environ, env, clear=True), patch.object(mailer.smtplib, 'SMTP_SSL') as smtp, patch.object(mailer, 'send_brevo_email') as brevo:
             self.send()
-        resend.assert_not_called()
-
-    def test_resend_keeps_truststore_support_without_real_ssl_or_http_calls(self):
-        truststore, resend = types.ModuleType('truststore'), types.ModuleType('resend')
-        truststore.inject_into_ssl = Mock()
-        resend.Emails = Mock()
-        with patch.dict(os.environ, {'RESEND_API_KEY': 'synthetic', 'EMAIL_FROM': 'synthetic@example.invalid'}, clear=True), patch.dict('sys.modules', {'truststore': truststore, 'resend': resend}):
-            resend_sender.send_email(recipient='synthetic@example.invalid', subject='Synthetic', text='Synthetic', html='<p>Synthetic</p>')
-        truststore.inject_into_ssl.assert_called_once()
-        resend.Emails.send.assert_called_once()
+        brevo.assert_not_called()
+        smtp.return_value.__enter__.return_value.send_message.assert_called_once()
 
 
 class IntegrationBankPrecisionTests(unittest.TestCase):

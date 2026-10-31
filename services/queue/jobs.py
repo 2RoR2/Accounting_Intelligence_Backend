@@ -79,6 +79,11 @@ def resolve_document_from_database(document_id: str) -> Optional[Path]:
     if str(row["storage_path"]).startswith("s3://"):
         from database.object_storage.object_store import download
         downloaded = download(str(row["storage_path"]))
+        # S3 downloads are initially materialised by the storage adapter in
+        # the OS temporary directory.  Keep the resolver fail-closed, but
+        # move the authorised snapshot into the worker's trusted extraction
+        # root before handing it to image/OCR or Docling.  In particular, the
+        # image bridge rejects paths outside this root by design.
         extraction_root = (BACKEND_ROOT / ".extraction-tmp").resolve()
         extraction_root.mkdir(parents=True, exist_ok=True)
         suffix = Path(downloaded).suffix.lower() or ".bin"
