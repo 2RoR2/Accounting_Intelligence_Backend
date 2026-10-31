@@ -11,14 +11,6 @@ def list_processing_jobs(request: Request):
 
 def get_processing_job(job_id: str, request: Request):
     user = require_workspace_user(request)
-    # The supervisor normally performs this sweep. Run the same lease recovery
-    # opportunistically on status reads so a temporarily unavailable supervisor
-    # cannot leave an expired dispatch permanently stuck in the UI. Recovery
-    # clears only expired leases; the subsequent dispatcher creates a fresh
-    # token, so an old Redis delivery cannot claim the retry.
-    from services.queue.durable import recover_expired_jobs, dispatch_due_jobs
-    recover_expired_jobs()
-    dispatch_due_jobs(limit=50)
     with connect() as db:
         row = db.execute("SELECT * FROM pending_jobs WHERE id=%s AND tenant_id=%s", (job_id, user["tenant_id"])).fetchone()
     if not row:
