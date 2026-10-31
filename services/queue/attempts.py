@@ -164,7 +164,10 @@ def claim_delivery(delivery, rq_job_id):
         instant = now(db)
         if (job['status']!='dispatched' or str(job['dispatch_token'])!=delivery.dispatch_token
             or job['dispatch_expires_at'] is None or job['dispatch_expires_at']<=instant
-            or job['attempt_count']!=0 or job['attempt_count']>=job['max_attempts']):
+            # A recovered delivery may legitimately have prior attempts. The
+            # durable supervisor preserves that counter so retries remain
+            # bounded; only the max-attempt fence prevents another claim.
+            or job['attempt_count']>=job['max_attempts']):
             raise AttemptRejected('STALE_DELIVERY',job)
         try:
             ensure_unreviewed(db,document)
