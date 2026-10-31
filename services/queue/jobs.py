@@ -1,5 +1,7 @@
 import logging
 import os
+import shutil
+import tempfile
 import uuid
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
@@ -76,7 +78,23 @@ def resolve_document_from_database(document_id: str) -> Optional[Path]:
 
     if str(row["storage_path"]).startswith("s3://"):
         from database.object_storage.object_store import download
-        return download(str(row["storage_path"]))
+        downloaded = download(str(row["storage_path"]))
+        extraction_root = (BACKEND_ROOT / ".extraction-tmp").resolve()
+        extraction_root.mkdir(parents=True, exist_ok=True)
+        suffix = Path(downloaded).suffix.lower() or ".bin"
+        with tempfile.NamedTemporaryFile(
+            prefix="s3-source-", suffix=suffix, dir=extraction_root,
+            delete=False,
+        ) as target:
+            trusted = Path(target.name)
+        try:
+            shutil.copyfile(downloaded, trusted)
+        finally:
+            try:
+                Path(downloaded).unlink(missing_ok=True)
+            except OSError:
+                logger.warning("Could not remove temporary S3 snapshot")
+        return trusted
 
     storage_root = Path(os.getenv("DOCUMENT_STORAGE_PATH", str(BACKEND_ROOT / "storage"))).expanduser()
     if not storage_root.is_absolute():
