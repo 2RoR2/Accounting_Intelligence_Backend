@@ -66,7 +66,7 @@ services:
     name: accounting-intelligence-queue-supervisor
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: python services/queue/queue_supervisor.py
+    startCommand: python -m services.queue.queue_supervisor
     envVars:
       - key: DATABASE_URL
         sync: false
