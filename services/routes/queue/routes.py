@@ -15,7 +15,8 @@ def get_processing_job(job_id: str, request: Request):
         row = db.execute("SELECT * FROM pending_jobs WHERE id=%s AND tenant_id=%s", (job_id, user["tenant_id"])).fetchone()
     if not row:
         raise HTTPException(404, "Processing job not found.")
-    return {"id": str(row["id"]), "documentId": str(row["document_id"]), "tenantId": str(row["tenant_id"]), "status": row["status"].upper(), "attempts": row["attempt_count"], "maxAttempts": row["max_attempts"], "lastError": row["last_error"], "createdAt": str(row["created_at"]), "finishedAt": str(row["finished_at"] or "")}
+    error = row["last_error"]
+    return {"id": str(row["id"]), "documentId": str(row["document_id"]), "tenantId": str(row["tenant_id"]), "status": row["status"].upper(), "attempts": row["attempt_count"], "maxAttempts": row["max_attempts"], "lastError": error, "error": error, "createdAt": str(row["created_at"]), "finishedAt": str(row["finished_at"] or "")}
 
 def processing_health(request: Request):
     user = require_workspace_user(request, {"super_admin", "local_admin"})
