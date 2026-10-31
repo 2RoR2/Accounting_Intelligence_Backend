@@ -119,4 +119,4 @@ def persist_extraction_result(document_id: str, result: dict[str, Any], *, claim
 def mark_extraction_job_failed(document_id: str, message: str = '', *, claim=None) -> bool:
     if not isinstance(claim,attempts.Claim) or claim.delivery.document_id!=document_id:
         raise attempts.AttemptRejected('IDENTITY_REQUIRED')
-    return attempts.fail_claim(claim)
+    return attempts.fail_claim(claim, message)

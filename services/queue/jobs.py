@@ -218,7 +218,9 @@ def process_document_extraction_job(document_id: str, pending_job_id: str | None
             persistence = {"skipped": "offline test document id"}
     except Exception as exc:
         logger.error("Extraction execution failed for %s: %s", document_id, type(exc).__name__)
-        safe_error = exc if str(exc) == "Extraction attempt failed." else ExtractionExecutionError("Extraction attempt failed.")
+        # Preserve controlled extraction codes for diagnosis; redact arbitrary
+        # provider/runtime exceptions before they reach PostgreSQL or the API.
+        safe_error = exc if isinstance(exc, ExtractionExecutionError) and str(exc).startswith("Extraction execution failed:") else ExtractionExecutionError("Extraction attempt failed.")
         try:
             if not (_TEST_DOCUMENT_RESOLVER or _TEST_PARSER):
                 mark_extraction_job_failed(document_id, str(safe_error), claim=claim)

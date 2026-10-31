@@ -208,7 +208,7 @@ def complete(db, claim, document):
     audit(db,document,delivery.job_id,'extraction.succeeded')
 
 
-def fail_claim(claim):
+def fail_claim(claim, message='EXTRACTION_FAILED'):
     """Failure is fenced exactly like success, never selected by latest document job."""
     try:
         with connect() as db:
@@ -220,11 +220,12 @@ def fail_claim(claim):
                 protected = True
             terminal = 'cancelled' if protected else 'failed'
             instant = now(db)
+            safe_message = str(message or 'EXTRACTION_FAILED')[:240]
             changed = db.execute("""UPDATE pending_jobs SET status=%s,finished_at=%s,
                 last_error=%s,updated_at=%s WHERE id=%s AND document_id=%s AND tenant_id=%s
                 AND status='processing' AND dispatch_token=%s AND claim_token=%s
                 AND processing_expires_at>clock_timestamp() RETURNING id""",
-                (terminal,instant,'DOCUMENT_PROTECTED' if protected else 'EXTRACTION_FAILED',instant,
+                (terminal,instant,'DOCUMENT_PROTECTED' if protected else safe_message,instant,
                  job['id'],claim.delivery.document_id,claim.delivery.tenant_id,
                  claim.delivery.dispatch_token,claim.claim_token)).fetchone()
             if not changed:
