@@ -195,6 +195,7 @@ def process_document_extraction_job(document_id: str, pending_job_id: str | None
         result = execute_document_extraction(
             document_id=document_id,
             file_path=Path(resolved_path),
+            project_root=BACKEND_ROOT,
             parser=_TEST_PARSER,
         )
 
