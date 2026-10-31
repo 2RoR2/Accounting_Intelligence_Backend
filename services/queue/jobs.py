@@ -1,6 +1,7 @@
 import logging
 import os
 import shutil
+import sys
 import tempfile
 import uuid
 from pathlib import Path
@@ -148,6 +149,10 @@ def process_document_extraction_job(document_id: str, pending_job_id: str | None
                                     dispatch_token: str | None = None) -> Dict[str, Any]:
     """Process an extraction job using the durable queue claim flow."""
     logger.info("Executing extraction job for document: %s", document_id)
+    logger.info("Extraction image path: enabled=%s python=%s timeout=%s",
+                os.getenv("ENABLE_IMAGE_OCR", "").lower() == "true",
+                os.getenv("IMAGE_OCR_PYTHON", sys.executable),
+                os.getenv("IMAGE_OCR_TIMEOUT_SECONDS", "60"))
     from rq import get_current_job
     from services.queue import attempts
     current_job = get_current_job()
