@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 # jobs.py is stored in <backend>/services/queue; the backend root is one parent up.
 # Using parents[2] resolves to the monorepo root and makes workers reject files
 # uploaded into <backend>/storage as being outside the trusted storage root.
-BACKEND_ROOT = Path(__file__).resolve().parents[1]
+BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 
 class ExtractionJobError(RuntimeError):

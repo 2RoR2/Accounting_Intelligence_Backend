@@ -63,7 +63,7 @@ class DocumentIntelligenceService:
         self.project_root = (
             Path(project_root)
             if project_root is not None
-            else Path(__file__).resolve().parents[2]
+            else Path(__file__).resolve().parents[3]
         ).resolve()
 
         self.runs_dir = self.project_root / "runs"
