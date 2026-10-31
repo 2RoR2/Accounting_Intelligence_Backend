@@ -205,6 +205,7 @@ def process_document_extraction_job(document_id: str, pending_job_id: str | None
                 raise
             persistence = {"skipped": "offline test document id"}
     except Exception as exc:
+        logger.error("Extraction execution failed for %s: %s", document_id, type(exc).__name__)
         safe_error = exc if str(exc) == "Extraction attempt failed." else ExtractionExecutionError("Extraction attempt failed.")
         try:
             if not (_TEST_DOCUMENT_RESOLVER or _TEST_PARSER):
