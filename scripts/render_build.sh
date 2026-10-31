@@ -28,7 +28,6 @@ import rapidocr
 models = Path(rapidocr.__file__).resolve().parent / "models"
 ocr_required = [
     models / "PP-OCRv6_det_small.onnx",
-    models / "ch_ppocr_mobile_v2.0_cls_mobile.onnx",
     models / "PP-OCRv6_rec_small.onnx",
 ]
 missing_ocr = [str(p) for p in ocr_required if not p.is_file() or p.stat().st_size < 1024 * 1024]

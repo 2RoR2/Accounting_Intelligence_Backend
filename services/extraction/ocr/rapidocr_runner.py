@@ -14,8 +14,7 @@ import time
 import warnings
 
 PROTOCOL = 'image-ocr/0.1'
-WEIGHTS = {'det': 'PP-OCRv6_det_small.onnx', 'cls': 'ch_ppocr_mobile_v2.0_cls_mobile.onnx',
-           'rec': 'PP-OCRv6_rec_small.onnx'}
+WEIGHTS = {'det': 'PP-OCRv6_det_small.onnx', 'rec': 'PP-OCRv6_rec_small.onnx'}
 
 
 class InvalidImage(ValueError):
@@ -87,6 +86,7 @@ def run(args):
     params = {f'{key.title()}.model_path': str(path) for key, path in paths.items()}
     params.update({'EngineConfig.onnxruntime.use_cuda': False,
                    'EngineConfig.onnxruntime.use_dml': False,
+                   'Global.use_cls': False,
                    'EngineConfig.onnxruntime.intra_op_num_threads': 4,
                    'EngineConfig.onnxruntime.inter_op_num_threads': 1})
     engine = RapidOCR(params=params)
