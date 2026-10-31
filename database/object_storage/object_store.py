@@ -11,6 +11,7 @@ def enabled() -> bool:
 
 def _client():
     import boto3
+    from botocore.config import Config
     try:
         import certifi
         ca_bundle = os.getenv("AWS_CA_BUNDLE") or certifi.where()
@@ -24,6 +25,11 @@ def _client():
         endpoint_url=(os.getenv("S3_ENDPOINT_URL") or os.getenv("AWS_ENDPOINT_URL")
                       or os.getenv("AWS_ENDPOINT_URL_S3") or None),
         verify=verify,
+        config=Config(
+            connect_timeout=int(os.getenv("S3_CONNECT_TIMEOUT_SECONDS", "15")),
+            read_timeout=int(os.getenv("S3_READ_TIMEOUT_SECONDS", "60")),
+            retries={"max_attempts": 2, "mode": "standard"},
+        ),
     )
 
 
