@@ -39,8 +39,20 @@ def dispatch_due_jobs(limit: int = 50) -> int:
     cpu, _ = get_queues()
     for job_id, token, document_id in queued:
         try:
-            cpu.enqueue('services.queue.jobs.process_document_extraction_job', document_id, job_id, token,
-                        job_id=token, job_timeout=PROCESSING_LEASE_SECONDS)
+            # The Redis payload is intentionally opaque: only the immutable
+            # document UUID is sent. PostgreSQL plus the RQ job ID provide the
+            # authenticated delivery context. Sending pending-job/token values
+            # as positional arguments creates a second legacy contract and
+            # causes RQ_DELIVERY_MISMATCH after lease recovery or restarts.
+            cpu.enqueue_call(
+                'services.queue.jobs.process_document_extraction_job',
+                args=(document_id,),
+                job_id=str(token),
+                job_timeout=PROCESSING_LEASE_SECONDS,
+                result_ttl=3600,
+                failure_ttl=86400,
+                description='Accounting extraction ' + document_id,
+            )
         except Exception as exc:
             with connect() as db:
                 db.execute("""UPDATE pending_jobs SET status='pending', dispatch_token=NULL,
