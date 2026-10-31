@@ -14,6 +14,8 @@ services:
         sync: false
       - key: COOKIE_SECURE
         value: "true"
+      - key: PYTHON_VERSION
+        value: "3.12.11"
       - key: COOKIE_SAMESITE
         value: none
       - key: JWT_SECRET
@@ -28,6 +30,8 @@ services:
         sync: false
       - key: AWS_SECRET_ACCESS_KEY
         sync: false
+      - key: PYTHON_VERSION
+        value: "3.12.11"
 
   - type: worker
     name: accounting-intelligence-rq-worker
@@ -49,6 +53,8 @@ services:
         sync: false
       - key: AWS_SECRET_ACCESS_KEY
         sync: false
+      - key: PYTHON_VERSION
+        value: "3.12.11"
 
   - type: worker
     name: accounting-intelligence-queue-supervisor
