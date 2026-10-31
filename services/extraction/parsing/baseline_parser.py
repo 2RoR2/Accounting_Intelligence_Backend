@@ -200,7 +200,12 @@ def parse_document(
     elif os.getenv("DOCLING_MODELS_DIR"):
         models = Path(os.environ["DOCLING_MODELS_DIR"]).expanduser().resolve()
     else:
-        models = (root / "models" / "docling").resolve()
+        candidates = (
+            (root / "models" / "docling").resolve(),
+            (root / "ai" / "models" / "docling").resolve(),
+            (root.parent / "ai" / "models" / "docling").resolve(),
+        )
+        models = next((candidate for candidate in candidates if candidate.is_dir()), candidates[0])
 
     if not source.is_file():
         raise ValueError(f"PDF not found: {source}")
