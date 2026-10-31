@@ -251,7 +251,10 @@ def publish(delivery):
             # claims the exact dispatched pending_jobs row from PostgreSQL.
             args=(delivery.document_id,),
             job_id=delivery.dispatch_token,timeout=PROCESSING_SECONDS,ttl=DISPATCH_SECONDS,
-            result_ttl=0,failure_ttl=0,description='Accounting extraction '+delivery.job_id)
+            # Keep only RQ metadata long enough for registry cleanup. The job
+            # return value never contains extraction data; PostgreSQL remains
+            # the source of truth for results and failures.
+            result_ttl=3600,failure_ttl=86400,description='Accounting extraction '+delivery.job_id)
     except Exception:
         # Redis may have accepted the message before raising. Fence it by
         # closing ONLY an unclaimed matching reservation; never alter a claim.
