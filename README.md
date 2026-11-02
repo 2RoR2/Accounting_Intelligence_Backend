@@ -480,3 +480,39 @@ Live verification should confirm a real authenticated upload, PostgreSQL documen
 - Measure processing time across a representative sample, not only one 16.04-second run.
 - Measure manual-work reduction using a defined baseline and participant protocol.
 - Publish reproducible accuracy, reliability, and security reports with dataset version, model version, and test date.
+
+## v3.1+ extraction and review integration
+
+The extraction runner now shares deterministic stages between the plain runner and
+an optional LangGraph workflow. Install `requirements-langgraph.txt` in a separate
+runtime to include the tested `langgraph==1.2.19`; `requirements.txt` remains the
+plain-runner installation. Set `ENABLE_EXTRACTION_GRAPH=true` only in an approved
+runtime to select the graph. If LangGraph is unavailable, execution records its
+fallback to the plain runner. Docling/RapidOCR remain the primary extraction path;
+the separate image subprocess still requires its own `IMAGE_OCR_PYTHON` and is not
+needed for normal Docling OCR.
+
+Qwen recovery defaults to off. `QWEN_RECOVERY_MODE` accepts `off`, `manual`, `auto`
+or `both`; the legacy `ENABLE_QWEN_RECOVERY=true` selects both when no explicit
+valid mode is set. `OLLAMA_HOST`, `OLLAMA_MODEL` and `OLLAMA_TIMEOUT_SECONDS`
+configure an already installed local model. The optional `scripts/qwen_runtime.sh`
+helper manages a loopback Ollama process only when explicitly invoked. Model
+weights, uploaded documents, source-bound run artifacts and runtime configuration
+must remain outside Git. Model candidates do not replace original predictions;
+acceptance goes through the existing correction, audit and approval workflow.
+
+The frontend integration uses the existing route registry plus document AI Assist,
+validation-review and bank-import confirm/discard endpoints. Bank imports accept
+both the existing JSON body and the Money screen's multipart CSV form. Discarded
+previews use the existing database `reverted` state, while the discard API returns
+`discarded`. This integration changes no SQL schema or migration and does not
+apply migrations or modify shared databases. NOT_APPLICABLE validation results
+continue to use the existing warning/sentinel representation.
+
+Validation v3.1 policy changes require Aina's review; schema and record decisions
+remain with Aleeya, runtime integration with Rachel, and the review UI with
+Angeline. In particular, bill amount due, receipt arithmetic, tax review and
+outlier-history scope are review decisions, not established production policy.
+The paired pull request records fresh offline checks and remaining wider-suite
+failures. Offline SQLite/mocks cannot establish PostgreSQL trigger/locking
+behaviour, hosted service compatibility or fresh extraction accuracy.

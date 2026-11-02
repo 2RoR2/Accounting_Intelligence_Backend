@@ -181,10 +181,13 @@ def execute_document_extraction(
     verbose: bool = False,
     allow_vlm_inference: bool = False,
     models_dir: Optional[Path] = None,
+    source_access_authorized: bool = False,
 ) -> Dict[str, Any]:
     """Execute extraction and strict public-result publication for one trusted document.
 
     Returns minimal execution metadata referencing the locally retained artifact.
+    source_access_authorized must come from the trusted resolver that supplied file_path.
+    Without it, a model is never given the page, whatever allow_vlm_inference says.
     """
     if not isinstance(document_id, str) or not document_id.strip():
         return {
@@ -280,6 +283,8 @@ def execute_document_extraction(
                 allow_vlm_inference=allow_vlm_inference,
                 models_dir=models_dir,
                 source_metadata=source_metadata,
+                source_path=path,
+                source_access_authorized=source_access_authorized,
             )
     except Exception as exc:
         return {

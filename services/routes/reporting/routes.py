@@ -48,10 +48,24 @@ def get_backup(backup_id: str, request: Request):
     if not row: raise HTTPException(404, "Backup run not found.")
     return {"id": str(row["id"]), "backupType": row["backup_type"], "status": row["status"], "requestedAt": str(row["created_at"]), "startedAt": str(row["started_at"]) if row["started_at"] else None, "finishedAt": str(row["completed_at"]) if row["completed_at"] else None, "error": row["error_message"]}
 
+def _export_rows(db, tenant_id, resource):
+    """Return (headers, value rows). connect() yields dict rows, so select values by column."""
+    if resource == "records":
+        headers = ["record_code", "category", "supplier_name", "buyer_name", "invoice_number", "reference_number", "currency", "total_amount", "validation_status"]
+        rows = db.execute("SELECT record_code,category,supplier_name,buyer_name,invoice_number,reference_number,currency,total_amount,validation_status FROM standardised_records WHERE tenant_id=%s AND is_current ORDER BY created_at DESC", (tenant_id,)).fetchall()
+    elif resource == "documents":
+        headers = ["document_code", "kind", "original_filename", "status"]
+        rows = db.execute("SELECT document_code,kind,original_filename,status FROM documents WHERE tenant_id=%s ORDER BY uploaded_at DESC", (tenant_id,)).fetchall()
+    else:
+        headers = ["type", "severity", "status", "message"]
+        rows = db.execute("SELECT type,severity,status,message FROM exceptions WHERE tenant_id=%s ORDER BY created_at DESC", (tenant_id,)).fetchall()
+    return headers, [[row[header] for header in headers] for row in rows]
+
 def create_export(data: ExportInput, request: Request):
     user = require_workspace_user(request)
     with connect() as db:
-        row = db.execute("INSERT INTO export_history(tenant_id,requested_by,resource,filters,format,status,completed_at) VALUES (%s,%s,%s,%s,%s,'completed',now()) RETURNING *", (user["tenant_id"], user["id"], data.resource, data.filters, data.format)).fetchone()
+        _, values = _export_rows(db, user["tenant_id"], data.resource)
+        row = db.execute("INSERT INTO export_history(tenant_id,requested_by,resource,filters,format,row_count,status,completed_at) VALUES (%s,%s,%s,%s,%s,%s,'completed',now()) RETURNING *", (user["tenant_id"], user["id"], data.resource, Jsonb(data.filters), data.format, len(values))).fetchone()
     return {"id": str(row["id"]), "resource": row["resource"], "format": row["format"], "status": row["status"], "rowCount": row["row_count"], "createdAt": str(row["created_at"])}
 
 def list_exports(request: Request):
@@ -70,20 +84,12 @@ def download_export(export_id: str, request: Request):
         export = db.execute("SELECT * FROM export_history WHERE id=%s AND tenant_id=%s AND status='completed'", (export_id, user["tenant_id"])).fetchone()
         if not export:
             raise HTTPException(404, "Export not found.")
-        if export["resource"] == "records":
-            rows = db.execute("SELECT record_code,category,supplier_name,buyer_name,invoice_number,currency,total_amount,validation_status FROM standardised_records WHERE tenant_id=%s AND is_current ORDER BY created_at DESC", (user["tenant_id"],)).fetchall()
-            headers = ["record_code", "category", "supplier_name", "buyer_name", "invoice_number", "currency", "total_amount", "validation_status"]
-        elif export["resource"] == "documents":
-            rows = db.execute("SELECT document_code,kind,original_filename,status FROM documents WHERE tenant_id=%s ORDER BY uploaded_at DESC", (user["tenant_id"],)).fetchall()
-            headers = ["document_code", "kind", "original_filename", "status"]
-        else:
-            rows = db.execute("SELECT type,severity,status,message FROM exceptions WHERE tenant_id=%s ORDER BY created_at DESC", (user["tenant_id"],)).fetchall()
-            headers = ["type", "severity", "status", "message"]
+        headers, values = _export_rows(db, user["tenant_id"], export["resource"])
     import csv
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(headers)
-    writer.writerows([list(row) for row in rows])
+    writer.writerows(values)
     return StreamingResponse(iter([output.getvalue()]), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="export-{export_id}.csv"'})
 
 def export_records_xlsx(request: Request):
@@ -91,14 +97,14 @@ def export_records_xlsx(request: Request):
     try:
         from openpyxl import Workbook
         with connect() as db:
-            rows = db.execute("""SELECT sr.record_code,sr.category,sr.supplier_name,sr.buyer_name,sr.invoice_number,sr.invoice_date,sr.due_date,sr.currency,sr.total_amount,sr.validation_status
+            rows = db.execute("""SELECT sr.record_code,sr.category,sr.supplier_name,sr.buyer_name,COALESCE(sr.invoice_number,sr.reference_number) AS reference,sr.invoice_date,sr.due_date,sr.currency,sr.total_amount,sr.validation_status
                 FROM standardised_records sr
                 WHERE sr.tenant_id=%s AND sr.is_current
                 ORDER BY sr.created_at DESC""", (user["tenant_id"],)).fetchall()
             workbook = Workbook(); sheet = workbook.active; sheet.title = "Approved records"
             headers = ["Record ID","Category","Supplier","Customer","Invoice/Reference","Issue date","Due date","Currency","Total","Validation"]
             sheet.append(headers)
-            for row in rows: sheet.append(list(row))
+            for row in rows: sheet.append(list(row.values()))
             output = io.BytesIO(); workbook.save(output); output.seek(0)
             db.execute("INSERT INTO export_history(tenant_id,requested_by,resource,format,row_count,status,completed_at) VALUES (%s,%s,'records','xlsx',%s,'completed',now())", (user["tenant_id"], user["id"], len(rows)))
     except Exception:

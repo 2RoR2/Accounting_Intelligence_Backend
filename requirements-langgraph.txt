@@ -1,0 +1,3 @@
+# Optional graph orchestration; the plain runner remains the default.
+-r requirements.txt
+langgraph==1.2.19

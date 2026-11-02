@@ -1,6 +1,7 @@
 """Phase 3D API/SQL contracts using synthetic SQLite data; not PostgreSQL lock proof."""
 from concurrent.futures import ThreadPoolExecutor
 from threading import RLock
+import sys
 import unittest
 from unittest.mock import patch, Mock
 from uuid import uuid4
@@ -98,8 +99,15 @@ class Phase3DMutationTests(unittest.TestCase):
                         patch.object(api,'session_user',side_effect=lambda db,request: self.user),
                         patch.object(api,'check_schema_compatibility',side_effect=AssertionError('No startup SQL'))):
             patcher.start(); self.addCleanup(patcher.stop)
+        # Routes moved out of main.py and bind these names per module, so patching main alone never reaches them.
+        for name,module in list(sys.modules.items()):
+            if not name.startswith('services.routes.'): continue
+            for attribute,kwargs in (('connect',{'return_value':self.database}),('session_user',{'side_effect':lambda db,request: self.user})):
+                if hasattr(module,attribute):
+                    patcher=patch.object(module,attribute,**kwargs); patcher.start(); self.addCleanup(patcher.stop)
         self.client=TestClient(api.app,raise_server_exceptions=False,headers={'X-Requested-With':'AccountingIntelligence'})
         self.addCleanup(self.client.close)
+        self.claim=contract.Claim(contract.Delivery(DOCUMENT,JOB,TENANT,contract.DISPATCH_TOKEN),contract.CLAIM_TOKEN)
         self.persist()
         self.line=self.database.execute('SELECT id FROM line_items').fetchone()['id']
 

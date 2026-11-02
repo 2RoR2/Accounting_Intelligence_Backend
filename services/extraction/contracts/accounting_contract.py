@@ -6,7 +6,7 @@ import re
 from uuid import UUID
 from services.extraction.contracts.field_catalog import CANONICAL_FIELD_TYPES, CANONICAL_DOCUMENT_FIELDS
 
-VERSION = 'accounting-fields/1.2'
+VERSION = 'accounting-fields/1.3'
 FIELD_KEYS = {
 
     **{key: key for key in CANONICAL_FIELD_TYPES},
@@ -130,7 +130,9 @@ def _cell(cell, key, *, numeric=None):
     if candidate is not None:
         if not isinstance(candidate, str) or not candidate.strip():
             raise ValueError('AI candidates require nonempty strings or null.')
-        candidates.append({'source': 'ai', 'value': candidate, 'auto_accepted': False})
+        details = cell.get('ai_candidate_details')
+        candidates.append({'source': 'ai', 'value': candidate, 'auto_accepted': False,
+                           **(details if isinstance(details, dict) else {})})
     resolution = cell.get('resolution')
     if resolution in {'parser_resolved', 'parser_preserved'}:
         resolution = 'parser_preserved'
@@ -191,7 +193,10 @@ def map_m2_result(result, document_id):
         if mapped_source_key not in FIELD_KEYS:
             raise ValueError('Unsupported extracted field: ' + source_key)
 
-        if (mapped_source_key in CANONICAL_FIELD_TYPES
+        # The canonical vocabulary only defines invoice, bill and receipt. Other kinds
+        # keep their evidence and reach review as EX-002 instead of failing the job.
+        if (source_kind in {'invoice', 'bill', 'receipt'}
+                and mapped_source_key in CANONICAL_FIELD_TYPES
                 and mapped_source_key != 'tax_amount'
                 and source_kind not in CANONICAL_DOCUMENT_FIELDS[mapped_source_key]):
             raise ValueError(
@@ -199,10 +204,16 @@ def map_m2_result(result, document_id):
             )
 
         key = FIELD_KEYS[mapped_source_key]
+        stored = _cell(cell, key)
         if key in fields:
-            raise ValueError('Conflicting aliases for field: ' + key)
-
-        fields[key] = _cell(cell, key)
+            # Several source names share one stored key on credit and debit notes. An empty
+            # one says nothing, so it must not fail the job; two real values still conflict.
+            has_content = lambda row: row['normalized_value'] is not None or bool(row['candidates']) or bool(row['evidence'])
+            if has_content(fields[key]) and has_content(stored):
+                raise ValueError('Conflicting aliases for field: ' + key)
+            if has_content(fields[key]):
+                continue
+        fields[key] = stored
     lines = []
     names = {'description': 'description', 'quantity': 'quantity', 'unit_price': 'unit_price', 'line_total': 'amount'}
     for number, row in enumerate(result['line_items'], 1):
@@ -311,7 +322,12 @@ def approved_snapshot(document, extraction, fields, items):
             raise ValueError('Unknown or conflicting document classification requires review.')
     values = record_values(fields)
     lines = [line_dto(row) for row in items]
-    if not lines or any(row[name] is None for row in lines for name in ('description', 'quantity', 'unit_price', 'amount')):
+    # Bills and receipts often print only an item total, so quantity and price stay empty there and are never invented.
+    itemized_kinds = {'bill', 'receipt'}
+    required_cells = ('description', 'amount') if document['kind'] in itemized_kinds else ('description', 'quantity', 'unit_price', 'amount')
+    # Zero lines is right only when the source prints no item rows. Visible rows that were not read still block.
+    no_rows_printed = document['kind'] in itemized_kinds and (raw.get('item_structure') or {}).get('status') == 'not_itemized'
+    if (not lines and not no_rows_printed) or any(row[name] is None for row in lines for name in required_cells):
         raise ValueError('Line items must be resolved or corrected before standardisation.')
     return json_safe({'schemaVersion': VERSION, 'contentRevision': document['content_revision'],
                       'documentKind': document['kind'], 'category': document['category'],

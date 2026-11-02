@@ -14,19 +14,52 @@ ALIASES = {
                 'doc no': 'invoice_number', 'doc no.': 'invoice_number', 'document no.': 'invoice_number',
                 'billing address': 'buyer_name', 'bill to': 'buyer_name',
                 'sub total': 'subtotal', 'total payable': 'total_amount', 'tax amt': 'tax_amount',
-                'total amount due': 'amount_due'},
+                'total amount due': 'amount_due', 'dateof issue': 'invoice_date',
+                'net amount': 'total_excluding_tax', 'net total': 'total_excluding_tax',
+                'total before tax': 'total_excluding_tax', 'vat': 'tax_amount', 'gst': 'tax_amount',
+                'vat amount': 'tax_amount', 'gst amount': 'tax_amount', 'amount payable': 'amount_due',
+                'total due': 'amount_due', 'balance due': 'amount_due', 'invoice amount': 'total_amount',
+                'final total': 'total_amount', 'sub total (excluding gst)': 'subtotal',
+                'sub total (excluding sst)': 'subtotal', 'sub total (excluding tax)': 'subtotal',
+                'document no': 'invoice_number', 'rounded total': 'total_amount', 'rounding adjustment': 'rounding_amount',
+                'rounding adj': 'rounding_amount', 'rounding': 'rounding_amount', 'service charge': 'document_charges',
+                'service chg': 'document_charges', 'svc charge': 'document_charges'},
     'receipt': {'receipt no': 'receipt_number', 'receipt no.': 'receipt_number',
                 'no resit': 'receipt_number', 'no. struk': 'receipt_number',
                 'tarikh': 'transaction_date', 'tanggal': 'transaction_date',
                 'grand total': 'total_amount', 'jumlah': 'total_amount',
                 'sub total': 'subtotal', 'sst': 'tax_amount', 'pajak': 'tax_amount', 'tax inclusive': 'tax_amount',
-                'doc no': 'receipt_number', 'doc no.': 'receipt_number', 'total sales': 'total_amount'},
+                'doc no': 'receipt_number', 'doc no.': 'receipt_number', 'total sales': 'total_amount',
+                'receipt total': 'total_amount', 'vat': 'tax_amount', 'gst': 'tax_amount',
+                'sub-total (ex)': 'subtotal', 'sub total (ex)': 'subtotal', 'total tax': 'tax_amount',
+                'document no': 'receipt_number', 'document no.': 'receipt_number', 'rounded total': 'total_amount',
+                'rounding adjustment': 'rounding_amount', 'rounding adj': 'rounding_amount', 'rounding': 'rounding_amount',
+                'service charge': 'document_charges', 'service chg': 'document_charges', 'svc charge': 'document_charges',
+                'paid amount': 'tendered_amount', 'cash tendered': 'tendered_amount', 'change': 'change_given'},
     'bill': {'bill no': 'bill_reference', 'no bil': 'bill_reference',
              'no akaun': 'account_number', 'tarikh bil': 'bill_date',
              'tarikh akhir': 'due_date', 'jumlah perlu dibayar': 'amount_due',
              'total a pagar': 'amount_due', 'valor total': 'total_amount', 'total': 'total_amount',
-             'data': 'bill_date', 'total iva': 'tax_amount'},
+             'data': 'bill_date', 'total iva': 'tax_amount', 'vat': 'tax_amount', 'gst': 'tax_amount',
+             'amount payable': 'amount_due', 'total due': 'amount_due', 'balance due': 'amount_due'},
 }
+
+
+# A printed timestamp's clock part, as POS systems print it: "10:22:56 AM", "4:40:40 PM", "17:09".
+TIME_SUFFIX = r'(?:\s+\d{1,2}:\d{2}(?::\d{2})?(?:\s*[AaPp]\.?\s*[Mm]\.?)?)?'
+TIME_TEXT = r'(\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s*([AaPp])\.?\s*[Mm]\.?)?'
+
+
+def clock_time(hour, minute, second=None, meridiem=None):
+    """24-hour HH:MM or HH:MM:SS, or None if these parts are not a real clock time."""
+    hours, minutes, seconds = int(hour), int(minute), int(second or 0)
+    if meridiem:
+        if not 1 <= hours <= 12:
+            return None
+        hours = hours % 12 + (12 if meridiem.lower() == 'p' else 0)
+    if hours > 23 or minutes > 59 or seconds > 59:
+        return None
+    return f'{hours:02d}:{minutes:02d}' + (f':{seconds:02d}' if second else '')
 
 
 def records(document):
@@ -48,7 +81,14 @@ def normalized_date(raw):
     value = raw.strip()
     if re.fullmatch(r'\d{4}-\d{2}-\d{2}', value):
         return date.fromisoformat(value).isoformat()
-    match = re.fullmatch(r'(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4})(?:\s+\d{2}:\d{2}(?::\d{2})?)?', value)
+    # "20-11-17": 20 cannot be a month, so this reads day-month-year, in this century. A pair that could be swapped stays unresolved.
+    short = re.fullmatch(r'(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2})' + TIME_SUFFIX, value)
+    if short:
+        day, month, year = map(int, short.groups())
+        if day <= 12:
+            raise ValueError('Ambiguous day/month order')
+        return date(2000 + year, month, day).isoformat()
+    match = re.fullmatch(r'(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4})' + TIME_SUFFIX, value)
     if not match:
         raise ValueError('Unrecognised date')
     first, second, year = map(int, match.groups())
@@ -85,17 +125,63 @@ def verified_spacing(original, readings):
 
 
 def normalized_amount(raw, currency):
-    text = raw.strip()
-    text = re.sub(r'^(?:RM|MYR|Rp\.?|IDR|EUR|€)\s*|\s*(?:MYR|IDR|EUR|Euros?|€)$', '', text, flags=re.I).strip()
-    if currency == 'EUR' and re.fullmatch(r'-?(?:\d+|\d{1,3}(?:[. ]\d{3})+),\d{2}', text):
+    text = raw.strip().replace('\u00a0', ' ')
+    text = re.sub(r'^(?:RM|MYR|Rp\.?|IDR|EUR|USD|SGD|GBP|INR|US\$|S\$|\$|€|£|₹)\s*'
+                  r'|\s*(?:MYR|IDR|EUR|Euros?|USD|SGD|GBP|INR|US\$|S\$|\$|€|£|₹)$', '', text, flags=re.I).strip()
+    # Two digits after the last comma cannot be a thousands group, whatever the
+    # currency: 725,37 and 1.234,56 are decimal commas. 1,234 stays a grouping.
+    if re.fullmatch(r'-?(?:\d+|\d{1,3}(?:[. ]\d{3})+),\d{2}', text):
         text = text.replace('.', '').replace(' ', '').replace(',', '.')
-    elif currency == 'IDR' and re.fullmatch(r'-?\d{1,3}(?:\.\d{3})+(?:,\d{2})?', text):
-        text = text.replace('.', '').replace(',', '.')
-    elif re.fullmatch(r'-?\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?', text):
-        text = text.replace(',', '')
+    elif currency == 'IDR' and re.fullmatch(r'-?\d{1,3}(?:\.\d{3})+', text):
+        text = text.replace('.', '')
+    elif re.fullmatch(r'-?\d{1,3}(?:[, ]\d{3})+(?:\.\d{1,2})?', text):
+        text = text.replace(',', '').replace(' ', '')
     if not re.fullmatch(r'-?\d+(?:\.\d{1,2})?', text):
         raise ValueError('Ambiguous amount')
     return text
+
+
+# "GST 002132546123" and "VAT 12345678" are registration numbers, not tax amounts.
+SHORT_TAX_LABELS = {'vat', 'gst'}
+
+
+def printed_decimal(value):
+    return re.search(r'\d[.,]\d{2}(?:\s*\S{1,3})?$', value.strip()) is not None
+
+
+_MONEY = r'-?\d[\d., \u00a0]*\d|\d'
+_CODES = '|'.join(sorted(set(CURRENCY_MINOR_UNITS) - {'MYR', 'IDR', 'EUR'}))
+# Non-dollar symbols identify one currency. S$/US$ are printed explicitly.
+_SYMBOLS = {'€': 'EUR', '£': 'GBP', '₹': 'INR'}
+_DOLLAR_CODES = {'S$': 'SGD', 'US$': 'USD'}
+_BARE_DOLLAR = re.compile(r'^\s*\(?\$\)?\s*$|(?<![A-Za-z$])\$\s*(?:' + _MONEY + r')\s*$|^\s*(?:' + _MONEY + r')\s*\$\s*$')
+
+
+def explicit_currencies(text):
+    """Codes a line explicitly prints. Never a guess from `$`, a country or address.
+
+    A symbol or ISO code must stand alone or qualify an amount. `36€30` is an OCR
+    misread of a decimal comma, so a symbol between digits is not currency evidence.
+    """
+    codes = set()
+    for token, code in ((r'\b(?:MYR|RM)\b', 'MYR'), (r'\b(?:IDR|Rp)\b', 'IDR'), (r'\b(?:EUR|Euros?)\b', 'EUR')):
+        if re.search(token, text):
+            codes.add(code)
+    for symbol, code in _SYMBOLS.items():
+        if symbol in re.sub(r'\d\s*' + symbol + r'\s*\d', '', text):
+            codes.add(code)
+    for symbol, code in _DOLLAR_CODES.items():
+        if re.search(r'(?<![A-Za-z])' + re.escape(symbol) + r'\s*\d', text):
+            codes.add(code)
+    # Other ISO codes appear in ordinary words and references, so require them
+    # to qualify an amount, stand alone, or be a bracketed column qualifier.
+    for match in re.finditer(r'(?<![A-Za-z0-9])(' + _CODES + r')(?![A-Za-z0-9])', text):
+        before, after = text[:match.start()], text[match.end():]
+        if (re.match(r'\s*(?:' + _MONEY + r')\s*$', after) or re.search(r'(?:' + _MONEY + r')\s*$', before)
+                or not (before + after).strip()
+                or (before.endswith('(') and after.startswith(')'))):
+            codes.add(match[1])
+    return codes
 
 
 def recover_headers(document, kind, labels, found, location):
@@ -104,7 +190,8 @@ def recover_headers(document, kind, labels, found, location):
     items = records(document)
     labels = {**labels, **ALIASES.get(kind, {})}
     money_keys = {'subtotal', 'tax_amount', 'total_amount', 'amount_due', 'discount', 'document_charges', 'amount_paid',
-                  'total_excluding_tax', 'total_including_tax'}
+                  'total_excluding_tax', 'total_including_tax', 'document_allowances', 'prepaid_amount', 'rounding_amount',
+                  'tendered_amount', 'change_given'}
     party_keys = {'supplier_name', 'buyer_name'} if kind == 'invoice' else set()
     party_details = {'supplier_address', 'customer_address', 'supplier_tax_id', 'customer_tax_id'}
     party_roles = r'(?:seller|supplier|vendor|client|customer|buyer|bill\s+to|billing\s+address)'
@@ -120,9 +207,11 @@ def recover_headers(document, kind, labels, found, location):
                 or re.search(r'(?im)^\s*(?:\d|tel\b|fax\b|phone\b|tax\s*id\b|gstin\b|iban\b|address\b)', value)):
             return False
         if key in {'invoice_date','bill_date','transaction_date','due_date'}:
-            return bool(re.fullmatch(r'(?:\d{4}-\d{2}-\d{2}|\d{1,2}[/.-]\d{1,2}[/.-]\d{4})(?:\s+\d{2}:\d{2}(?::\d{2})?)?',value.strip()))
+            return bool(re.fullmatch(r'(?:\d{4}-\d{2}-\d{2}|\d{1,2}[/.-]\d{1,2}[/.-]\d{4})' + TIME_SUFFIX, value.strip().lstrip(':：').strip()))
         if key == 'transaction_time':
             return bool(re.fullmatch(r'\d{2}:\d{2}(?::\d{2})?',value.strip()))
+        if key in {'buyer_name', 'customer_name'} and re.fullmatch(r'(?:none|nil|n\s*/?\s*a|-+)', value.strip(), re.I):
+            return False
         if key == 'buyer_name' and (re.fullmatch(r'(?:account|account number|account no\.?|delivery address|billing address)', value.strip(), re.I)
                                    or re.match(r'^\d|^(?:tel|fax|phone|attn)\b', value.strip(), re.I)):
             return False
@@ -195,7 +284,7 @@ def recover_headers(document, kind, labels, found, location):
 
     def tax_header(item):
         text = item.get('text','').strip().casefold()
-        if text not in {'total','iva','tax','base','liquido','líquido'}:
+        if text not in {'total','iva','tax','vat','gst','base','liquido','líquido'}:
             return False
         here = evidence(item)
         if len(here)!=1 or not here[0].get('bbox'):
@@ -365,7 +454,8 @@ def recover_headers(document, kind, labels, found, location):
                 continue
             if key in money_keys and item_header(item):
                 continue
-            pattern = re.escape(label).replace(r'\ ', r'\s+')
+            # OCR can drop the gap between label words ("DocumentNo.:"). The whole line must still match.
+            pattern = re.escape(label).replace(r'\ ', r'\s*')
             pattern += r'(?:\s*\((?:MYR|RM|EUR|IDR|USD|SGD|GBP)\))?'
             standalone = re.fullmatch(pattern + r'\s*[:：#]?', text, re.I)
             match = None if standalone else re.fullmatch(pattern + r'\s*(?:[:：#]\s*|\s+)(\S[\s\S]*)', text, re.I)
@@ -373,7 +463,7 @@ def recover_headers(document, kind, labels, found, location):
                 value = match[1].strip()
                 if key in {'invoice_date', 'bill_date', 'transaction_date', 'due_date'}:
                     value = re.split(r'\s+(?:hora|time)\s*[:：]', value, flags=re.I)[0].strip()
-                if not plausible(key, value):
+                if not plausible(key, value) or (label in SHORT_TAX_LABELS and not printed_decimal(value)):
                     continue
                 add(key, text, value, [item])
                 break
@@ -397,6 +487,8 @@ def recover_headers(document, kind, labels, found, location):
             right, underneath = [], []
             for other in items:
                 if other is item or not other.get('text', '').strip() or not plausible(key, other['text']):
+                    continue
+                if label in SHORT_TAX_LABELS and not printed_decimal(other['text']):
                     continue
                 there = evidence(other)
                 if len(there) != 1 or there[0].get('page') != page or not there[0].get('bbox'):
@@ -428,6 +520,8 @@ def recover_headers(document, kind, labels, found, location):
             neighbours = right + underneath if key in party_keys else (underneath if key == 'buyer_name' else right or underneath)
             for other in neighbours:
                 value, sources = other['text'].strip(), [item, other]
+                if key.endswith('_date'):
+                    value = value.lstrip(':：').strip()  # A separately boxed label colon.
                 if key in party_keys:
                     # Retained lines can split a legal suffix from a multiline name.
                     # Extend only explicit suffixes, never an arbitrary address/name.
@@ -542,15 +636,20 @@ def recover_headers(document, kind, labels, found, location):
                     if tax_identifier(value):
                         add(side+'_tax_id', '\n'.join(s['text'] for s in sources), value, [role]+sources)
 
-    if not found.get('currency'):
-        currency_rows = []
-        for item in items:
-            text = item.get('text', '')
-            for token, code in [(r'\b(?:MYR|RM)\b', 'MYR'), (r'\b(?:IDR|Rp)\b', 'IDR'), (r'\b(?:EUR|Euros?)\b|€', 'EUR')]:
-                if re.search(token, text):
-                    currency_rows.append((code, item))
-        for code, item in currency_rows:
+    # Every explicit code counts: a second printed currency must surface as a conflict,
+    # not be hidden because a first one was already found.
+    known = {c['value'] for c in found.get('currency', []) if c.get('value')}
+    currency_rows = [(code, item) for item in items for code in sorted(explicit_currencies(item.get('text', '')))]
+    for code, item in currency_rows:
+        if not known or code not in known:
             add('currency', item['text'], code, [item])
+    if not found.get('currency'):
+        if not currency_rows:
+            # `$` alone names no currency. Keep its exact source text as a null
+            # candidate so review can see why the field is unresolved.
+            for item in items:
+                if _BARE_DOLLAR.search(item.get('text', '')):
+                    add('currency', item['text'], None, [item])
 
     date_key = {
         'invoice': 'invoice_date',
@@ -558,7 +657,8 @@ def recover_headers(document, kind, labels, found, location):
         'receipt': 'transaction_date'
     }.get(kind)
 
-    if date_key and not found.get(date_key):
+    # An empty "Date:" label carries no value, so it must not stop this search.
+    if date_key and not any(c.get('value') for c in found.get(date_key, [])):
         for item in items:
             text = item.get('text', '').strip()
 
@@ -576,7 +676,7 @@ def recover_headers(document, kind, labels, found, location):
                 text
             )
             bare = re.fullmatch(
-                r'\d{1,2}[/.-]\d{1,2}[/.-]\d{4}(?:\s+\d{2}:\d{2}(?::\d{2})?)?',
+                r'\d{1,2}[/.-]\d{1,2}[/.-]\d{4}' + TIME_SUFFIX,
                 text
             )
 
@@ -587,11 +687,48 @@ def recover_headers(document, kind, labels, found, location):
                     pass
 
     supplier_key = {'invoice': 'supplier_name', 'bill': 'issuer', 'receipt': 'merchant'}.get(kind)
+    positioned_receipt = [(item, party_position(item)) for item in items]
+    positioned_receipt = [(item, ev) for item, ev in positioned_receipt if ev]
+    other_roles = r'customer|buyer|bill\s+to|ship\s+to|delivery|shipping|payment|bank'
+    metadata = r'^(?:tel|phone|fax|email|gst|sst|roc|reg(?:istration)?|cashier|date|tarikh|table|receipt|invoice|bill|transaction|qty|quantity|item|description|total|grand total|net total|' + other_roles + r')\b'
+    # The legal name printed after this phrase is a former one, not the merchant.
+    former_labels = [ev for item, ev in positioned_receipt
+                     if re.fullmatch(r'(?:formerly|previously)(?:\s+known\s+as)?\s*:?', item.get('text', '').strip(), re.I)]
+
+    def former_name(ev):
+        box, h = ev['bbox'], ev['bbox']['b'] - ev['bbox']['t']
+        # OCR rectangles of adjacent lines overlap by a few pixels.
+        return any(label['page'] == ev['page'] and -h * .5 <= box['t'] - label['bbox']['b'] <= h * 1.5 for label in former_labels)
+
+    def letterhead_address(names, key):
+        """Address lines printed directly under a letterhead name. The first non-address line ends it."""
+        for name, ne, _ in names:
+            nb=ne['bbox']; h=nb['b']-nb['t']; bottom=nb['b']; address=[]
+            header = sorted([(item,ev) for item,ev in positioned_receipt if ev['page']==ne['page']
+                and item is not name and ev['bbox']['t']>=nb['b']-h*.25
+                and abs((ev['bbox']['l']+ev['bbox']['r']-nb['l']-nb['r'])/2)<=max((nb['r']-nb['l'])*.4,h*2)],
+                key=lambda pair:pair[1]['bbox']['t'])
+            for item,ev in header:
+                text=item.get('text','').strip();box=ev['bbox']
+                if box['t']-bottom>h*1.8 or box['t']>nb['b']+h*8:break
+                # A company registration line, which can nest two numbers: (201601010552(1181482-M)).
+                if re.fullmatch(r'\(?[0-9][A-Za-z0-9()-]*\)?',text) and not address:
+                    bottom=box['b'];continue
+                # A registration number, former name or licensee note can sit between name and address.
+                if not address and (re.match(r'^(?:roc|co\.?\s*(?:no|reg)|company\s+(?:no|reg)|reg(?:istration)?\s*no)\b',text,re.I)
+                                    or re.fullmatch(r'(?:formerly|previously)(?:\s+known\s+as)?\s*:?',text,re.I)
+                                    or former_name(ev) or re.match(r'^licensee\s+of\b',text,re.I)):
+                    bottom=box['b'];continue
+                if re.match(metadata,text,re.I) or (':' in text and not re.match(r'^no\s*:',text,re.I)):break
+                if address and re.match(r'^\d{2,}[-/][A-Za-z]',text):break # branch reference, not a street continuation
+                if not address and not re.match(r'^(?:\d|no\.?\s|no\s*:|lot\b|level\s*\d|jalan\b|unit\b)',text,re.I):break
+                if not re.search(r'[A-Za-z]',text):break
+                address.append(item);bottom=max(bottom,box['b'])
+            if address:
+                raw='\n'.join(item['text'].strip() for item in address)
+                add(key,raw,raw,[name]+address)
+
     if kind == 'receipt':
-        positioned_receipt = [(item, party_position(item)) for item in items]
-        positioned_receipt = [(item, ev) for item, ev in positioned_receipt if ev]
-        other_roles = r'customer|buyer|bill\s+to|ship\s+to|delivery|shipping|payment|bank'
-        metadata = r'^(?:tel|phone|fax|email|gst|sst|roc|reg(?:istration)?|cashier|date|tarikh|table|receipt|invoice|bill|transaction|qty|quantity|item|description|total|grand total|net total|' + other_roles + r')\b'
         transaction = (r'^(?:(?:receipt|invoice|bill|transaction)\s*(?:no\.?|number|#)|date\b|tarikh\b|cashier\b|'
                        r'(?:transaction\s+)?time\b|(?:qty|quantity)(?:\s+(?:description|item))?\s*:?\s*$|item\s*$|(?:' + other_roles + r')\b)')
         names = []
@@ -602,38 +739,21 @@ def recover_headers(document, kind, labels, found, location):
             anchors = [oe['bbox']['t'] for other, oe in positioned_receipt
                        if oe['page']==ev['page'] and re.match(transaction, other.get('text','').strip(),re.I)]
             if not anchors or box['b'] > min(anchors):continue
-            if re.match(metadata,text,re.I) or re.fullmatch(r'\(?[0-9][A-Za-z0-9-]*\)?',text):continue
+            if re.match(metadata,text,re.I) or re.fullmatch(r'\(?[0-9][A-Za-z0-9-]*\)?',text) or former_name(ev):continue
+            # A document title is not a business name, however prominently it is printed.
+            if re.search(r'\b(?:TAX\s+INVOICE|INVOICE|RECEIPT)\b',text,re.I):continue
             legal = re.search(r'\b(?:SDN\.?\s*BHD\.?|S/B|LTD\.?|ENTERPRISE)\b',text,re.I)
             address_below = any(oe['page']==ev['page'] and 0 <= oe['bbox']['t']-box['b'] <= h*1.5
-                and re.match(r'^(?:\d+[A-Za-z]?(?:[-/, ]|$)|no\.?\s|lot\b|level\b|jalan\b)',other.get('text','').strip(),re.I)
+                and re.match(r'^(?:\d+[A-Za-z]?(?:[-/, ]|$)|no\.?\s|lot\b|level\b|jalan\b|\(\d{5,}-[A-Z]\)$)',other.get('text','').strip(),re.I)
                 for other,oe in positioned_receipt if other is not item)
             if not legal and not ((item.get('label') in {'title','section_header'} or text in heading_texts) and address_below):continue
-            value = re.sub(r'\s*\([0-9][A-Za-z0-9-]*\)\s*$', '', text).strip()
+            value = re.sub(r'\s*\([A-Z]?[0-9][A-Za-z0-9-]*\)\s*$', '', text).strip()
             if legal or address_below:names.append((item,ev,value))
         if names and not found.get('merchant'):
             for item,ev,value in names:add('merchant',item['text'],value,[item])
         if len({c['value'] for c in found.get('merchant',[]) if c['value']}) == 1:
             values = {c['value'] for c in found['merchant'] if c['value']}
-            for name, ne, value in names:
-                if value not in values:continue
-                nb=ne['bbox']; h=nb['b']-nb['t']; bottom=nb['b']; address=[]
-                header = sorted([(item,ev) for item,ev in positioned_receipt if ev['page']==ne['page']
-                    and item is not name and ev['bbox']['t']>=nb['b']-h*.25
-                    and abs((ev['bbox']['l']+ev['bbox']['r']-nb['l']-nb['r'])/2)<=max((nb['r']-nb['l'])*.4,h*2)],
-                    key=lambda pair:pair[1]['bbox']['t'])
-                for item,ev in header:
-                    text=item.get('text','').strip();box=ev['bbox']
-                    if box['t']-bottom>h*1.8 or box['t']>nb['b']+h*8:break
-                    if re.fullmatch(r'\(?[0-9][A-Za-z0-9-]*\)?',text) and not address:
-                        bottom=box['b'];continue
-                    if re.match(metadata,text,re.I) or ':' in text:break
-                    if address and re.match(r'^\d{2,}[-/][A-Za-z]',text):break # branch reference, not a street continuation
-                    if not address and not re.match(r'^(?:\d|no\.?\s|lot\b|level\b|jalan\b|unit\b)',text,re.I):break
-                    if not re.search(r'[A-Za-z]',text):break
-                    address.append(item);bottom=max(bottom,box['b'])
-                if address:
-                    raw='\n'.join(item['text'].strip() for item in address)
-                    add('merchant_address',raw,raw,[name]+address)
+            letterhead_address([row for row in names if row[2] in values], 'merchant_address')
 
         # Receipt dates are read from an explicit label or an isolated printed
         # timestamp. Never infer a century for a two-digit year or locale for
@@ -647,9 +767,31 @@ def recover_headers(document, kind, labels, found, location):
                 if (ref and oe['page']==ev['page'] and b['l']>=a['r']
                         and abs((a['t']+a['b']-b['t']-b['b'])/2)<=h*.65):
                     add('receipt_number',item['text']+'\n'+other['text'],ref[1],[item,other])
+        # "No.: BTG-052332" printed beside the document's own heading is its primary number, whichever
+        # word the heading uses. It is stored as the document reference, never as an invoice number,
+        # and its evidence says how it was printed so a reviewer can see the role was not assumed.
+        if not any(c.get('value') for c in found.get('receipt_number', [])):
+            numbered=[]
+            for item,ev in positioned_receipt:
+                ref=re.fullmatch(r'no\.?\s*[:#]\s*((?=[A-Za-z0-9./_-]*\d)[A-Za-z0-9][A-Za-z0-9./_-]{2,99})',item.get('text','').strip(),re.I)
+                if not ref:continue
+                a=ev['bbox'];h=a['b']-a['t']
+                titles=[other for other,oe in positioned_receipt if oe['page']==ev['page']
+                    and re.fullmatch(r'(?:(?:tax|sales|simplified\s+tax)\s+)?invoice|(?:official\s+|sales\s+)?receipt|invois(?:\s+cukai)?|resit',other.get('text','').strip(),re.I)
+                    and (abs((oe['bbox']['t']+oe['bbox']['b']-a['t']-a['b'])/2)<=h*.9 and oe['bbox']['r']<=a['l']+h
+                         or 0<=a['t']-oe['bbox']['b']<=h*1.2)]
+                if len(titles)==1:
+                    numbered.append((item,titles[0],ref[1]))
+            if len(numbered)==1:
+                item,title,value=numbered[0]
+                add('receipt_number',title['text']+'\n'+item['text'],value,[title,item])
+                for entry in found['receipt_number'][-1]['evidence']:
+                    entry.update(printed_label='No.',printed_heading=title['text'].strip(),field_role_basis='document_number_beside_heading')
         for item,ev in positioned_receipt:
             text=item.get('text','').strip()
             match=re.fullmatch(r'(?:(?:transaction date|date|tarikh)\s*:?\s*|:\s*)?(\d{1,2}[/.-]\d{1,2}[/.-]\d{2}(?:\d{2})?)(?:\s+\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM)?)?',text,re.I)
+            # A POS line can end in a four-digit-year timestamp whose space OCR dropped.
+            match=match or re.search(r'(?:^|\s)(\d{1,2}[/.-]\d{1,2}[/.-]\d{4})\s*\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM)?$',text,re.I)
             if match:
                 raw=match[1]
                 try:value=normalized_date(raw)
@@ -662,6 +804,27 @@ def recover_headers(document, kind, labels, found, location):
                     if any(e.get('source_ref')==item['self_ref'] for e in candidate['evidence']):
                         candidate['value']=value  # Same printed date; retain its original timestamp/raw text.
                 add('transaction_date',text,value,labels+[item])
+                if re.fullmatch(r'\d{1,2}[/.-]\d{1,2}[/.-]\d{2}',raw) and value!=raw:
+                    for entry in found['transaction_date'][-1]['evidence']:
+                        entry.update(date_basis='day_first_two_digit_year',printed_value=raw)
+                # The clock on that same line. A one-digit hour with no AM/PM could be morning or evening: left for a person.
+                stamp=re.search(r'(?<![\d:/.-])'+TIME_TEXT+r'(?![\d:])',text[match.end(1):])
+                if stamp and not any(c.get('value') for c in found.get('transaction_time',[])) and (stamp[4] or len(stamp[1])==2):
+                    clock=clock_time(stamp[1],stamp[2],stamp[3] or None,stamp[4] or None)
+                    if clock:
+                        add('transaction_time',text,clock,labels+[item])
+        # Or the clock printed in its own box on the date's row: "03:29PM        562936        20-11-17".
+        if not any(c.get('value') for c in found.get('transaction_time',[])):
+            dated=[e for c in found.get('transaction_date',[]) for e in c.get('evidence',[]) if e.get('bbox') and c.get('value')]
+            for item,ev in positioned_receipt:
+                stamp=re.fullmatch(TIME_TEXT,item.get('text','').strip())
+                if not stamp or not (stamp[4] or len(stamp[1])==2):continue
+                b=ev['bbox'];h=b['b']-b['t']
+                if any(e['page']==ev['page'] and abs((e['bbox']['t']+e['bbox']['b']-b['t']-b['b'])/2)<=h*1.2 for e in dated):
+                    clock=clock_time(stamp[1],stamp[2],stamp[3] or None,stamp[4] or None)
+                    if clock:
+                        add('transaction_time',item['text'],clock,[item])
+                        break
 
         tax_sections = [(ev['page'],ev['bbox']['t']) for item,ev in positioned_receipt
                         if re.fullmatch(r'(?:gst|tax)\s+summary',item.get('text','').strip(),re.I)]
@@ -670,14 +833,14 @@ def recover_headers(document, kind, labels, found, location):
         total_rows=[]
         for item,ev in positioned_receipt:
             text=item.get('text','').strip();a=ev['bbox'];h=a['b']-a['t']
-            label=re.fullmatch(r'((?:(?:grand|net)\s+)?total(?:\s+amount)?|total\s+(?:rounded|amt\s+payable)|total\s+sales\s*\(inclusive\s+gst\))\s*:?(?:\s*(?:RM|MYR))?',text,re.I)
+            label=re.fullmatch(r'((?:(?:grand|net)\s+)?total(?:\s+amount)?|total\s+(?:rounded|amt\s+payable)|rounded\s+total(?:\s*\((?:RM|MYR)\))?|total\s+sales\s*\(inclusive\s+gst\))\s*:?(?:\s*(?:RM|MYR))?',text,re.I)
             if not label or not before_tax(ev):continue
             for other,oe in positioned_receipt:
                 b=oe['bbox'];value=other.get('text','').strip()
                 if oe['page']!=ev['page'] or b['l']<a['r'] or abs((a['t']+a['b']-b['t']-b['b'])/2)>max(h,b['b']-b['t'])*.65:continue
                 try:value=normalized_amount(value,None)
                 except ValueError:continue
-                total_rows.append((2 if re.match(r'grand|net|total\s+(?:rounded|amt\s+payable)',label[1],re.I) else 1,item,other,value))
+                total_rows.append((2 if re.match(r'grand|net|rounded|total\s+(?:rounded|amt\s+payable)',label[1],re.I) else 1,item,other,value))
         if total_rows:
             rank=max(row[0] for row in total_rows)
             # Tax-summary aggregates and intermediate subtotals are not competing
@@ -686,6 +849,110 @@ def recover_headers(document, kind, labels, found, location):
             refs={x['self_ref'] for _,label,value,_ in selected for x in (label,value)}
             found['total_amount'][:]=[c for c in found.get('total_amount',[]) if any(e.get('source_ref') in refs for e in c['evidence'])]
             for _,label,amount,value in selected:add('total_amount',label['text']+'\n'+amount['text'],value,[label,amount])
+
+        def cell_amount(text):
+            text=text.strip()
+            short=re.fullmatch(r'([+-]?)\.(\d{2})',text)  # OCR and some tills drop the leading zero: ".02".
+            if short:
+                return ('-' if short[1]=='-' else '')+'0.'+short[2]
+            try:return normalized_amount(text,None)
+            except ValueError:return None
+
+        def amount_right_of(ev):
+            """Amounts beside a label, closest row first. On a tilted scan the row below can also fall within reach."""
+            a=ev['bbox'];h=a['b']-a['t'];values=[]
+            for other,oe in positioned_receipt:
+                b=oe['bbox']
+                gap=abs((a['t']+a['b']-b['t']-b['b'])/2)
+                if oe['page']!=ev['page'] or b['l']<a['r'] or gap>max(h,b['b']-b['t'])*.65:continue
+                amount=cell_amount(other.get('text',''))
+                if amount is not None:values.append((gap,other,amount))
+            values.sort(key=lambda row:row[0])
+            # A clear winner is the row itself. Two about equally close stay unresolved.
+            if len(values)>1 and values[1][0]-values[0][0]>=max(1.5,h*.1):
+                values=values[:1]
+            return [(other,amount) for _,other,amount in values]
+
+        # Printed before rounding: "Total Amt Incl. GST @ 6%: 6.36" and "Total Sales (Inclusive GST)" are not the amount payable beneath them.
+        inclusive_total=None
+        for item,ev in positioned_receipt:
+            if not re.fullmatch(r'(?:\w+\s+)?total(?:\s+sales)?\s*\(?\s*(?:amt\.?\s+|amount\s+)?incl(?:\.|uding|usive)?\s+(?:of\s+)?(?:gst|sst|vat|tax)\b.*',item.get('text','').strip(),re.I) or not before_tax(ev):continue
+            values=amount_right_of(ev)
+            if len(values)==1:
+                inclusive_total=values[0][1]
+                add('total_including_tax',item['text']+'\n'+values[0][0]['text'],values[0][1],[item,values[0][0]])
+        # "Rounding Adjustment RM .02" then "Rounding RM 169.80": the second is the rounded amount payable, not an adjustment.
+        # Used only when the printed amounts prove it. OCR can lose a sign, so the sign comes from the two printed totals.
+        if inclusive_total is not None:
+            def single_row(pattern):
+                rows=[(item,ev) for item,ev in positioned_receipt if re.fullmatch(pattern,item.get('text','').strip(),re.I) and before_tax(ev)]
+                return rows[0] if len(rows)==1 else None
+            adjustment=single_row(r'rounding\s+adj(?:ustment)?\.?(?:\s*\(?(?:RM|MYR)\)?)?\s*:?')
+            payable=single_row(r'(?:rounding|rounded(?:\s+(?:total|amount))?)\s*\(?(?:RM|MYR)\)?\s*:?')
+            if adjustment and payable:
+                by=amount_right_of(adjustment[1]);to=amount_right_of(payable[1])
+                if len(by)==1 and len(to)==1:
+                    change=Decimal(to[0][1])-Decimal(inclusive_total)
+                    if abs(change)==abs(Decimal(by[0][1])):
+                        found['total_amount'][:]=[]
+                        add('total_amount',payable[0]['text']+'\n'+to[0][0]['text'],to[0][1],[payable[0],to[0][0]])
+                        found['rounding_amount'][:]=[]
+                        add('rounding_amount',adjustment[0]['text']+'\n'+by[0][0]['text'],format(change,'f'),[adjustment[0],by[0][0]])
+                        for entry in found['rounding_amount'][-1]['evidence']:
+                            entry.update(sign_basis='printed_totals')
+        # Cash handed over and change returned. Never sales: they are checked against the total and go no further.
+        for pattern,key in ((r'cash(?:\s+tendered)?(?:\s*\(?(?:RM|MYR)\)?)?\s*:?','tendered_amount'),(r'change(?:\s*\(?(?:RM|MYR)\)?)?\s*:?','change_given')):
+            if any(c.get('value') for c in found.get(key,[])):continue
+            rows=[(item,ev) for item,ev in positioned_receipt if re.fullmatch(pattern,item.get('text','').strip(),re.I)]
+            if len(rows)==1:
+                values=amount_right_of(rows[0][1])
+                if len(values)==1:
+                    add(key,rows[0][0]['text']+'\n'+values[0][0]['text'],values[0][1],[rows[0][0],values[0][0]])
+        # Labels that carry their own scope: "Total Exclude GST:", "Total GST@6%:".
+        for item,ev in positioned_receipt:
+            text=item.get('text','').strip()
+            target=('total_excluding_tax' if re.fullmatch(r'total\s+excl(?:\.|ude|udes|uding|usive)?\s+(?:of\s+)?(?:gst|sst|vat|tax)\s*:?',text,re.I)
+                    else 'tax_amount' if re.fullmatch(r'total\s+(?:gst|sst|vat)\s*(?:@\s*\d+(?:\.\d+)?\s*%)?\s*:?',text,re.I) else None)
+            if not target or not before_tax(ev) or any(c.get('value') for c in found.get(target,[])):continue
+            values=amount_right_of(ev)
+            if len(values)==1:
+                add(target,item['text']+'\n'+values[0][0]['text'],values[0][1],[item,values[0][0]])
+        # The tax-exclusive base printed in a GST summary's own Total row. It stays apart from subtotal, whose label it does not carry.
+        for section,sv in positioned_receipt:
+            if not re.fullmatch(r'(?:gst|tax)\s+summary',section.get('text','').strip(),re.I):continue
+            top=sv['bbox']['t'];h=sv['bbox']['b']-top
+            columns=[oe for other,oe in positioned_receipt if oe['page']==sv['page'] and abs(oe['bbox']['t']-top)<=h
+                     and re.fullmatch(r'amount(?:\s*\(R[A-Z]\)|\s*\(MYR\))?',other.get('text','').strip(),re.I)]
+            rows=[(other,oe) for other,oe in positioned_receipt if oe['page']==sv['page'] and oe['bbox']['t']>top
+                  and re.fullmatch(r'total\s*[.:]?',other.get('text','').strip(),re.I)]
+            if len(columns)==1 and not rows:
+                # One tax rate, so no Total row: the values sit directly under the headings. OCR can read RM as RH,
+                # so this counts only if base + tax reach a printed total exactly.
+                tax_columns=[oe for other,oe in positioned_receipt if oe['page']==sv['page'] and abs(oe['bbox']['t']-top)<=h
+                             and oe['bbox']['l']>columns[0]['bbox']['r'] and re.fullmatch(r'tax(?:\s*\(R[A-Z]\)|\s*\(MYR\))?',other.get('text','').strip(),re.I)]
+                def under(column):
+                    box=column['bbox'];found_cells=[]
+                    for other,oe in positioned_receipt:
+                        b=oe['bbox'];amount=cell_amount(other.get('text',''))
+                        if amount is not None and oe['page']==column['page'] and abs(b['r']-box['r'])<=h*1.5 and -h*.5<=b['t']-box['b']<=h*1.5:
+                            found_cells.append((other,amount))
+                    return found_cells[0] if len(found_cells)==1 else None
+                base=under(columns[0]);tax=under(tax_columns[0]) if len(tax_columns)==1 else None
+                printed={Decimal(c['value']) for key in ('total_including_tax','total_amount') for c in found.get(key,[]) if re.fullmatch(r'-?\d+(?:\.\d+)?',str(c.get('value')))}
+                if base and tax and Decimal(base[1])+Decimal(tax[1]) in printed:
+                    add('total_excluding_tax',section['text']+'\n'+base[0]['text'],base[1],[section,base[0]])
+                    for entry in found['total_excluding_tax'][-1]['evidence']:
+                        entry.update(printed_label='GST summary Amount',candidate_basis='printed_tax_summary_base')
+                    if not any(c.get('value') for c in found.get('tax_amount',[])):
+                        add('tax_amount',section['text']+'\n'+tax[0]['text'],tax[1],[section,tax[0]])
+                continue
+            if len(columns)!=1 or len(rows)!=1:continue
+            cells=[(other,value) for other,value in amount_right_of(rows[0][1])
+                   for there in [party_position(other)] if there and abs(there['bbox']['r']-columns[0]['bbox']['r'])<=h*1.5]
+            if len(cells)==1:
+                add('total_excluding_tax',section['text']+'\n'+cells[0][0]['text'],cells[0][1],[section,rows[0][0],cells[0][0]])
+                for entry in found['total_excluding_tax'][-1]['evidence']:
+                    entry.update(printed_label='GST summary Amount',candidate_basis='printed_tax_summary_base')
         for item,ev in positioned_receipt:
             if not re.match(r'^(?:cash|tunai)\b',item.get('text','').strip(),re.I):continue
             a=ev['bbox'];h=a['b']-a['t']
@@ -721,11 +988,27 @@ def recover_headers(document, kind, labels, found, location):
                                 suffixes.append(other)
             if len(suffixes) == 1:
                 text += ' ' + suffixes[0]['text']
-            company = re.match(r'^(.{2,100}?\b(?:Sdn\s*\.?\s*Bhd\.?|LDA|LIMITED|LTD|ENTERPRISE|S\.?\s*A\.?))\b', text, re.I)
+            company = re.match(r'^(.{2,100}?\b(?:Sdn\s*\.?\s*Bhd\.?|LDA|LIMITED|LTD|ENTERPRISE|S\.?\s*A\.?))(?!\w)', text, re.I)
             if not company:
                 company = re.search(r'(?<![A-Za-z])([A-Z][A-Z ()&.\x27-]{2,80}\s+SDN\s+BHD)\b', text)
             if company and not re.search(r'\b(?:buyer|customer|bill to|ship to|cliente|consumidor)\b', company[1], re.I):
                 add(supplier_key, text, company[1].strip(), [item]+suffixes)
+        if kind == 'invoice' and len({c['value'] for c in found.get(supplier_key, [])}) > 1:
+            # With no printed party roles, a letterhead above the document title is
+            # the issuer; a legal entity below it is the addressee. Require exactly
+            # one above, otherwise the candidates stay in conflict for review.
+            titles = [e['bbox']['t'] for item in items[:30]
+                      if re.fullmatch(r'(?:(?:tax|sales|commercial)\s+)?invoice|invois(?:\s+cukai)?', item.get('text', '').strip(), re.I)
+                      for e in evidence(item) if e.get('bbox') and e['page'] == 1]
+            if len(titles) == 1:
+                above = [c for c in found[supplier_key] if c['evidence'] and all(
+                    e.get('bbox') and e['page'] == 1 and e['bbox']['b'] <= titles[0] for e in c['evidence'])]
+                if len({c['value'] for c in above}) == 1:
+                    found[supplier_key][:] = above
+        # A POS invoice prints no party roles: its letterhead address sits under the name, as on a receipt.
+        if kind == 'invoice' and not found.get('supplier_address') and len({c['value'] for c in found.get(supplier_key, [])}) == 1:
+            refs = {e.get('source_ref') for c in found[supplier_key] for e in c['evidence']}
+            letterhead_address([(item, ev, None) for item, ev in positioned_receipt if item['self_ref'] in refs][:1], 'supplier_address')
 
     if kind == 'bill' and not found.get('bill_reference'):
         for i, item in enumerate(items):
@@ -769,6 +1052,16 @@ def recover_headers(document, kind, labels, found, location):
                     if c['l']>b['r'] and abs((b['t']+b['b']-c['t']-c['b'])/2)<h*.7 and re.fullmatch(r'(?:RM|MYR)\s*\d+\.\d{2}',amount.get('text','').strip()):
                         add('tax_amount',amount['text'],amount['text'],[label,rate,amount])
 
+    if kind == 'invoice' and not found.get('invoice_number'):
+        # A bare "No." also heads item columns, so require the colon, a value with
+        # both letters and digits, and a position in the top of the first page.
+        for item in items[:30]:
+            match = re.fullmatch(r'No\.?\s*:\s*((?=[A-Za-z0-9./_-]*[A-Za-z])(?=[A-Za-z0-9./_-]*\d)[A-Za-z0-9][A-Za-z0-9./_-]{0,98})',
+                                 item.get('text', '').strip(), re.I)
+            here = evidence(item)
+            if (match and len(here) == 1 and here[0].get('bbox') and here[0].get('page_size') and here[0]['page'] == 1
+                    and here[0]['bbox']['t'] <= here[0]['page_size']['height'] * .4):
+                add('invoice_number', item['text'], match[1], [item])
     if kind == 'invoice' and not found.get('invoice_number'):
         for item in items:
             match = re.search(r'\b(?:Fatura Simplificada|Fatura|Factura)\s+Nr[.:º]*\s*:?\s*((?:FS|FT)\s+\d+/[\w-]+)', item.get('text', ''), re.I)
@@ -826,10 +1119,13 @@ def recover_headers(document, kind, labels, found, location):
                     # Never erase a conflicting qualifier before the typed
                     # mapper can mark it unresolved. Currency may itself be
                     # ambiguous because the source prints several codes.
-                    qualifiers = re.findall(r'\b(?:MYR|RM|IDR|Rp|EUR|USD|SGD|GBP)\b', candidate['value'])
-                    codes = {'RM': 'MYR', 'Rp': 'IDR'}
+                    qualifiers = re.findall(r'\b(?:MYR|RM|IDR|Rp|EUR|USD|SGD|GBP|INR)\b|US\$|S\$|[€£₹]', candidate['value'])
+                    codes = {'RM': 'MYR', 'Rp': 'IDR', **_SYMBOLS, **_DOLLAR_CODES}
                     if any(codes.get(token, token) != currency for token in qualifiers):
                         continue
+                    if '$' in candidate['value'] and not qualifiers and currency is not None and currency not in {
+                            'USD', 'SGD', 'AUD', 'CAD', 'HKD', 'NZD', 'TWD'}:
+                        continue  # A dollar sign cannot belong to this printed currency.
                     candidate['value'] = normalized_amount(candidate['value'], currency)
                 elif key=='payment_method' and candidate['value'].strip().casefold() in {'visa','mastercard','master card','amex','american express'}:
                     # Normalize an explicit card network to the existing M3
@@ -890,3 +1186,85 @@ def recover_headers(document, kind, labels, found, location):
                 if len(tax_rows)>1:
                     for ev in found[target][-1]['evidence']:
                         ev['derivation']='sum_of_complete_printed_tax_rows'
+
+
+def drop_tax_summary_amounts(document, found, location):
+    """A receipt's GST summary repeats tax base and tax under its own TOTAL; those are not the receipt total."""
+    headings = []
+    for item in records(document):
+        prov = item.get('prov') or []
+        if len(prov) == 1 and re.search(r'(?i)\b(?:gst|tax)\s*summary\b', item.get('text', '')):
+            ev = location(document, prov[0].get('page_no'), prov[0].get('bbox'), item.get('self_ref'), item.get('text', ''))
+            if ev.get('bbox'):
+                headings.append(ev['bbox']['t'])
+    if not headings:
+        return
+    below = lambda candidate: any(e.get('bbox') and e['bbox']['t'] >= min(headings) - 2 for e in candidate.get('evidence', []))
+    for key in ('total_amount', 'subtotal', 'tax_amount'):
+        if key in found:
+            kept = [c for c in found[key] if not below(c)]
+            if kept:
+                found[key][:] = kept
+
+
+_TAX_EXEMPT_TEXT = re.compile(r'\b(?:tax[- ]exempt|exempt(?:ed)?\s+from\s+(?:tax|gst|sst|vat)|non[- ]taxable|not\s+subject\s+to\s+(?:tax|gst|sst|vat)|'
+                              r'zero[- ]rated|no\s+(?:tax|gst|sst|vat)\s+(?:charged|applicable|payable)|(?:gst|sst|vat)\s+(?:not\s+applicable|exempt(?:ed)?))\b', re.I)
+_TAX_INCLUSIVE_TEXT = re.compile(r'\b(?:incl(?:\.|usive|uding|udes)?\s+(?:of\s+)?(?:all\s+)?(?:tax(?:es)?|gst|sst|vat)|(?:tax(?:es)?|gst|sst|vat)\s+incl(?:\.|uded|usive))', re.I)
+
+
+def tax_statement(document):
+    """What the source itself says about tax. A fact for validation, never a tax amount."""
+    for status, pattern in (('exempt', _TAX_EXEMPT_TEXT), ('inclusive', _TAX_INCLUSIVE_TEXT)):
+        for item in records(document):
+            if item.get('content_layer', 'body') == 'body' and pattern.search(item.get('text', '')):
+                return {'status': status, 'text': item['text'].strip()[:160], 'source_ref': item.get('self_ref')}
+    return None
+
+
+# Printed rows of a bill statement. Bill-only fields, except that these two reuse the existing bill vocabulary.
+_BILL_COMPONENT_LABELS = (
+    (r'previous\s+(?:balance|bill)|balance\s+(?:brought\s+forward|b/f)|opening\s+balance', 'previous_balance'),
+    (r'arrears', 'arrears'),
+    (r'current\s+(?:charges?|bill)|charges?\s+for\s+this\s+period', 'document_charges'),
+    (r'(?:less\s+)?payments?(?:\s+received)?|amount\s+paid|paid', 'amount_paid'),
+    (r'credits?|credit\s+adjustments?', 'credit_total'),
+    (r'adjustments?', 'adjustment_total'),
+    (r'late\s+(?:payment\s+)?(?:fee|charge)s?', 'late_fee'),
+)
+
+
+def bill_components(document, location):
+    """{field: (raw, signed value, evidence)} for a labelled row with exactly one amount beside it.
+
+    The sign is kept as printed: "(20.00)" and "20.00 CR" are negative. Two amounts beside
+    one label, or a label printed twice with different amounts, stay unresolved.
+    """
+    lines = []
+    for item in records(document):
+        prov = item.get('prov') or []
+        if len(prov) != 1:
+            continue
+        entry = location(document, prov[0].get('page_no'), prov[0].get('bbox'), item.get('self_ref'), item.get('text', ''))
+        if entry.get('bbox'):
+            entry.update(from_ocr=item.get('from_ocr'), ocr_score=item.get('ocr_score'), bbox_scope='source_line')
+            lines.append((item.get('text', '').strip(), entry))
+
+    def signed(text):
+        match = re.fullmatch(r'(\()?\s*(?:[A-Z]{2,3}\s*|[$€£₹]\s*)?(-?\d[\d,]*\.\d{2})\s*(\))?\s*(CR)?', text, re.I)
+        if not match or bool(match[1]) != bool(match[3]):
+            return None
+        value = Decimal(match[2].replace(',', ''))
+        return format(-abs(value) if match[1] or match[4] else value, 'f')
+
+    found = {}
+    for text, entry in lines:
+        for pattern, key in _BILL_COMPONENT_LABELS:
+            if not re.fullmatch(pattern + r'\s*:?', text, re.I):
+                continue
+            a = entry['bbox']; height = a['b'] - a['t']
+            cells = [(other, there) for other, there in lines if there['page'] == entry['page'] and there['bbox']['l'] >= a['r']
+                     and abs((a['t'] + a['b'] - there['bbox']['t'] - there['bbox']['b']) / 2) <= height * .65 and signed(other) is not None]
+            if len(cells) == 1:
+                found.setdefault(key, []).append((text + '\n' + cells[0][0], signed(cells[0][0]), [entry, cells[0][1]]))
+            break
+    return {key: rows[0] for key, rows in found.items() if len({row[1] for row in rows}) == 1}

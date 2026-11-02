@@ -1,3 +1,4 @@
+from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
 from validation.documents.models import validate_invoice
@@ -28,6 +29,7 @@ def validate_invoice_document(
     purchase_order: Optional[Dict[str, Any]] = None,
     reference_transactions: Optional[List[Dict[str, Any]]] = None,
     transaction_id: Optional[str] = None,
+    policy: Optional[Dict[str, Any]] = None,
 ) -> dict:
     
     """
@@ -43,7 +45,11 @@ def validate_invoice_document(
 
     errors = []
     checks = []
-
+    # Tenant settings and the counterparty being matched, supplied by the caller. Absent means the defaults.
+    policy = policy or {}
+    counterparty_role = policy.get('counterparty_role', 'supplier')
+    counterparty_name = policy['counterparty_name'] if 'counterparty_name' in policy else invoice_data.get('vendor_name')
+    reviewed_anomaly = (policy.get('reviewed') or {}).get('EX-010')
 
     anomaly_result = None
 
@@ -75,13 +81,31 @@ def validate_invoice_document(
 
                 anomaly_result = anomaly_results[0]
 
-                if anomaly_result["is_anomaly"]:
+                # Compared as numbers: a stored "264140.80" and a read "264140.8" are the same amount.
+                accepted = reviewed_anomaly and reviewed_anomaly.get('currency') == anomaly_result['currency'] and (
+                    Decimal(str(reviewed_anomaly.get('amount'))) == Decimal(anomaly_result['amount']))
+                evidence = {
+                    'actual_value': anomaly_result['amount'], 'expected_value': anomaly_result['upper_bound'],
+                    'difference': (str(Decimal(anomaly_result['amount']) - Decimal(anomaly_result['upper_bound']))
+                                   if anomaly_result['is_anomaly'] else None),
+                }
+                if anomaly_result["is_anomaly"] and accepted:
+                    # The finding stays on record with its numbers and who accepted it. A later correction starts a new revision and undoes this.
+                    checks.append({
+                        "rule": "EX-010", "result": "PASS", "checkStatus": "CHECKED", "required": False, **evidence,
+                        "field": "total_amount",
+                        "message": (anomaly_result["reason"] + f" Accepted on review by {reviewed_anomaly.get('reviewed_by')}: "
+                                    f"{reviewed_anomaly.get('note')}"),
+                        "transaction_anomaly": anomaly_result,
+                    })
+                elif anomaly_result["is_anomaly"]:
                     errors.append({
                         "code": "EX-010",
                         "severity": "high",
                         "field": "total_amount",
-                        "message": anomaly_result["reason"] + " Human review is required.",
-                        "transaction_anomaly": anomaly_result,
+                        "message": (anomaly_result["reason"] + f" Compared with {anomaly_result['baseline_count']} approved "
+                                    f"records for the same party, type and currency. Human review is required."),
+                        "transaction_anomaly": anomaly_result, **evidence,
                     })
 
                 elif anomaly_result["status"] == "insufficient_baseline":
@@ -98,9 +122,10 @@ def validate_invoice_document(
                         "rule": "EX-010",
                         "result": "PASS",
                         "checkStatus": "CHECKED",
+                        "required": False, **evidence,
                         "message": (
-                            "Transaction amount checked against the "
-                            "reference baseline."
+                            f"Amount checked against {anomaly_result['baseline_count']} approved records "
+                            "for the same party, type and currency."
                         ),
                     })
 
@@ -124,6 +149,9 @@ def validate_invoice_document(
                 ),
                 "required": False,
             })
+    else:
+        checks.append({'rule': 'EX-010', 'result': 'WARNING', 'checkStatus': 'NOT_CHECKED', 'required': False,
+                       'message': 'Comparable approved history could not be read, so the anomaly check did not run.'})
 
     # ---------------------------------------------------------
     # 1. Core invoice validation
@@ -137,6 +165,12 @@ def validate_invoice_document(
                 "medium",
             )
             errors.append(error)
+    else:
+        # The model checks these on every valid invoice, so they were run and passed. Say so.
+        checks.append({'rule': 'EX-004', 'result': 'PASS', 'checkStatus': 'CHECKED', 'required': False,
+                       'message': 'Line amounts add up to the pre-tax amount.'})
+        checks.append({'rule': 'EX-005', 'result': 'PASS', 'checkStatus': 'CHECKED', 'required': False,
+                       'message': 'The printed amounts add up to the total.'})
 
     # ---------------------------------------------------------
     # 2. Duplicate detection
@@ -146,17 +180,24 @@ def validate_invoice_document(
     duplicates = []
     duplicate_key_ready = all(isinstance(invoice_data.get(key), str) and invoice_data[key].strip()
                               for key in ('vendor_name','invoice_number'))
-    if existing_invoices is None or not duplicate_key_ready:
-        checks.append({'rule': 'EX-007', 'result': 'WARNING', 'checkStatus': 'NOT_CHECKED',
-                       'message': 'Authorized current-invoice references or a complete supplier/invoice key are unavailable.'})
+    if policy.get('check_duplicate') is False:
+        checks.append({'rule': 'EX-007', 'result': 'NOT_APPLICABLE', 'checkStatus': 'NOT_APPLICABLE', 'required': False,
+                       'message': "This company's validation settings do not include a duplicate check."})
+    elif existing_invoices is None:
+        checks.append({'rule': 'EX-007', 'result': 'WARNING', 'checkStatus': 'NOT_CHECKED', 'required': True,
+                       'message': 'Invoice history could not be read, so duplicates cannot be ruled out.'})
+    elif not duplicate_key_ready:
+        checks.append({'rule': 'EX-007', 'result': 'WARNING', 'checkStatus': 'NOT_CHECKED', 'required': True,
+                       'message': 'A duplicate check needs both a supplier and an invoice number.'})
     else:
         for existing in existing_invoices:
             if invoice_data.get('document_id') and existing.get('document_id') == invoice_data['document_id']:
                 continue
             duplicates.extend(find_duplicate_invoices([existing, invoice_data]))
         if not duplicates:
-            checks.append({'rule': 'EX-007', 'result': 'PASS', 'checkStatus': 'CHECKED',
-                           'message': 'Current same-tenant invoice references checked.'})
+            checks.append({'rule': 'EX-007', 'result': 'PASS', 'checkStatus': 'CHECKED', 'required': True,
+                           'message': (f'Checked against {len(existing_invoices)} other invoices for this company; no match.'
+                                       if existing_invoices else 'History was read and this company has no other invoices yet, so there is nothing to duplicate.')})
 
     for duplicate in duplicates:
         errors.append({
@@ -174,28 +215,33 @@ def validate_invoice_document(
     # ---------------------------------------------------------
     # 3. Vendor matching
     # ---------------------------------------------------------
-    vendor_name = invoice_data.get('vendor_name')
-    if not known_vendors or not isinstance(vendor_name, str) or not vendor_name.strip():
+    vendor_name = counterparty_name
+    if known_vendors is None or not known_vendors or not isinstance(vendor_name, str) or not vendor_name.strip():
         vendor_match = {'status': 'NOT_CHECKED', 'vendor_id': None, 'vendor_name': None, 'similarity': None}
-        checks.append({'rule': 'EX-008', 'result': 'WARNING', 'checkStatus': 'NOT_CHECKED',
-                       'message': 'No applicable tenant supplier catalogue or resolved supplier name; vendor matching was not checked.'})
+        # A list that could not be read may hold a mismatch, so it still blocks. A company with no list has nothing to compare;
+        # a missing name already fails its own required-field rule.
+        unreadable = known_vendors is None and isinstance(vendor_name, str) and vendor_name.strip()
+        checks.append({'rule': 'EX-008', 'result': 'WARNING', 'checkStatus': 'NOT_CHECKED', 'required': bool(unreadable),
+                       'message': (f'The {counterparty_role} list could not be read, so this name was not matched.' if unreadable else
+                                   f'No {counterparty_role} name to match.' if not (isinstance(vendor_name, str) and vendor_name.strip()) else
+                                   f'This company has no {counterparty_role} list yet, so this name was not matched.')})
     else:
         # Legacy helper calls this confidence; it measures name similarity only.
         # Never write it into extraction confidence or automatically accept an entity.
-        vendor_match = find_vendor_match(invoice_data.get('vendor_name'), known_vendors)
+        vendor_match = find_vendor_match(vendor_name, known_vendors)
         vendor_match['similarity'] = vendor_match['confidence']
         vendor_match['score_method'] = 'normalized_name_sequence_matcher'
         if vendor_match['status'] == 'ACCEPT':
-            checks.append({'rule': 'EX-008', 'result': 'PASS', 'checkStatus': 'CHECKED',
-                           'message': 'Tenant vendor names compared; this does not approve an entity.'})
+            checks.append({'rule': 'EX-008', 'result': 'PASS', 'checkStatus': 'CHECKED', 'required': False,
+                           'message': f'Name matches the {counterparty_role} list exactly; this does not approve the {counterparty_role}.'})
 
     if vendor_match["status"] not in {"ACCEPT", "NOT_CHECKED"}:
         errors.append({
             "code": "EX-008",
             "severity": EXCEPTION_SEVERITY["EX-008"],
-            "field": "vendor_name",
+            "field": "customer" if counterparty_role == 'customer' else "vendor_name",
             "message": (
-                f"Vendor matching requires review: "
+                f"{counterparty_role.capitalize()} matching requires review: "
                 f"{vendor_match['status']}"
             ),
             'vendor_candidate': {key: vendor_match.get(key) for key in
@@ -223,9 +269,17 @@ def validate_invoice_document(
                 ),
                 "po_match": po_match,
             })
+        else:
+            checks.append({'rule': 'EX-009', 'result': 'PASS', 'checkStatus': 'CHECKED', 'required': False,
+                           'message': 'Supplier, lines and total agree with the purchase order.'})
+    elif policy.get('po_check'):
+        checks.append(policy['po_check'])
+    elif invoice_data.get('purchase_order_number'):
+        checks.append({'rule': 'EX-009', 'result': 'WARNING', 'checkStatus': 'NOT_CHECKED', 'required': True,
+                       'message': 'The purchase-order reference could not be matched automatically; review it.'})
     else:
-        checks.append({'rule': 'EX-009', 'result': 'WARNING', 'checkStatus': 'NOT_CHECKED',
-                       'message': 'No authorized purchase-order reference supplied; database PO matching is not implemented.'})
+        checks.append({'rule': 'EX-009', 'result': 'NOT_APPLICABLE', 'checkStatus': 'NOT_APPLICABLE', 'required': False,
+                       'message': 'No purchase order is printed or required, so matching does not apply.'})
 
     # ---------------------------------------------------------
     # 5. Final decision

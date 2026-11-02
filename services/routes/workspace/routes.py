@@ -73,10 +73,24 @@ def list_suppliers(request: Request):
         rows = db.execute("SELECT * FROM vendors WHERE tenant_id=%s ORDER BY vendor_name", (user["tenant_id"],)).fetchall()
     return [{"id": str(r["id"]), "name": r["vendor_name"], "registrationNumber": r["registration_number"], "address": r["address"]} for r in rows]
 
+def _create_contact_guard(db, user, table, column, name, action):
+    """One entry per name for a tenant, ignoring case and punctuation. Who added it goes on the audit log."""
+    from validation.matching.vendor_matching import normalize_vendor_name
+    if not normalize_vendor_name(name):
+        raise HTTPException(422, "A contact needs a name.")
+    existing = db.execute(f"SELECT {column} AS name FROM {table} WHERE tenant_id=%s", (user["tenant_id"],)).fetchall()
+    same = next((r["name"] for r in existing if normalize_vendor_name(r["name"]) == normalize_vendor_name(name)), None)
+    if same:
+        raise HTTPException(409, f'This contact already exists as "{same}".')
+    db.execute("""INSERT INTO audit_logs(tenant_id,user_id,user_name,role,action,resource,details)
+        VALUES (%s,%s,%s,%s,%s,%s,%s)""", (user["tenant_id"], user["id"], user.get("name", "Workspace user"), user["role"], action, table, name.strip()))
+
+
 def create_supplier(data: NamedInput, request: Request):
     user = require_workspace_user(request, {"local_admin"})
     with connect() as db:
-        row = db.execute("INSERT INTO vendors(tenant_id,vendor_name) VALUES (%s,%s) RETURNING *", (user["tenant_id"], data.name)).fetchone()
+        _create_contact_guard(db, user, 'vendors', 'vendor_name', data.name, 'contact.supplier_created')
+        row = db.execute("INSERT INTO vendors(tenant_id,vendor_name) VALUES (%s,%s) RETURNING *", (user["tenant_id"], data.name.strip())).fetchone()
     return {"id": str(row["id"]), "name": row["vendor_name"]}
 
 def list_document_tags(request: Request):
@@ -146,6 +160,7 @@ def decide_record_amendment(amendment_id: str, data: AmendmentDecisionInput, req
 def create_customer(data: PartyInput, request: Request):
     user = require_workspace_user(request, {"local_admin"})
     with connect() as db:
+        _create_contact_guard(db, user, 'customers', 'customer_name', data.name, 'contact.customer_created')
         row = db.execute("INSERT INTO customers(tenant_id,customer_name,registration_number,address) VALUES (%s,%s,%s,%s) RETURNING *", (user["tenant_id"], data.name, data.registrationNumber, data.address)).fetchone()
     return {"id": str(row["id"]), "name": row["customer_name"], "registrationNumber": row["registration_number"], "address": row["address"]}
 

@@ -59,7 +59,11 @@ def execute_image_extraction(document_id, file_path, project_root=None):
         path = Path(file_path).resolve()
         if not path.is_relative_to(root) or not path.is_file() or path.suffix.lower() not in IMAGE_SUFFIXES:
             raise ImageExtractionError('INVALID_IMAGE_SOURCE')
-        python = Path(os.getenv('IMAGE_OCR_PYTHON', sys.executable))
+        # The child must be a separate AI environment, as the module contract states.
+        configured = os.getenv('IMAGE_OCR_PYTHON', '').strip()
+        python = Path(configured)
+        if not configured or python.absolute() == Path(sys.executable).absolute():
+            raise ImageExtractionError('IMAGE_OCR_ENVIRONMENT_NOT_CONFIGURED')
         if os.getenv('IMAGE_OCR_MODELS_DIR'):
             models = Path(os.environ['IMAGE_OCR_MODELS_DIR'])
         else:

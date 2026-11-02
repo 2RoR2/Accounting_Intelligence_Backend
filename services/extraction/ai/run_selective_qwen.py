@@ -10,7 +10,8 @@ from uuid import uuid4
 
 from services.extraction.classification.classify_document import classify_document
 from services.extraction.ai.qwen_provider import (
-    OllamaQwenProvider, prepare_request, validate_response, parse_json, validate_fields, REQUEST_OPTIONS,
+    OllamaQwenProvider, prepare_request, validate_response, validate_response_fields, parse_json, validate_fields,
+    REQUEST_OPTIONS, model_digest,
 )
 from services.extraction.classification.route_extraction import decide_route, plan_field_recovery, reserve_recovery_attempt
 
@@ -52,6 +53,14 @@ def verified_pdf(extraction, root, *, source_path=None, source_access_authorized
         raise ValueError('PDF changed since parser extraction')
     return pdf_path, pdf_raw
 
+# Measured on the 17 documents the model was called for: this page reads as well as the old 1.5x
+# render with a third fewer image tokens on A4, and never exceeds the 4096-token context. Field crops
+# were tried too: they added no correct value, invented two due dates and overran the context, so none are sent.
+RENDER_POLICY = 'page-long-side-1300-at-most-150dpi/1'
+PAGE_LONG_SIDE_PX = 1300
+MAX_RENDER_SCALE = 150 / 72  # Scanned pages are wrapped at 150 dpi; rendering above that adds no detail.
+
+
 def render_single_page(pdf_bytes, output):
     import pypdfium2 as pdfium
     with pdfium.PdfDocument(pdf_bytes) as pdf:
@@ -59,7 +68,7 @@ def render_single_page(pdf_bytes, output):
             raise ValueError('This selective experiment supports exactly one PDF page')
         page = pdf[0]
         try:
-            bitmap = page.render(scale=1.5)
+            bitmap = page.render(scale=min(MAX_RENDER_SCALE, PAGE_LONG_SIDE_PX / max(page.get_size())))
             try:
                 image = bitmap.to_pil()
                 try:
@@ -74,8 +83,12 @@ def render_single_page(pdf_bytes, output):
     return dimensions
 
 
-def recovery_context(extraction, plan, fields, root):
-    """Nearby OCR retains role qualifiers; it is context, never VLM evidence."""
+def recovery_context(extraction, plan, fields, root, previous_problems=None):
+    """Nearby OCR retains role qualifiers; it is context, never VLM evidence.
+
+    previous_problems says why a retried field's last answer was unusable, so a retry
+    is not the identical request, which at temperature 0 would return the identical answer.
+    """
     from services.extraction.classification.classify_document import context_pages
     doc = parse_json(checked_path(extraction['provenance']['source_document_json'], root).read_bytes())
     positioned = context_pages(doc).get(1, [])
@@ -87,13 +100,17 @@ def recovery_context(extraction, plan, fields, root):
                 for k in ('state', 'raw_text', 'value', 'candidates')} for name in fields},
                'nearby_text': [{'source_ref': items[i].get('self_ref'), 'text': items[i].get('text', '')}
                                for i in sorted(indexes)]}
+    if previous_problems:
+        context['previous_answer_problem'] = previous_problems
     if len(json.dumps(context, ensure_ascii=False)) > 6000:
-        raise ValueError('Selective source context exceeds the bounded request; human review required')
+        # Too long for the bounded request: the model reads the page alone, as manual AI Assist does.
+        # Every answer still has to pass the same independent source check.
+        return {'page': 1, 'fields': {}, 'nearby_text': [], 'omitted': 'CONTEXT_EXCEEDS_BOUND'}
     return context
 
 def run_attempt(source, root, provider_factory=OllamaQwenProvider, renderer=render_single_page,
                 *, source_path=None, source_access_authorized=False, selected_fields=None,
-                inference_permission=False, attempts=None, output_parent=None):
+                inference_permission=False, attempts=None, output_parent=None, previous_problems=None):
     source = checked_path(source, root)
     parent = checked_path(output_parent if output_parent is not None else Path(root) / 'runs', root)
     out = parent / ('selective-' + uuid4().hex)
@@ -135,14 +152,15 @@ def run_attempt(source, root, provider_factory=OllamaQwenProvider, renderer=rend
             dimensions = renderer(pdf_raw, image_path)
             image_raw = image_path.read_bytes()
             record.update(source_pdf=str(pdf_path), source_pdf_sha256=sha256(pdf_raw),
-                          page=1, render_scale=1.5, image=str(image_path),
+                          page=1, render_policy=RENDER_POLICY, image=str(image_path),
                           image_sha256=sha256(image_raw), dimensions=dimensions,
-                          requested_fields=fields)
+                          requested_fields=fields, previous_problems=previous_problems,
+                          visual_input={'kind': 'full_page', 'page': 1, 'width': dimensions[0], 'height': dimensions[1]})
             provider = provider_factory()
             record.update(endpoint=provider.base, model=provider.model, timeout_seconds=provider.timeout)
             context = None
             if scoped:
-                configuration = {'model': provider.model, 'options': dict(REQUEST_OPTIONS), 'render_scale': 1.5,
+                configuration = {'model': provider.model, 'options': dict(REQUEST_OPTIONS), 'render_policy': RENDER_POLICY,
                                  'profile': profile, 'request_contract': 'profile_fields/1'}
                 plan = plan_field_recovery(extraction, root, source_path=source_path,
                     source_access_authorized=source_access_authorized, model_configuration=configuration)
@@ -152,7 +170,7 @@ def run_attempt(source, root, provider_factory=OllamaQwenProvider, renderer=rend
                 if (len(attempts) + len(fields) > plan['max_attempts_per_execution']
                         or any(plan['fields'][name]['issue_id'] in attempts for name in fields)):
                     raise ValueError('Recovery attempt already reserved or execution budget exhausted')
-                context = recovery_context(extraction, plan, fields, root)
+                context = recovery_context(extraction, plan, fields, root, previous_problems)
                 for name in fields:
                     if not reserve_recovery_attempt(plan, name, attempts):
                         raise ValueError('Recovery reservation failed; no automatic retry')
@@ -172,6 +190,7 @@ def run_attempt(source, root, provider_factory=OllamaQwenProvider, renderer=rend
                     or not any(isinstance(m, dict) and provider.model in {m.get('name'), m.get('model')}
                                for m in inventory['models'])):
                 raise ValueError('Configured model is not available in Ollama inventory; no download attempted')
+            record['model_digest'] = model_digest(inventory, provider.model)
             before = provider.metadata('/api/ps')
             record['models_before'] = before
             request_start = time.perf_counter()
@@ -185,12 +204,18 @@ def run_attempt(source, root, provider_factory=OllamaQwenProvider, renderer=rend
             record['raw_response_sha256'] = sha256(response_text.encode('utf-8'))
             response = parse_json(response_text)
             save('raw_response.json', response)
-            prediction = validate_response(response, fields, model=provider.model, profile=profile)
+            if scoped:
+                prediction, rejected = validate_response_fields(response, fields, model=provider.model, profile=profile)
+                record['field_rejections'] = rejected
+            else:
+                prediction = validate_response(response, fields, model=provider.model, profile=profile)
             save('prediction.json', prediction)
             record['prediction_sha256'] = sha256((out / 'prediction.json').read_bytes())
             record['status'] = 'response_structure_valid_needs_review'
             record['server_timing_ns'] = {k: response.get(k) for k in
                 ('total_duration', 'load_duration', 'prompt_eval_duration', 'eval_duration')}
+            # Reported by the model server. With the image dropped, the same prompt counts far fewer tokens.
+            record['visual_input']['prompt_tokens'] = response.get('prompt_eval_count')
             try:
                 record['models_after'] = provider.metadata('/api/ps')
             except Exception as error:

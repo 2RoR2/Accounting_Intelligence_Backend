@@ -85,13 +85,17 @@ class FinancialLayoutTests(unittest.TestCase):
             ('1 Other goods',20,180,200,200),('12.50',400,180,490,200)]))
         self.assertIsNone(raw['fields']['total_amount']['value'])
 
-    def test_receipt_short_year_is_not_expanded_or_assumed(self):
+    def test_receipt_short_year_is_read_only_when_the_day_cannot_be_a_month(self):
         doc=self.retail_bill();doc['m2_text_lines'][0]['text']='RECEIPT'
         doc['m2_text_lines'][6]['text']='20-11-17'
         raw,_=contract(doc)
+        self.assertEqual(raw['fields']['transaction_date']['value'],'2017-11-20')
+        doc=self.retail_bill();doc['m2_text_lines'][0]['text']='RECEIPT'
+        doc['m2_text_lines'][6]['text']='04-11-17'
+        raw,_=contract(doc)
         self.assertIsNone(raw['fields']['transaction_date']['value'])
         self.assertEqual(raw['fields']['transaction_date']['state'],'ambiguous')
-        self.assertIn('20-11-17',{c['value'] for c in raw['fields']['transaction_date']['candidates']})
+        self.assertIn('04-11-17',{c['value'] for c in raw['fields']['transaction_date']['candidates']})
 
     def test_receipt_competing_merchants_are_not_selected_arbitrarily(self):
         doc=self.retail_bill();doc['m2_text_lines'][0]['text']='RECEIPT'
@@ -934,10 +938,70 @@ class FinancialLayoutTests(unittest.TestCase):
         self.assertEqual(mapped['line_items'][0]['field_states']['amount'],'ambiguous')
         self.assertEqual(len(mapped['line_items'][0]['candidates']['amount']),2)
 
-    def test_unknown_document_cannot_gain_rows_from_financial_layout(self):
+    def test_unknown_document_rows_remain_unselected_source_candidates(self):
         raw,mapped=contract(layout('Meeting agenda',[('Description',10,100,180,120),('Amount',450,100,570,120),
             ('Service',10,140,180,160),('20.00',450,140,570,160)]))
-        self.assertEqual(mapped['line_items'],[])
+        self.assertEqual(raw['document_type']['value'], 'unknown')
+        self.assertEqual(len(mapped['line_items']), 1)
+        row = mapped['line_items'][0]
+        self.assertIsNone(row['amount'])
+        self.assertIsNone(row['description'])
+        self.assertEqual(row['candidates']['amount'][0]['value'], '20.00')
+        self.assertTrue(row['evidence']['amount'][0]['source_ref'])
+
+    def receipt(self, *lines):
+        return contract(layout('RECEIPT', [('Acme Trading Sdn Bhd', 10, 10, 300, 28), ('Date: 15/03/2018', 10, 40, 200, 58)] + list(lines) +
+                               [('Change', 10, 900, 80, 918), ('0.00', 450, 900, 500, 918)]))
+
+    def test_receipt_rows_need_amounts_that_add_up_to_a_printed_value(self):
+        head = [('Qty Description', 10, 100, 200, 118), ('Amount', 450, 100, 520, 118)]
+        rows = [('1 GREEN TEA @ 1.00', 60, 140, 300, 158), ('1.00 SR', 450, 140, 520, 158), ('2 GYOZA @ 7.50', 60, 170, 300, 188), ('15.00 SR', 450, 170, 520, 188)]
+        raw, mapped = self.receipt(*head, *rows, ('Total', 300, 300, 360, 318), ('16.00', 450, 300, 520, 318))
+        self.assertEqual(raw['document_type']['value'], 'receipt')
+        self.assertEqual([(r['description'], r['quantity'], r['unit_price'], r['amount']) for r in mapped['line_items']],
+                         [('GREEN TEA', '1', '1.00', '1.00'), ('GYOZA', '2', '7.50', '15.00')])
+        self.assertTrue(mapped['line_items'][0]['evidence']['amount'][0]['source_ref'])
+        _, unbalanced = self.receipt(*head, *rows, ('Total', 300, 300, 360, 318), ('99.00', 450, 300, 520, 318))
+        self.assertEqual(unbalanced['line_items'], [])
+
+    def test_receipt_unit_price_is_left_empty_when_it_does_not_explain_the_amount(self):
+        head = [('Item', 10, 100, 60, 118), ('Qty', 200, 100, 240, 118), ('U/P', 280, 100, 320, 118), ('AMOUNLT', 450, 100, 520, 118)]
+        row = [('9557950605126', 10, 140, 180, 158), ('5', 210, 140, 225, 158), ('2.74', 285, 140, 320, 158), ('13.00*', 450, 140, 520, 158), ('- CAMIS BOOK', 20, 165, 200, 183)]
+        _, mapped = self.receipt(*head, *row, ('Sub-Total (Ex)', 10, 300, 160, 318), ('13.00', 450, 300, 520, 318))
+        line = mapped['line_items'][0]
+        self.assertEqual((line['description'], line['quantity'], line['amount']), ('CAMIS BOOK', '5', '13.00'))
+        self.assertIsNone(line['unit_price'])
+
+    def test_receipt_rows_ignore_a_gst_summary_heading_on_a_tilted_scan(self):
+        lines = [('Date: 20/11/2017', 10, 40, 200, 58), ('RM34.90 s', 450, 100, 520, 118), ('069 MILO 2KG', 10, 108, 200, 126),
+                 ('RM4.10 s', 450, 130, 520, 148), ('2709 OAT WHEAT', 10, 138, 200, 156), ('39.00', 450, 170, 520, 188),
+                 ('Total Sales (Inclusive GST) RM', 10, 178, 300, 196), ('Tax(RM) Amount(RM)', 10, 260, 300, 278)]
+        _, mapped = self.receipt(*lines)
+        self.assertEqual([(r['description'], r['amount']) for r in mapped['line_items']], [('069 MILO 2KG', '34.90'), ('2709 OAT WHEAT', '4.10')])
+
+    def test_receipt_heading_survives_summary_words_above_and_inside_it(self):
+        lines = [('CASH', 10, 70, 80, 88), ('QTY ITEM', 10, 100, 120, 118), ('TOTAL', 450, 100, 520, 118),
+                 ('2 M Fries', 10, 140, 200, 158), ('25.40', 450, 140, 520, 158), ('1 Small Cone', 10, 170, 200, 188), ('1.00', 450, 170, 520, 188),
+                 ('Total Rounded', 10, 220, 160, 238), ('26.40', 450, 220, 520, 238)]
+        _, mapped = self.receipt(*lines)
+        self.assertEqual([(r['description'], r['quantity'], r['amount']) for r in mapped['line_items']],
+                         [('M Fries', '2', '25.40'), ('Small Cone', '1', '1.00')])
+
+    def test_receipt_with_no_amount_rows_keeps_no_rows(self):
+        _, mapped = self.receipt(('Thank you', 10, 100, 200, 118), ('Total', 300, 300, 360, 318), ('16.00', 450, 300, 520, 318))
+        self.assertEqual(mapped['line_items'], [])
+
+    def test_gst_summary_total_is_not_the_receipt_total(self):
+        raw, _ = self.receipt(('Total', 10, 200, 80, 218), ('27.35', 450, 200, 520, 218), ('GST Summary', 10, 300, 160, 318),
+                              ('Total :', 10, 340, 80, 358), ('25.80', 300, 340, 360, 358), ('1.55', 450, 340, 520, 358))
+        self.assertEqual(raw['fields']['total_amount']['value'], '27.35')
+
+    def test_printed_none_is_not_a_customer(self):
+        for printed in ('None', 'n/a', 'NIL', '-'):
+            with self.subTest(printed=printed):
+                raw, _ = contract(layout('UTILITY BILL', [('Issuer: Synthetic Utility', 10, 40, 350, 60), ('CUSTOMER', 10, 80, 120, 98), (printed, 10, 102, 120, 120),
+                                                          ('Bill Date: 2023-07-15', 10, 140, 300, 158), ('Total: 10.00', 10, 170, 200, 188)]))
+                self.assertIsNone((raw['fields'].get('customer_name') or {}).get('value'))
 
     def test_bill_total_due_and_paid_remain_separate(self):
         raw,mapped=contract(layout('UTILITY BILL', [('Issuer: Synthetic Utility',10,40,350,60),
@@ -1042,3 +1106,778 @@ class FinancialLayoutTests(unittest.TestCase):
 
 
 if __name__=='__main__': unittest.main()
+
+
+def net_worth_invoice(lines=(('Item A','100,00'),('Item B','50,00')), net='150,00', tax='15,00', gross='165,00',
+                      unit='$', extra=(), net_label='Net worth'):
+    """Items and summary in the real Net worth/VAT/Gross worth layout; synthetic values."""
+    cells=[('Description',20,60,160,80),('Net worth',300,60,370,80),('Gross worth',470,60,560,80)]
+    for index,(name,amount) in enumerate(lines):
+        top=90+index*30
+        cells+=[(name,20,top,160,top+20),(amount,300,top,370,top+20)]
+    cells+=[('SUMMARY',20,240,160,260),('VAT [%]',140,280,200,300),(net_label,250,280,320,300),
+            ('VAT',360,280,400,300),('Gross worth',450,280,550,300),('10%',160,320,200,340),
+            (net,250,320,320,340),(tax,360,320,400,340),(gross,450,320,550,340),
+            ('Total',20,360,120,380),(unit+' '+net,240,360,320,380),(unit+' '+tax,350,360,400,380),
+            (unit+' '+gross,440,360,550,380),*extra]
+    return layout('INVOICE',cells)
+
+
+def field(doc,key):
+    from services.extraction.parsing.map_invoice import map_document
+    return map_document(doc)['fields'][key]
+
+
+class CurrencyEvidenceTests(unittest.TestCase):
+    def amounts(self,*cells):
+        return layout('INVOICE',[(text,20,60+i*30,200,80+i*30) for i,text in enumerate(cells)])
+
+    def test_explicit_codes_resolve_with_their_source_text(self):
+        for text,code in (('RM 10.00','MYR'),('MYR 10.00','MYR'),('USD 10.00','USD'),('10.00 USD','USD'),
+                          ('SGD 10.00','SGD'),('S$ 10.00','SGD'),('US$ 10.00','USD'),('GBP 10.00','GBP'),
+                          ('£ 10.00','GBP'),('€ 10,00','EUR'),('10,00 €','EUR'),('Amount (USD)','USD'),('JPY','JPY')):
+            with self.subTest(text=text):
+                cell=field(self.amounts(text),'currency')
+                self.assertEqual((cell['mapping_status'],cell['value']),('mapped',code))
+                self.assertIn(text,cell['candidates'][0]['raw_text'])
+
+    def test_bare_dollar_stays_unresolved_and_keeps_source_text(self):
+        for text in ('$ 725,37','725,37 $','$'):
+            with self.subTest(text=text):
+                cell=field(self.amounts(text),'currency')
+                self.assertEqual((cell['mapping_status'],cell['value']),('ambiguous',None))
+                self.assertEqual(cell['candidates'][0]['value'],None)
+                self.assertEqual(cell['candidates'][0]['evidence'][0]['text'],text)
+
+    def test_symbol_between_digits_is_an_ocr_misread_not_a_currency(self):
+        doc=self.amounts('36€30','$ 12 973,88')
+        cell=field(doc,'currency')
+        self.assertEqual((cell['mapping_status'],cell['value']),('ambiguous',None))
+        self.assertNotIn('EUR',{c['value'] for c in cell['candidates']})
+
+    def test_conflicting_explicit_currencies_keep_all_candidates(self):
+        cell=field(self.amounts('USD 10.00','SGD 12.00'),'currency')
+        self.assertEqual((cell['mapping_status'],cell['value']),('ambiguous',None))
+        self.assertEqual({c['value'] for c in cell['candidates']},{'USD','SGD'})
+
+    def test_explicit_code_is_not_displaced_by_a_dollar_sign(self):
+        self.assertEqual(field(self.amounts('USD 10.00','$ 10.00'),'currency')['value'],'USD')
+
+    def test_no_currency_is_assumed_from_address_or_country(self):
+        cell=field(self.amounts('Kuala Lumpur, Malaysia','FARM ROAD','10.00'),'currency')
+        self.assertEqual((cell['mapping_status'],cell['value'],cell['candidates']),('missing',None,[]))
+
+    def test_ordinary_words_are_not_iso_codes(self):
+        cell=field(self.amounts('TRY AGAIN','PHP Developer services','SAR Trading'),'currency')
+        self.assertEqual((cell['value'],cell['candidates']),(None,[]))
+
+    def test_ambiguous_currency_reaches_review_with_guidance_and_no_value(self):
+        raw,mapped=contract(self.amounts('$ 10,00'))
+        row=next(f for f in mapped['fields'] if f['field_key']=='currency')
+        self.assertEqual((row['extraction_state'],row['current_value']),('ambiguous',None))
+        from services.extraction.contracts.reliability import field_guidance
+        self.assertEqual([w['code'] for w in field_guidance(row)['warnings']][-1],'AMBIGUOUS_CURRENCY_SYMBOL')
+
+
+class MonetaryLabelTests(unittest.TestCase):
+    def labelled(self,*rows):
+        cells=[]
+        for i,(label,value) in enumerate(rows):
+            cells+=[(label,20,60+i*30,180,80+i*30),(value,200,60+i*30,300,80+i*30)]
+        return layout('INVOICE',cells)
+
+    def test_decimal_comma_amounts_need_no_currency(self):
+        doc=self.labelled(('Total Amount:','1.234,56'),('Tax Amount:','725,37'))
+        self.assertEqual(field(doc,'total_amount')['value'],'1234.56')
+        self.assertEqual(field(doc,'tax_amount')['value'],'725.37')
+
+    def test_three_digit_comma_group_is_not_a_decimal(self):
+        self.assertEqual(field(self.labelled(('Total Amount:','1,234')),'total_amount')['value'],'1234')
+
+    def test_aliases_keep_distinct_accounting_meanings(self):
+        for label,key in (('Net Amount','total_excluding_tax'),('Total Before Tax','total_excluding_tax'),
+                          ('VAT','tax_amount'),('GST','tax_amount'),('Amount Payable','amount_due'),
+                          ('Total Due','amount_due'),('Invoice Amount','total_amount'),('Final Total','total_amount')):
+            with self.subTest(label=label):
+                result=field(self.labelled((label,'10.00')),key)
+                self.assertEqual((result['mapping_status'],result['value']),('mapped','10.00'))
+
+    def test_amount_due_is_not_copied_into_total(self):
+        self.assertEqual(field(self.labelled(('Amount Payable','10.00')),'total_amount')['value'],None)
+
+    def test_tax_registration_numbers_are_not_tax_amounts(self):
+        for value in ('002132546123','12345678'):
+            with self.subTest(value=value):
+                self.assertEqual(field(self.labelled(('GST',value)),'tax_amount')['value'],None)
+        self.assertEqual(field(layout('INVOICE',[('GST:002132546123',20,60,200,80)]),'tax_amount')['value'],None)
+
+    def test_tax_rate_is_not_a_tax_amount(self):
+        self.assertEqual(field(self.labelled(('VAT','10%')),'tax_amount')['value'],None)
+
+    def test_conflicting_totals_stay_unresolved_with_candidates(self):
+        cell=field(self.labelled(('Total Amount:','10.00'),('Total Amount:','12.00')),'total_amount')
+        self.assertEqual((cell['mapping_status'],cell['value']),('ambiguous',None))
+        self.assertEqual({c['value'] for c in cell['candidates']},{'10.00','12.00'})
+
+    def test_disagreeing_currency_qualifier_is_flagged(self):
+        doc=self.labelled(('Currency:','USD'),('Total Amount:','SGD 10.00'))
+        cell=field(doc,'total_amount')
+        self.assertEqual((cell['mapping_status'],cell['value']),('ambiguous',None))
+
+    def test_payment_and_change_are_not_totals(self):
+        doc=self.labelled(('Cash','50.00'),('Change','40.00'))
+        self.assertEqual(field(doc,'total_amount')['value'],None)
+
+    def test_missing_subtotal_is_not_calculated_from_total_and_tax(self):
+        doc=self.labelled(('Total Amount:','110.00'),('Tax Amount:','10.00'))
+        cell=field(doc,'subtotal')
+        self.assertEqual((cell['value'],cell['candidates']),(None,[]))
+
+
+class NetWorthCandidateTests(unittest.TestCase):
+    def test_valid_aggregate_is_offered_but_never_applied(self):
+        cell=field(net_worth_invoice(),'subtotal')
+        self.assertEqual((cell['mapping_status'],cell['value'],cell['raw_text'],cell['evidence']),('missing',None,None,[]))
+        self.assertEqual(len(cell['candidates']),1)
+        candidate=cell['candidates'][0]
+        self.assertEqual(candidate['value'],'150.00')
+        source=candidate['evidence']
+        self.assertTrue(all(e['candidate_basis']=='printed_tax_exclusive_total' for e in source))
+        self.assertTrue(all(e['printed_label']=='Net worth' and e['printed_value']=='$ 150,00' for e in source))
+        self.assertTrue(all(e['page']==1 and e['bbox'] for e in source))
+        self.assertIn('$ 150,00',[e['text'] for e in source])
+        self.assertTrue(all(e['extraction_method']=='OCR' and e['ocr_score']==.8 for e in source))
+
+    def test_printed_label_capitalisation_is_preserved(self):
+        cell=field(net_worth_invoice(net_label='Net Worth'),'subtotal')
+        self.assertEqual(cell['candidates'][0]['evidence'][0]['printed_label'],'Net Worth')
+
+    def test_inv00014_style_invoice_with_european_commas(self):
+        doc=net_worth_invoice(lines=(('Wild West Wine','54,00'),('Press Wine','558,00'),('Wine Rack','56,25'),('Tool','23,12'),('VTG Rack','34,00')),
+                              net='725,37',tax='72,54',gross='797,91')
+        self.assertEqual(field(doc,'subtotal')['value'],None)
+        self.assertEqual(field(doc,'subtotal')['candidates'][0]['value'],'725.37')
+        self.assertEqual(field(doc,'total_excluding_tax')['value'],'725.37')
+        self.assertEqual(field(doc,'tax_amount')['value'],'72.54')
+        self.assertEqual(field(doc,'total_amount')['value'],'797.91')
+        self.assertEqual(field(doc,'currency')['value'],None)
+
+    def test_total_excluding_tax_and_its_evidence_are_unchanged(self):
+        doc=net_worth_invoice()
+        cell=field(doc,'total_excluding_tax')
+        self.assertEqual((cell['mapping_status'],cell['value']),('mapped','150.00'))
+        self.assertFalse(any('candidate_basis' in e for e in cell['evidence']))
+
+    def test_european_grouped_decimal_commas_are_compared_exactly(self):
+        doc=net_worth_invoice(lines=(('Item A','10 560,00'),('Item B','1 234,44')),net='11 794,44',tax='1 179,44',gross='12 973,88')
+        self.assertEqual(field(doc,'subtotal')['candidates'][0]['value'],'11794.44')
+
+    def assert_no_candidate(self,doc):
+        cell=field(doc,'subtotal')
+        self.assertEqual((cell['value'],cell['candidates']),(None,[]))
+
+    def test_lines_that_do_not_sum_block_the_offer(self):
+        self.assert_no_candidate(net_worth_invoice(lines=(('Item A','100,00'),('Item B','49,99'))))
+
+    def test_totals_that_do_not_reconcile_block_the_offer(self):
+        self.assert_no_candidate(net_worth_invoice(gross='165,01'))
+
+    def test_missing_line_evidence_blocks_the_offer(self):
+        self.assert_no_candidate(net_worth_invoice(lines=()))
+        doc=net_worth_invoice(lines=(('Item A','100,00'),('Item B','5O,OO')))
+        self.assert_no_candidate(doc)
+
+    def test_adjustments_block_the_offer(self):
+        for label in ('Discount','Shipping','Rounding','Allowances','Deposit'):
+            with self.subTest(label=label):
+                self.assert_no_candidate(net_worth_invoice(extra=[(label,20,400,120,420),('1,00',440,400,550,420)]))
+
+    def test_discount_column_anywhere_blocks_the_offer(self):
+        self.assert_no_candidate(net_worth_invoice(extra=[('Disc.',200,60,240,80)]))
+
+    def test_several_tax_rate_rows_block_the_offer(self):
+        self.assert_no_candidate(net_worth_invoice(extra=[('20%',160,342,200,358)]))
+
+    def test_printed_subtotal_is_used_instead_of_any_offer(self):
+        doc=net_worth_invoice(extra=[('Subtotal:',20,400,120,420),('150,00',140,400,230,420)])
+        cell=field(doc,'subtotal')
+        self.assertEqual((cell['mapping_status'],cell['value']),('mapped','150.00'))
+        self.assertFalse(any('candidate_basis' in e for c in cell['candidates'] for e in c['evidence']))
+
+    def test_conflicting_net_worth_values_block_the_offer(self):
+        doc=net_worth_invoice()
+        doc['m2_text_lines'].append({'text':'$ 151,00','self_ref':'#/m2_text_lines/99','label':'text','from_ocr':True,'ocr_score':.8,
+            'prov':[{'page_no':1,'bbox':dict(l=240,t=361,r=320,b=379,coord_origin='TOPLEFT')}]})
+        self.assert_no_candidate(doc)
+
+    def test_bills_never_receive_the_offer(self):
+        doc=net_worth_invoice()
+        doc['m2_text_lines'][0]['text']='UTILITY BILL'
+        self.assertEqual(field(doc,'subtotal')['candidates'],[])
+
+    def test_candidate_never_becomes_the_effective_value(self):
+        from services.extraction.contracts.accounting_contract import record_values
+        raw,mapped=contract(net_worth_invoice())
+        self.assertIsNone(record_values([next(f for f in mapped['fields'] if f['field_key']=='subtotal')])['subtotal'])
+
+    def test_guidance_explains_the_printed_tax_exclusive_total(self):
+        from services.extraction.contracts.reliability import field_guidance
+        raw,mapped=contract(net_worth_invoice())
+        row={**next(f for f in mapped['fields'] if f['field_key']=='subtotal'),'corrected_by':None,'corrected_at':None}
+        warning=next(w for w in field_guidance(row)['warnings'] if w['code']=='SUBTOTAL_TAX_EXCLUSIVE_CANDIDATE')
+        self.assertIn('tax-exclusive total (Net worth)',warning['message'])
+        self.assertIn('does not label a subtotal',warning['message'])
+        self.assertEqual(row['confidence'],None)
+
+    def test_non_numeric_candidate_skips_the_offer_without_failing_extraction(self):
+        from services.extraction.parsing.map_invoice import mapped_field,pretax_structure
+        evidence=[{'bbox':{'l':1,'t':1,'r':2,'b':2},'page':1,'text':'Net worth','source_ref':'#/a'}]
+        fields={'subtotal':mapped_field(),'total_excluding_tax':mapped_field('n','1.00',evidence,'mapped',[{'raw_text':'n','value':'EUR 1.00','evidence':evidence}])}
+        result=pretax_structure({'pages':{},'texts':[]},fields,[{'line_total':mapped_field('1','1.00',[{'amount_basis':'net_excluding_tax','bbox':{}}],'mapped')}])
+        self.assertFalse(result['eligible'])
+        self.assertIn('UNSUPPORTED_TAX_EXCLUSIVE_VALUE',result['blockers'])
+
+
+class PretaxBasisValidationTests(unittest.TestCase):
+    """validation-v2.1: a printed tax-exclusive total can be the arithmetic basis."""
+    IDENTITY=[('Supplier: Acme Trading',20,420,300,440),('Invoice number: X-42',20,450,300,470),('Date: 2020-01-31',20,480,300,500)]
+
+    def evaluate(self,doc,change=None):
+        from validation.documents.document_validation import evaluate_document
+        for i,(text,l,t,r,b) in enumerate(self.IDENTITY):
+            doc['m2_text_lines'].append({'text':text,'self_ref':f'#/m2_text_lines/id{i}','label':'text','from_ocr':True,'ocr_score':.8,
+                'prov':[{'page_no':1,'bbox':dict(l=l,t=t,r=r,b=b,coord_origin='TOPLEFT')}]})
+        raw,mapped=contract(doc)
+        fields=[{**row,'corrected_by':None,'corrected_at':None} for row in mapped['fields']]
+        # Printed quantity/price cells are not what these tests vary; field errors
+        # would otherwise stop the model's arithmetic validators from running at all.
+        items=[{**row,'id':str(i),'quantity':'1.000','unit_price':row['amount']} for i,row in enumerate(mapped['line_items'])]
+        if change: change(raw,fields,items)
+        result=evaluate_document({'id':'SYN-PROFILE','kind':'invoice','category':'accounts_payable'},{'raw_json':raw},fields,items,None)
+        return result,fields
+
+    def codes(self,result):
+        return {(e['code'],e['field']) for e in result['errors']}
+
+    def basis_check(self,result):
+        return next((c for c in result['checks'] if c['rule']=='PRETAX-BASIS'),None)
+
+    def test_supported_structure_satisfies_the_pretax_requirement(self):
+        result,fields=self.evaluate(net_worth_invoice(unit='USD'))
+        self.assertNotIn(('EX-001','subtotal'),self.codes(result))
+        self.assertEqual(self.basis_check(result)['result'],'PASS')
+        row=next(f for f in fields if f['field_key']=='subtotal')
+        self.assertEqual((row['current_value'],row['normalized_value'],row['extraction_state']),(None,None,'missing'))
+        self.assertNotIn('EX-002',{c for c,_ in self.codes(result)})
+
+    def test_lines_that_disagree_still_fail_as_arithmetic(self):
+        result,_=self.evaluate(net_worth_invoice(unit='USD',lines=(('Item A','100,00'),('Item B','40,00'))))
+        found={c:f for c,f in self.codes(result)}
+        self.assertEqual(found.get('EX-004'),'total_excluding_tax')
+        message=next(e['message'] for e in result['errors'] if e['code']=='EX-004')
+        self.assertIn('printed tax-exclusive total',message)
+
+    def test_total_that_disagrees_still_fails_as_arithmetic(self):
+        result,_=self.evaluate(net_worth_invoice(unit='USD',gross='170,00'))
+        self.assertIn('EX-005',{c for c,_ in self.codes(result)})
+
+    def assert_requirement_stays(self,result):
+        self.assertIn(('EX-001','subtotal'),self.codes(result))
+        self.assertEqual(self.basis_check(result)['checkStatus'],'NOT_CHECKED')
+
+    def test_printed_adjustments_keep_the_requirement(self):
+        for label in ('Discount','Shipping','Rounding','Allowances','Deposit'):
+            with self.subTest(label=label):
+                self.assert_requirement_stays(self.evaluate(net_worth_invoice(unit='USD',extra=[(label,20,400,120,420),('1,00',440,400,550,420)]))[0])
+
+    def assert_subtotal_derived_from_lines(self,result):
+        # D5: complete line amounts that reach the total exactly support the invoice. The stored subtotal stays empty.
+        self.assertNotIn(('EX-001','subtotal'),self.codes(result))
+        self.assertEqual(self.basis_check(result)['checkStatus'],'NOT_CHECKED')
+        self.assertTrue(any(c['rule']=='SUBTOTAL-DERIVED' for c in result['checks']))
+
+    def test_several_tax_rows_no_longer_block_when_the_lines_reach_the_total(self):
+        self.assert_subtotal_derived_from_lines(self.evaluate(net_worth_invoice(unit='USD',extra=[('20%',160,342,200,358)]))[0])
+
+    def test_missing_line_items_keep_the_requirement(self):
+        self.assert_requirement_stays(self.evaluate(net_worth_invoice(unit='USD',lines=()))[0])
+
+    def test_conflicting_net_worth_keeps_the_requirement(self):
+        doc=net_worth_invoice(unit='USD')
+        doc['m2_text_lines'].append({'text':'USD 151,00','self_ref':'#/m2_text_lines/99','label':'text','from_ocr':True,'ocr_score':.8,
+            'prov':[{'page_no':1,'bbox':dict(l=240,t=361,r=320,b=379,coord_origin='TOPLEFT')}]})
+        self.assertIn(('EX-001','subtotal'),self.codes(self.evaluate(doc)[0]))
+
+    def test_comma_amount_on_an_adjustment_label_does_not_fail_the_contract(self):
+        raw,mapped=contract(net_worth_invoice(extra=[('Allowances:',20,400,120,420),('1,00',140,400,230,420)]))
+        self.assertEqual(next(f for f in mapped['fields'] if f['field_key']=='allowances')['current_value'],'1.00')
+
+    def test_later_correction_adding_a_discount_revokes_the_basis(self):
+        def change(raw,fields,items):
+            fields.append({'field_key':'discount','field_label':'Discount','extraction_state':'missing','resolution':'unresolved_missing',
+                           'current_value':'5.00','normalized_value':None,'corrected_by':'actor','corrected_at':'now','evidence':[],'candidates':[]})
+        self.assert_requirement_stays(self.evaluate(net_worth_invoice(unit='USD'),change)[0])
+
+    def test_unresolved_line_amount_keeps_the_requirement(self):
+        def change(raw,fields,items):
+            items[0]['amount']=None
+        self.assert_requirement_stays(self.evaluate(net_worth_invoice(unit='USD'),change)[0])
+
+    def test_tax_exclusive_total_without_source_evidence_falls_back_to_the_lines(self):
+        def change(raw,fields,items):
+            next(f for f in fields if f['field_key']=='total_excluding_tax')['evidence']=[]
+        self.assert_subtotal_derived_from_lines(self.evaluate(net_worth_invoice(unit='USD'),change)[0])
+
+    def test_tampered_or_older_extraction_without_structure_falls_back_to_the_lines(self):
+        def change(raw,fields,items):
+            raw.pop('pretax_structure')
+        self.assert_subtotal_derived_from_lines(self.evaluate(net_worth_invoice(unit='USD'),change)[0])
+
+    def test_printed_subtotal_is_still_the_basis_when_present(self):
+        doc=net_worth_invoice(unit='USD',extra=[('Subtotal:',20,400,120,420),('150,00',140,400,230,420)])
+        result,_=self.evaluate(doc)
+        self.assertIsNone(self.basis_check(result))
+        self.assertNotIn(('EX-001','subtotal'),self.codes(result))
+
+    def test_human_confirmed_subtotal_is_used_directly(self):
+        def change(raw,fields,items):
+            row=next(f for f in fields if f['field_key']=='subtotal')
+            row.update(current_value='150.00',corrected_by='actor',corrected_at='now')
+        result,fields=self.evaluate(net_worth_invoice(unit='USD'),change)
+        self.assertIsNone(self.basis_check(result))
+        self.assertNotIn(('EX-001','subtotal'),self.codes(result))
+
+    def test_ambiguous_currency_still_blocks_after_the_basis(self):
+        result,_=self.evaluate(net_worth_invoice())
+        self.assertEqual(self.basis_check(result)['result'],'PASS')
+        currency=[e for e in result['errors'] if e['field']=='currency']
+        self.assertEqual(len(currency),1)
+        self.assertEqual((currency[0]['code'],currency[0]['severity'],currency[0]['relatedRules']),('EX-002','high',['PROFILE-REQUIRED']))
+
+    def test_arithmetic_still_runs_when_only_currency_is_unresolved(self):
+        result,_=self.evaluate(net_worth_invoice(lines=(('Item A','100,00'),('Item B','40,00'))))
+        self.assertIn('EX-004',{c for c,_ in self.codes(result)})
+        self.assertEqual(next(e for e in result['errors'] if e['field']=='currency')['cause'],'UNCERTAIN_SOURCE_VALUE')
+
+    def test_arithmetic_runs_and_passes_with_unresolved_currency(self):
+        result,_=self.evaluate(net_worth_invoice())
+        passed={c['rule'] for c in result['checks'] if c['checkStatus']=='CHECKED' and c['result']=='PASS'}
+        self.assertTrue({'EX-004','EX-005'}<=passed)
+
+    def test_conflicting_currencies_stop_cross_amount_comparison(self):
+        doc=net_worth_invoice(unit='USD',extra=[('SGD 1.00',20,400,120,420)])
+        result,_=self.evaluate(doc)
+        self.assertEqual(next(e for e in result['errors'] if e['field']=='currency')['cause'],'CONFLICTING_VALUES')
+        check=next(c for c in result['checks'] if c['rule']=='ARITHMETIC-PREREQ')
+        self.assertEqual(check['checkStatus'],'NOT_CHECKED')
+
+    def test_causes_keep_unlike_findings_apart(self):
+        from validation.documents.document_validation import exception_cause as c
+        self.assertEqual(c('EX-001','currency','Field required'),'MISSING_SOURCE_VALUE')
+        self.assertEqual(c('EX-002','date','Dates require YYYY-MM-DD.'),'INVALID_FORMAT')
+        self.assertEqual(c('EX-004','subtotal','x'),'ARITHMETIC_FAILURE')
+        self.assertEqual(c('BR-CO-13','total_excluding_tax','x'),'ARITHMETIC_FAILURE')
+        self.assertEqual(c('EX-008','supplier','x'),'UNKNOWN_VENDOR')
+        self.assertEqual(c('EX-007','invoice','x'),'POSSIBLE_DUPLICATE')
+        self.assertEqual(c('EX-002','document_type','x'),'CLASSIFICATION_MISMATCH')
+        self.assertEqual(c('BILL-REQUIRED','date','x'),'MISSING_SOURCE_VALUE')
+
+    def blocking_checks(self,result):
+        return {c['rule'] for c in result['checks'] if c['checkStatus']=='NOT_CHECKED' and c.get('required',True)}
+
+    def test_checks_with_nothing_on_the_document_do_not_block_approval(self):
+        result,_=self.evaluate(net_worth_invoice(unit='USD'))
+        self.assertEqual(self.blocking_checks(result)&{'BR-CO-10','BR-CO-14','BR-CO-16','EX-009'},set())
+        self.assertEqual({c['rule'] for c in result['checks'] if c['rule']=='EX-009'},{'EX-009'})
+
+    def test_vendor_control_still_blocks_without_a_catalogue(self):
+        self.assertIn('EX-008',self.blocking_checks(self.evaluate(net_worth_invoice(unit='USD'))[0]))
+
+    def test_printed_po_that_cannot_be_found_still_fails(self):
+        def change(raw,fields,items):
+            fields.append({'field_key':'purchase_order_number','field_label':'PO','extraction_state':'resolved','resolution':'parser_preserved',
+                           'current_value':'PO-1','normalized_value':'PO-1','corrected_by':None,'corrected_at':None,'evidence':[],'candidates':[]})
+        result,_=self.evaluate(net_worth_invoice(unit='USD'),change)
+        # With no database in this test the order data is unavailable, which is not the same as no such order.
+        check=next(c for c in result['checks'] if c['rule']=='EX-009')
+        self.assertEqual((check['checkStatus'],check['required']),('NOT_CHECKED',True))
+
+    def test_consolidation_keeps_unrelated_errors_and_highest_severity(self):
+        from validation.documents.document_validation import consolidate_errors
+        errors=[{'code':'EX-001','field':'vendor_name','severity':'medium','message':'m'},
+                {'code':'PROFILE-REQUIRED','field':'supplier','severity':'high','message':'p'},
+                {'code':'PROFILE-REQUIRED','field':'date','severity':'high','message':'alone'},
+                {'code':'EX-004','field':'subtotal','severity':'high','message':'x'}]
+        result=consolidate_errors(errors)
+        self.assertEqual([(e['code'],e['field'],e['severity']) for e in result],
+                         [('EX-001','vendor_name','high'),('PROFILE-REQUIRED','date','high'),('EX-004','subtotal','high')])
+        self.assertEqual(result[0]['relatedRules'],['PROFILE-REQUIRED'])
+
+
+class OcrLabelAndRoleTests(unittest.TestCase):
+    def identity(self,date_label='Dateof issue:'):
+        return {'schema_name':'DoclingDocument','pages':{'1':{'size':{'width':600,'height':900}}},'texts':[],'m2_text_lines':[
+            {'text':text,'self_ref':f'#/m2_text_lines/{i}','label':'text','from_ocr':True,'ocr_score':.9,
+             'prov':[{'page_no':1,'bbox':dict(l=l,t=t,r=r,b=b,coord_origin='TOPLEFT')}]}
+            for i,(text,l,t,r,b) in enumerate([('Invoice no: 12345',20,20,200,40),(date_label,20,50,140,70),('04/13/2013',250,50,340,70),
+                ('Seller:',20,90,90,110),('Client:',300,90,370,110),('Acme Trading',20,120,150,140),('Beta Stores',300,120,420,140),
+                ('Description',20,200,120,220),('Qty',200,200,240,220),('Net price',260,200,330,220),('Net worth',350,200,420,220),
+                ('Widget',20,230,120,250),('1,00',200,230,240,250),('10,00',260,230,330,250),('10,00',350,230,420,250),
+                ('Total',20,300,80,320),('$ 10,00',350,300,420,320)])]}
+
+    def test_dropped_word_gap_keeps_classification_and_fields(self):
+        from services.extraction.classification.classify_document import classify_document
+        doc=self.identity()
+        self.assertEqual(classify_document(doc)['value'],'invoice')
+        self.assertEqual(field(doc,'invoice_date')['value'],'2013-04-13')
+        self.assertEqual(field(doc,'invoice_number')['value'],'12345')
+
+    def test_supplier_and_customer_roles_stay_separate(self):
+        doc=self.identity()
+        self.assertEqual(field(doc,'supplier_name')['value'],'Acme Trading')
+        self.assertEqual(field(doc,'buyer_name')['value'],'Beta Stores')
+
+    def test_identifier_alone_does_not_classify(self):
+        from services.extraction.classification.classify_document import classify_document
+        doc=self.identity()
+        doc['m2_text_lines']=doc['m2_text_lines'][:1]
+        self.assertEqual(classify_document(doc)['value'],'unknown')
+
+    def test_letterhead_above_title_is_the_issuer(self):
+        doc=layout('Alpha Supplies Sdn Bhd',[('TAX INVOICE',200,50,400,70),('Beta Retail Sdn Bhd',20,90,240,110)])
+        self.assertEqual(field(doc,'supplier_name')['value'],'Alpha Supplies Sdn Bhd')
+
+    def test_two_entities_above_title_stay_in_conflict(self):
+        doc=layout('Alpha Supplies Sdn Bhd',[('Beta Retail Sdn Bhd',20,40,240,58),('TAX INVOICE',200,70,400,90)])
+        cell=field(doc,'supplier_name')
+        self.assertEqual((cell['mapping_status'],cell['value']),('ambiguous',None))
+
+    def test_item_number_header_is_not_an_invoice_number(self):
+        doc=layout('INVOICE',[('No.',20,60,60,80),('1.',20,90,60,110),('No. : 12',20,120,100,140)])
+        self.assertIsNone(field(doc,'invoice_number')['value'])
+
+    def test_printed_no_label_supplies_a_missing_invoice_number(self):
+        doc=layout('TAX INVOICE',[('No. : I-000010',300,10,500,30)])
+        self.assertEqual(field(doc,'invoice_number')['value'],'I-000010')
+
+    def test_missing_invoice_number_stays_missing(self):
+        cell=field(layout('INVOICE',[('Total Amount:',20,60,180,80),('10.00',200,60,300,80)]),'invoice_number')
+        self.assertEqual((cell['mapping_status'],cell['value']),('missing',None))
+
+    def test_ambiguous_day_month_order_stays_unresolved(self):
+        cell=field(layout('INVOICE',[('Date of issue:',20,60,140,80),('04/01/2017',160,60,260,80)]),'invoice_date')
+        self.assertEqual((cell['mapping_status'],cell['value']),('ambiguous',None))
+        self.assertEqual(cell['candidates'][0]['value'],'04/01/2017')
+
+    def test_unreadable_empty_ocr_produces_no_values(self):
+        from services.extraction.classification.classify_document import classify_document
+        doc={'schema_name':'DoclingDocument','pages':{'1':{'size':{'width':600,'height':900}}},'texts':[],'m2_text_lines':[]}
+        self.assertEqual(classify_document(doc)['value'],'unknown')
+        self.assertEqual(field(layout('INVOICE',[]),'total_amount')['value'],None)
+
+    def test_high_ocr_score_does_not_change_field_assignment_or_confidence(self):
+        doc=layout('INVOICE',[('Total Amount:',20,60,180,80),('Page 1',200,60,300,80)])
+        for line in doc['m2_text_lines']:
+            line['ocr_score']=.999
+        cell=field(doc,'total_amount')
+        self.assertEqual(cell['value'],None)
+        raw,mapped=contract(doc)
+        self.assertTrue(all(row['confidence'] is None for row in mapped['fields']))
+
+
+class UtilityBillLayoutTests(unittest.TestCase):
+    def bill(self,heading=(('TAX',500,20,540,40),('INVOICE',535,20,600,40)),account='CUST0012345'):
+        return layout('EnerGov Utilities Ltd',[*heading,('INVOICE NO.',20,60,120,75),('DATE',200,60,250,75),('DUE DATE',320,60,400,75),
+            ('ACCOUNT NO.',440,60,540,75),('INV-1',20,80,120,95),('15/06/2023',200,80,290,95),('15/07/2023',320,80,410,95),(account,440,80,540,95),
+            ('Amount Due',400,120,500,140),('£153.15',400,145,500,170),('DESCRIPTION',20,200,140,220),('AMOUNT (GBP)',430,200,540,220),
+            ('Electricity Supply Charge',20,230,240,250),('153.15',430,230,540,250),('Net Total',300,300,400,320),('153.15',430,300,540,320),
+            ('GRAND TOTAL',430,350,540,370),('£153.15',430,375,540,395)])
+
+    def test_split_tax_invoice_heading_is_compatible_with_utility_evidence(self):
+        from services.extraction.classification.classify_document import classify_document
+        result=classify_document(self.bill())
+        self.assertEqual((result['value'],result['status']),('bill','classified'))
+
+    def test_distant_tax_word_does_not_complete_the_heading(self):
+        from services.extraction.classification.classify_document import classify_document
+        result=classify_document(self.bill(heading=(('TAX',20,500,60,520),('INVOICE',535,20,600,40))))
+        self.assertEqual((result['value'],result['status']),('unknown','ambiguous'))
+
+    def test_net_total_is_the_bill_subtotal_with_its_printed_evidence(self):
+        cell=field(self.bill(),'subtotal')
+        self.assertEqual((cell['mapping_status'],cell['value']),('mapped','153.15'))
+        self.assertTrue(cell['raw_text'].startswith('Net Total'))
+        self.assertTrue(all(e['bbox'] for e in cell['evidence']))
+
+    def test_bill_amount_meanings_stay_distinct(self):
+        doc=self.bill()
+        self.assertEqual(field(doc,'amount_due')['value'],'153.15')
+        self.assertEqual(field(doc,'document_charges')['value'],None)
+
+    def test_column_account_number_is_read_but_placeholder_is_not(self):
+        self.assertEqual(field(self.bill(),'account_number')['value'],'CUST0012345')
+        self.assertEqual(field(self.bill(account='N/A'),'account_number')['value'],None)
+
+    def test_net_total_on_an_invoice_stays_tax_exclusive(self):
+        doc=layout('INVOICE',[('Net Total',20,60,120,80),('10.00',200,60,300,80)])
+        self.assertEqual(field(doc,'total_excluding_tax')['value'],'10.00')
+        self.assertEqual(field(doc,'subtotal')['value'],None)
+
+
+class ReceiptHeaderTests(unittest.TestCase):
+    def receipt(self,*lines):
+        cells=[(text,20,50+i*25,300,70+i*25) for i,text in enumerate(lines)]
+        tail=len(lines)*25+100
+        return layout('Example',cells+[('Cashier: Ann',20,tail,200,tail+20),('Date: 31/01/2020',20,tail+25,200,tail+45),('Total:',20,tail+50,120,tail+70),('10.00',200,tail+50,300,tail+70)])
+
+    def test_registration_line_does_not_end_the_address(self):
+        doc=self.receipt('OJC Marketing Sdn Bhd','ROC NO: 538358-H','No 2 & 4, Jalan Bayu 4,','Bandar Seri Alam,','Tel: 07-388 2218')
+        doc['m2_text_lines'][0]['text']='RECEIPT'
+        from services.extraction.classification.classify_document import classify_document
+        doc['m2_text_lines'][0]['prov'][0]['bbox'].update(t=10,b=30)
+        self.assertEqual(field(doc,'merchant')['value'],'OJC Marketing Sdn Bhd')
+        self.assertEqual(field(doc,'merchant_address')['value'],'No 2 & 4, Jalan Bayu 4,\nBandar Seri Alam,')
+
+    def test_former_name_is_not_the_merchant_or_part_of_the_address(self):
+        doc=self.receipt('Gerbang Alaf Restaurants Sdn Bhd','(65351-M)','formerly known as','Golden Arches Restaurants Sdn Bhd','Licensee of McDonalds','Level6, Bangunan TH,','Damansara Uptown3','Tel No.: 03-4147')
+        doc['m2_text_lines'][0]['text']='RECEIPT'
+        self.assertEqual(field(doc,'merchant')['value'],'Gerbang Alaf Restaurants Sdn Bhd')
+        self.assertEqual(field(doc,'merchant_address')['value'],'Level6, Bangunan TH,\nDamansara Uptown3')
+
+    def test_former_name_with_overlapping_ocr_boxes_is_still_former(self):
+        doc=layout('RECEIPT',[('Current Foods Sdn Bhd',20,50,300,68),('formerly known as',60,66,240,86),('Former Foods Sdn Bhd',20,82,300,102),
+            ('12 Jalan Bayu',20,106,300,124),('Cashier: Ann',20,160,200,180),('Date: 31/01/2020',20,185,200,205),('Total:',20,210,120,230),('10.00',200,210,300,230)])
+        self.assertEqual(field(doc,'merchant')['value'],'Current Foods Sdn Bhd')
+
+    def test_two_current_names_still_stay_unresolved(self):
+        doc=self.receipt('Alpha Stores Sdn Bhd','Beta Stores Sdn Bhd','12 Jalan Bayu')
+        doc['m2_text_lines'][0]['text']='RECEIPT'
+        cell=field(doc,'merchant')
+        self.assertEqual((cell['mapping_status'],cell['value']),('ambiguous',None))
+
+
+class PosDocumentTests(unittest.TestCase):
+    """The printed layouts behind two reviewer reports, built from their OCR line positions."""
+
+    @staticmethod
+    def document(lines, width=425, height=691):
+        entries = [{'self_ref': f'#/m2_text_lines/{i}', 'text': text, 'label': 'text', 'from_ocr': True,
+                    'prov': [{'page_no': 1, 'bbox': {'l': l, 't': t, 'r': r, 'b': b, 'coord_origin': 'TOPLEFT'}}]}
+                   for i, (l, t, r, b, text) in enumerate(lines)]
+        return {'schema_name': 'DoclingDocument', 'version': '1.8.0', 'origin': {'filename': 'pos.pdf'},
+                'pages': {'1': {'size': {'width': width, 'height': height}}}, 'texts': [], 'tables': [], 'm2_text_lines': entries}
+
+    SL = [(0, 2, 88, 30, 'Invoice'), (0, 30, 149, 53, '-- Reprint Receipt --'), (0, 56, 336, 79, 'SL SOFTWARE SOLUTIONS SDN. BHD.'),
+          (0, 78, 264, 106, '(201601010552(1181482-M))'), (0, 104, 228, 127, 'NO 231 A,JALAN PASIR PUTEH,'), (0, 126, 140, 149, '31650IPOH,PERAK'),
+          (0, 200, 216, 220, 'DocumentNo.: T01-000008'), (0, 224, 48, 246, 'Date:'), (126, 224, 309, 246, '29/12/2023 10:22:56 AM'),
+          (0, 294, 68, 316, 'Cashier :'), (126, 296, 184, 314, 'ADMIN'),
+          (0, 330, 43, 352, 'DESC'), (127, 331, 196, 350, 'U. PRICE'), (236, 332, 274, 350, 'Disc'), (283, 332, 356, 350, 'AMOUNT'),
+          (11, 355, 48, 378, 'QTY'), (167, 356, 196, 376, 'RM'), (326, 356, 356, 376, 'RM'),
+          (0, 393, 148, 413, 'Chicken Floss Toast'), (26, 417, 86, 438, '1.00 PC'), (109, 419, 123, 432, '*'), (180, 418, 216, 438, '9.30'), (242, 418, 278, 438, '0.00'), (324, 418, 360, 438, '9.30'),
+          (0, 443, 70, 468, 'Earl Grey'), (26, 469, 87, 490, '1.00 PC'), (108, 471, 123, 484, '*'), (180, 469, 217, 490, '8.90'), (242, 469, 278, 490, '0.00'), (324, 469, 360, 490, '8.90'),
+          (134, 507, 218, 529, 'Sub Total :'), (320, 508, 364, 528, '18.20'), (96, 535, 218, 556, 'Service Charge :'), (328, 536, 363, 554, '1.82'),
+          (44, 560, 218, 582, 'Rounding Adjustment:'), (321, 561, 363, 579, '-0.02'), (8, 589, 220, 618, 'Rounded Total (RM):'), (302, 591, 366, 614, '20.00'),
+          (31, 665, 72, 686, 'Cash'), (333, 666, 378, 686, '20.00')]
+    CROSS = [(74, 60, 265, 72, 'CROSS CHANNEL NETWORK SDN. BHD.'), (94, 72, 245, 86, '47, JALAN MERANTI 1, SEK. 3,'), (88, 97, 250, 111, '44300 BATANG KALI, SELANGOR.'),
+             (68, 109, 270, 124, 'Tel : 03-6057 9688 Fax : 03-6057 9678'), (112, 122, 219, 135, 'GST ID :001151500288'), (128, 134, 202, 150, 'Tax Invoice'), (206, 142, 286, 156, 'No.:BTG-052332'),
+             (214, 156, 236, 172, 'Qty'), (244, 156, 287, 170, 'RM Tax'), (42, 170, 204, 184, 'SCHNEIDER E15R 13A SWITCH'), (220, 170, 231, 183, '1'), (241, 170, 284, 184, '6.36 SR'),
+             (42, 183, 184, 196, 'SOCKET OUTLET @ 6.0000'), (64, 199, 198, 214, 'Total Amt Incl. GST @ 6%:'), (212, 200, 236, 214, '6.36'),
+             (86, 210, 198, 224, 'Rounding Adjustment :'), (208, 211, 236, 224, '-0.01'), (101, 221, 198, 235, 'Total Amt Payable:'), (212, 222, 236, 235, '6.35'),
+             (126, 231, 198, 244, 'Paid Amount:'), (206, 232, 237, 244, '10.00'), (152, 240, 198, 254, 'Change:'), (211, 240, 237, 254, '3.65'),
+             (66, 264, 137, 280, 'GST Summary'), (166, 266, 208, 280, 'Amount'), (254, 264, 276, 278, 'Tax'), (64, 292, 106, 308, 'SR @ A'), (182, 292, 207, 306, '6.00'), (250, 292, 276, 306, '0.36'),
+             (60, 307, 95, 324, 'Total.'), (180, 308, 208, 322, '6.00'), (251, 310, 275, 321, '0.36'), (153, 322, 222, 336, 'THANK YOU'), (118, 372, 235, 386, '29/01/2018 4:40:40 PM')]
+
+    def mapped(self, lines):
+        from services.extraction.parsing.map_invoice import map_document
+        return map_document(self.document(lines))
+
+    def test_invoice_with_reprint_receipt_marker_stays_an_invoice_with_the_marker_kept(self):
+        from services.extraction.classification.classify_document import classify_document
+        result = classify_document(self.document(self.SL))
+        self.assertEqual((result['value'], result['status']), ('invoice', 'classified'))
+        self.assertEqual([c['value'] for c in result['candidates']], ['invoice'])
+        self.assertEqual({(s['kind'], s['text']) for s in result['signals']},
+                         {('copy_marker', '-- Reprint Receipt --'), ('payment_cue', 'Cash')})
+
+    def test_copy_marker_alone_names_the_document(self):
+        from services.extraction.classification.classify_document import classify_document
+        result = classify_document(self.document([(0, 0, 200, 20, '-- Reprint Receipt --'), (0, 30, 200, 50, 'Some Shop')]))
+        self.assertEqual(result['value'], 'receipt')
+
+    def test_paid_invoice_heading_is_an_invoice(self):
+        from services.extraction.classification.classify_document import classify_document
+        self.assertEqual(classify_document(self.document([(0, 0, 200, 20, 'Paid Invoice')]))['value'], 'invoice')
+
+    def test_pos_invoice_values_come_from_their_printed_labels(self):
+        result = self.mapped(self.SL)
+        values = {key: cell['value'] for key, cell in result['fields'].items()}
+        self.assertEqual(values['invoice_number'], 'T01-000008')
+        self.assertEqual(values['invoice_date'], '2023-12-29')
+        self.assertEqual(values['subtotal'], '18.20')
+        self.assertEqual(values['document_charges'], '1.82')
+        self.assertEqual(values['rounding_amount'], '-0.02')
+        self.assertEqual(values['total_amount'], '20.00')
+        self.assertEqual(values['supplier_name'], 'SL SOFTWARE SOLUTIONS SDN. BHD.')
+        self.assertEqual(values['supplier_address'], 'NO 231 A,JALAN PASIR PUTEH,\n31650IPOH,PERAK')
+        self.assertIsNone(values['tax_amount'], 'No tax is printed, so none may be invented.')
+        self.assertEqual(result['fields']['invoice_date']['raw_text'], 'Date:\n29/12/2023 10:22:56 AM')
+        for key in ('invoice_number', 'invoice_date', 'total_amount', 'document_charges', 'rounding_amount'):
+            self.assertTrue(all(e['bbox'] and e['source_ref'] for e in result['fields'][key]['evidence']), key)
+
+    def test_stacked_rows_keep_their_printed_cells(self):
+        rows = self.mapped(self.SL)['line_items']
+        self.assertEqual([(r['description']['value'], r['quantity']['value'], r['unit_price']['value'], r['line_total']['value']) for r in rows],
+                         [('Chicken Floss Toast', '1.00', '9.30', '9.30'), ('Earl Grey', '1.00', '8.90', '8.90')])
+
+    def test_stacked_rows_are_not_published_if_a_row_does_not_multiply_out(self):
+        lines = [row if row[4] != '8.90' or row[0] != 180 else (180, 469, 217, 490, '7.90') for row in self.SL]
+        self.assertEqual(self.mapped(lines)['line_items'], [])
+
+    def test_stacked_rows_are_not_published_if_they_miss_every_printed_total(self):
+        lines = [(l, t, r, b, {'18.20': '18.25', '20.00': '20.05'}.get(text, text)) for l, t, r, b, text in self.SL]
+        self.assertEqual(self.mapped(lines)['line_items'], [])
+
+    def test_a_morning_or_ambiguous_timestamp_stays_honest(self):
+        from services.extraction.layout.layout_headers import normalized_date
+        self.assertEqual(normalized_date('29/12/2023 10:22:56 AM'), '2023-12-29')
+        with self.assertRaises(ValueError):
+            normalized_date('04/01/2017 10:22:56 AM')
+
+    def test_receipt_number_beside_a_tax_invoice_heading_is_the_document_reference(self):
+        result = self.mapped(self.CROSS)
+        self.assertEqual(result['provenance']['document_profile'], 'receipt')
+        cell = result['fields']['receipt_number']
+        self.assertEqual(cell['value'], 'BTG-052332')
+        self.assertEqual({e.get('printed_heading') for e in cell['evidence']}, {'Tax Invoice'})
+        self.assertNotIn('invoice_number', result['fields'])
+
+    def test_no_number_is_taken_without_a_heading_beside_it(self):
+        lines = [row for row in self.CROSS if row[4] != 'Tax Invoice']
+        self.assertIsNone(self.mapped(lines)['fields'].get('receipt_number', {}).get('value'))
+
+    def test_two_numbers_beside_the_heading_are_not_chosen_between(self):
+        lines = self.CROSS + [(128, 150, 200, 164, 'No.:BTG-999999')]
+        self.assertIsNone(self.mapped(lines)['fields'].get('receipt_number', {}).get('value'))
+
+    def test_receipt_time_comes_from_the_printed_timestamp(self):
+        self.assertEqual(self.mapped(self.CROSS)['fields']['transaction_time']['value'], '16:40:40')
+
+    def test_one_digit_hour_without_am_or_pm_is_left_unresolved(self):
+        lines = [(l, t, r, b, text.replace(' 4:40:40 PM', ' 4:40:40')) for l, t, r, b, text in self.CROSS]
+        self.assertIsNone(self.mapped(lines)['fields']['transaction_time']['value'])
+
+    def test_receipt_components_stay_in_their_own_fields(self):
+        values = {key: cell['value'] for key, cell in self.mapped(self.CROSS)['fields'].items()}
+        self.assertEqual((values['total_excluding_tax'], values['tax_amount'], values['total_including_tax'],
+                          values['rounding_amount'], values['total_amount'], values['tendered_amount'], values['change_given']),
+                         ('6.00', '0.36', '6.36', '-0.01', '6.35', '10.00', '3.65'))
+        self.assertIsNone(values['subtotal'], 'A GST summary base is not a printed subtotal.')
+
+
+class SourceFactTests(unittest.TestCase):
+    """Facts extraction hands to validation. None of them is an accounting decision."""
+
+    @staticmethod
+    def document(lines):
+        return {'schema_name': 'DoclingDocument', 'version': '1.8.0', 'origin': {'filename': 'x.pdf'}, 'pages': {'1': {'size': {'width': 500, 'height': 800}}},
+                'texts': [], 'tables': [], 'm2_text_lines': [
+                    {'self_ref': f'#/m2_text_lines/{i}', 'text': text, 'label': 'text', 'from_ocr': True,
+                     'prov': [{'page_no': 1, 'bbox': {'l': l, 't': t, 'r': r, 'b': t + 15, 'coord_origin': 'TOPLEFT'}}]}
+                    for i, (l, t, r, text) in enumerate(lines)]}
+
+    def test_tax_wording_is_kept_apart(self):
+        from services.extraction.layout.layout_headers import tax_statement
+        self.assertEqual(tax_statement(self.document([(0, 0, 200, 'This supply is non-taxable')]))['status'], 'exempt')
+        self.assertEqual(tax_statement(self.document([(0, 0, 200, 'Prices inclusive of SST')]))['status'], 'inclusive')
+        self.assertIsNone(tax_statement(self.document([(0, 0, 200, 'Thank you')])))
+
+    def test_item_structure(self):
+        from services.extraction.layout.layout_rows import item_structure
+        self.assertEqual(item_structure(self.document([]), [{'x': 1}])['status'], 'itemized')
+        self.assertEqual(item_structure(self.document([(0, 0, 80, 'Description'), (300, 0, 400, 'Amount')]), [])['status'], 'unmapped_rows')
+        self.assertEqual(item_structure(self.document([(0, 0, 80, 'Total'), (300, 0, 400, '10.00')]), [])['status'], 'not_itemized')
+
+    def test_bill_components_keep_their_printed_signs(self):
+        from services.extraction.layout.layout_headers import bill_components
+        from services.extraction.parsing.map_invoice import location
+        found = bill_components(self.document([
+            (0, 0, 100, 'Previous Balance'), (300, 0, 400, '50.00'), (0, 20, 100, 'Payment Received'), (300, 20, 400, '(40.00)'),
+            (0, 40, 100, 'Credits'), (300, 40, 400, '5.00 CR'), (0, 60, 100, 'Late Fee'), (300, 60, 400, '-1.00'), (0, 80, 100, 'Arrears'), (300, 80, 400, 'none')]), location)
+        self.assertEqual({key: row[1] for key, row in found.items()},
+                         {'previous_balance': '50.00', 'amount_paid': '-40.00', 'credit_total': '-5.00', 'late_fee': '-1.00'})
+
+
+class TaxInclusiveReceiptTests(unittest.TestCase):
+    """REC00006's OCR lines, tilt and misreads included. 169.78 already includes the 9.61 of GST."""
+
+    LINES = [(120, 110, 220, 128, 'RECEIPT'), (64, 133, 262, 151, '99 SPEED MART S/B (S19537-X)'), (70, 150, 262, 172, 'LOT P.T. 2811, JALAN ANGSA,'), (82, 228, 260, 243, 'GST ID. NO: 000181747712'),
+             (76, 266, 273, 280, 'INVOICE NO: 10222/102/T0341'), (257, 298, 318, 315, '20-11-17'), (36, 306, 92, 324, '03PM'), (154, 303, 202, 320, '562936'),
+             (244, 336, 320, 353, 'RM117.90 s'), (39, 344, 232, 358, '2973 PEDIASURE COMPLETE S3S'), (252, 354, 320, 371, 'RM51.88 s'), (40, 364, 130, 380, '069 MILO 2KG'),
+             (265, 448, 312, 466, '169.78'), (46, 460, 258, 470, 'Total Sales (Inclusive GST) RM'), (288, 466, 312, 485, '.02'), (100, 476, 260, 490, 'Rounding Adjustment RM'),
+             (267, 486, 314, 504, '169.80'), (176, 492, 262, 508, 'Rounding RM'), (206, 508, 262, 526, 'CASH RM'), (268, 504, 316, 523, '200.00'), (194, 528, 264, 546, 'CHANGE RM'), (276, 524, 316, 542, '30.20'),
+             (272, 561, 324, 579, 'Tax(RH)'), (162, 568, 236, 586, 'Amount(RH)'), (52, 576, 136, 594, 'GST Summary'), (292, 580, 325, 597, '9.61'), (190, 586, 238, 604, '160.17')]
+
+    def mapped(self, lines=None):
+        from services.extraction.parsing.map_invoice import map_document
+        return map_document(PosDocumentTests.document(lines or self.LINES, 364, 748))
+
+    def values(self, lines=None):
+        return {key: cell['value'] for key, cell in self.mapped(lines)['fields'].items()}
+
+    def test_each_printed_amount_keeps_its_own_meaning(self):
+        values = self.values()
+        self.assertEqual((values['total_excluding_tax'], values['tax_amount'], values['total_including_tax'], values['rounding_amount'],
+                          values['total_amount'], values['tendered_amount'], values['change_given']),
+                         ('160.17', '9.61', '169.78', '0.02', '169.80', '200.00', '30.20'))
+
+    def test_no_subtotal_is_invented(self):
+        self.assertIsNone(self.values()['subtotal'])
+
+    def test_a_rounding_row_that_does_not_explain_the_totals_is_not_used(self):
+        lines = [(l, t, r, b, '.05' if text == '.02' else text) for l, t, r, b, text in self.LINES]
+        values = self.values(lines)
+        self.assertEqual(values['total_amount'], '169.78')
+        self.assertIsNone(values.get('rounding_amount'))
+
+    def test_a_gst_summary_that_does_not_reach_the_total_is_not_used(self):
+        lines = [(l, t, r, b, '150.00' if text == '160.17' else text) for l, t, r, b, text in self.LINES]
+        values = self.values(lines)
+        self.assertIsNone(values.get('total_excluding_tax'))
+        self.assertIsNone(values.get('tax_amount'))
+
+    def test_two_digit_year_with_a_day_that_cannot_be_a_month(self):
+        result = self.mapped()
+        self.assertEqual(result['fields']['transaction_date']['value'], '2017-11-20')
+        self.assertTrue(any(e.get('date_basis') == 'day_first_two_digit_year' for e in result['fields']['transaction_date']['evidence']))
+
+    def test_a_two_digit_year_that_could_be_swapped_stays_unresolved(self):
+        lines = [(l, t, r, b, '04-11-17' if text == '20-11-17' else text) for l, t, r, b, text in self.LINES]
+        self.assertIsNone(self.values(lines)['transaction_date'])
+
+    def test_a_time_with_no_minutes_is_not_invented(self):
+        self.assertIsNone(self.values()['transaction_time'])
+
+    def test_a_readable_time_on_the_date_row_is_used(self):
+        lines = [(l, t, r, b, '03:29PM' if text == '03PM' else text) for l, t, r, b, text in self.LINES]
+        self.assertEqual(self.values(lines)['transaction_time'], '15:29')
+
+    def test_the_model_reading_of_a_clipped_time_is_offered_and_never_verified(self):
+        from services.extraction.classification.reconcile_selective import arbitrate, check_candidate_against_source
+        document = PosDocumentTests.document(self.LINES, 364, 748)
+        self.assertEqual(check_candidate_against_source('transaction_time', '15:29', document)['status'], 'source_near_match')
+        self.assertEqual(arbitrate(None, '15:29', 'source_near_match'), 'UNVERIFIED_MODEL_SUGGESTION')
+        self.assertEqual(check_candidate_against_source('transaction_time', '09:29', document)['status'], 'not_found_in_source')
+        # The same line from a second OCR stream is still one fragment.
+        document['texts'] = [{'self_ref': '#/texts/0', 'text': '03PM', 'label': 'text', 'prov': document['m2_text_lines'][6]['prov']}]
+        self.assertEqual(check_candidate_against_source('transaction_time', '15:29', document)['status'], 'source_near_match')
+
+    def test_it_reaches_validation_without_counting_tax_twice(self):
+        from services.extraction.contracts.accounting_contract import map_m2_result
+        from tests.extraction.test_multidocument import contract
+        from validation.documents.document_validation import evaluate_document
+        raw, mapped = contract(PosDocumentTests.document(self.LINES, 364, 748))
+        result = evaluate_document({'kind': 'receipt', 'category': 'accounts_payable'}, {'raw_json': raw}, mapped['fields'], mapped['line_items'])
+        self.assertNotIn('RECEIPT-TOTAL', {e['code'] for e in result['errors']})
+        total = next(c for c in result['checks'] if c['rule'] == 'RECEIPT-TOTAL')
+        self.assertIn('160.17 + 9.61 tax + 0.02 rounding = 169.80', total['message'])
+        self.assertEqual(next(c for c in result['checks'] if c['rule'] == 'RCP-005')['checkStatus'], 'CHECKED')

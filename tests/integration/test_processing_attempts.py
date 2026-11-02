@@ -340,6 +340,70 @@ class AttemptProtocolTests(unittest.TestCase):
         self.assertEqual(self.job()['status'],'succeeded')
         self.assertNotIn('public_result_path',json.dumps(result))
 
+    def qwen_worker_run(self,enabled,model_value='12.00',raises=None):
+        """Worker -> real mapper/routing/reconciliation -> persistence. Only the model is faked."""
+        from functools import partial
+        from pypdf import PdfWriter
+        from services.extraction.ai import qwen_provider as qp
+        from services.extraction.ai.run_selective_qwen import run_attempt
+        from services.extraction.workflow import document_extraction_service as dis
+        from tests.extraction.test_financial_layout import layout
+        from tests.extraction.test_selective_qwen import RecoveryEndToEndTests
+        delivery=self.reserve(); root=Path(self.temp.name)/'worker-root'; (root/'runs').mkdir(parents=True)
+        source=root/'upload.pdf'; writer=PdfWriter(); writer.add_blank_page(width=600,height=900)
+        with source.open('wb') as handle: writer.write(handle)
+        document=layout('INVOICE',[('Supplier: Acme Trading',20,60,300,80),('Invoice number: X-42',20,90,300,110),
+            ('Date: 2020-01-31',20,120,300,140),('Currency: USD',20,150,300,170),('Total amount:',20,200,180,220),('10.00',200,200,300,220),
+            ('Total amount:',20,230,180,250),('12.00',200,230,300,250)])
+        provider=Mock(base=qp.BASE,model=qp.MODEL,timeout=45)
+        provider.metadata.return_value={'models':[{'name':qp.MODEL,'digest':'sha256:local'}]}
+        provider.chat.return_value=json.dumps({'done':True,'model':qp.MODEL,'message':{'content':json.dumps({'total_amount':model_value})}})
+        if raises: provider.chat.side_effect=raises
+        def render(pdf,target):
+            target.write_bytes(b'rendered page'); return [100,100]
+        parser=RecoveryEndToEndTests.parser(None,document)
+        attempt=partial(run_attempt,provider_factory=Mock(return_value=provider),renderer=render)
+        env={'ENABLE_QWEN_RECOVERY':'true'} if enabled else {}
+        with patch('rq.get_current_job',return_value=SimpleNamespace(id=delivery.dispatch_token)),\
+             patch.object(jobs,'resolve_document_from_database',return_value=source),patch.object(jobs,'BACKEND_ROOT',root),\
+             patch.object(jobs,'_TEST_PARSER',parser),patch.object(dis,'run_attempt',attempt),\
+             patch.dict('os.environ',{'ENABLE_IMAGE_OCR':'false',**env},clear=False):
+            import os
+            if not enabled: os.environ.pop('ENABLE_QWEN_RECOVERY',None)
+            result=jobs.process_document_extraction_job(D,J,T,delivery.dispatch_token)
+        row=self.database.execute("SELECT * FROM field_predictions WHERE field_key='total'").fetchone()
+        return result,row,provider
+
+    def test_worker_to_qwen_to_persistence_stores_a_candidate_never_a_value(self):
+        result,row,provider=self.qwen_worker_run(True)
+        provider.chat.assert_called_once()
+        self.assertEqual((result['status'],result['extraction_status']),('EXTRACTED','candidate_for_review'))
+        self.assertEqual(self.job()['status'],'succeeded')
+        self.assertFalse(result['accounting_approval_performed'])
+        self.assertEqual((row['extraction_state'],row['current_value'],row['normalized_value'],row['confidence']),('ambiguous',None,None,None))
+        self.assertEqual(row['resolution'],'candidate_for_review')
+        candidates=row['candidates']
+        ai=[c for c in candidates if c.get('source')=='ai']
+        self.assertEqual((len(ai),ai[0]['value'],ai[0]['auto_accepted'],ai[0]['source_check']),(1,'12.00',False,'source_role_verified'))
+        self.assertEqual({c['value'] for c in candidates if c.get('source')!='ai'},{'10.00','12.00'})
+
+    def test_worker_with_qwen_off_never_calls_the_model(self):
+        result,row,provider=self.qwen_worker_run(False)
+        provider.chat.assert_not_called();provider.metadata.assert_not_called()
+        self.assertEqual(result['extraction_status'],'human_review_required')
+        self.assertFalse([c for c in row['candidates'] if c.get('source')=='ai'])
+
+    def test_worker_model_timeout_still_persists_the_parser_result(self):
+        result,row,provider=self.qwen_worker_run(True,raises=TimeoutError('slow'))
+        self.assertEqual(result['extraction_status'],'ai_attempt_failed_needs_review')
+        self.assertEqual(self.job()['status'],'succeeded')
+        self.assertEqual((row['extraction_state'],row['current_value']),('ambiguous',None))
+
+    def test_worker_does_not_store_a_hallucinated_value(self):
+        result,row,_=self.qwen_worker_run(True,model_value='99.00')
+        self.assertEqual(result['extraction_status'],'unresolved_needs_review')
+        self.assertNotIn('99.00',json.dumps(row['candidates']))
+
     def test_worker_resolution_failure_is_persisted_for_exact_claim(self):
         delivery=self.reserve()
         with patch('rq.get_current_job',return_value=SimpleNamespace(id=delivery.dispatch_token)), patch.object(jobs,'resolve_document_from_database',return_value=None):

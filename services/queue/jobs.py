@@ -102,11 +102,8 @@ def resolve_document_from_database(document_id: str) -> Optional[Path]:
                 logger.warning("Could not remove temporary S3 snapshot")
         return trusted
 
-    storage_root = Path(os.getenv("DOCUMENT_STORAGE_PATH", str(BACKEND_ROOT / "storage"))).expanduser()
-    if not storage_root.is_absolute():
-        storage_root = (BACKEND_ROOT / storage_root).resolve()
-    else:
-        storage_root = storage_root.resolve()
+    from database.object_storage.object_store import local_storage_root
+    storage_root = local_storage_root()
 
     candidate = Path(row["storage_path"]).expanduser()
     if not candidate.is_absolute():
@@ -192,11 +189,18 @@ def process_document_extraction_job(document_id: str, pending_job_id: str | None
         if not resolved_path or not Path(resolved_path).is_file():
             logger.error("Trusted document resolver could not locate file for: %s", document_id)
             raise ExtractionExecutionError("Extraction attempt failed.")
+        # Off unless explicitly enabled. The resolver above is what authorises
+        # showing this tenant's document to the local model; claim fencing still
+        # decides at persistence whether this attempt may store anything.
+        from services.extraction.ai.qwen_provider import qwen_mode
+        qwen_recovery = qwen_mode() in {"auto", "both"}
         result = execute_document_extraction(
             document_id=document_id,
             file_path=Path(resolved_path),
             project_root=BACKEND_ROOT,
             parser=_TEST_PARSER,
+            allow_vlm_inference=qwen_recovery,
+            source_access_authorized=qwen_recovery,
         )
 
         if result.get("execution_status") != "EXTRACTED":

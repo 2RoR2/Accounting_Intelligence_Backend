@@ -10,7 +10,7 @@ import io
 from decimal import Decimal
 from pathlib import Path
 from datetime import date, datetime, timedelta, timezone
-from typing import Annotated
+from typing import Annotated, Literal
 from contextlib import asynccontextmanager
 from urllib.parse import quote
 
@@ -357,6 +357,16 @@ class UserStatusInput(BaseModel):
 class AdminCredentialsInput(BaseModel):
     name: Text
     password: Password = ""
+
+
+class AIAssistInput(BaseModel):
+    fields: list[Annotated[str, StringConstraints(min_length=1, max_length=64)]] | None = Field(default=None, max_length=5)
+
+
+class AIAssistDecisionInput(BaseModel):
+    field: Annotated[str, StringConstraints(min_length=1, max_length=64)]
+    decision: Literal["accepted", "rejected"]
+    attemptId: Annotated[str, StringConstraints(max_length=64)] | None = None
 
 
 class FieldCorrectionInput(BaseModel):

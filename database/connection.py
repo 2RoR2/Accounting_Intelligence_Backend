@@ -14,4 +14,9 @@ def connect():
         raise RuntimeError("Configure DATABASE_URL in the backend .env file.")
     if not url.startswith(("postgresql://", "postgres://")):
         raise RuntimeError("DATABASE_URL must be a full PostgreSQL URL.")
-    return psycopg.connect(url, row_factory=dict_row, connect_timeout=5)
+    try:
+        return psycopg.connect(url, row_factory=dict_row, connect_timeout=5)
+    except psycopg.errors.ConnectionTimeout:
+        # A stall while establishing a connection is transient under OCR load, and
+        # no statement has run, so one retry is safe. A second timeout still surfaces.
+        return psycopg.connect(url, row_factory=dict_row, connect_timeout=5)

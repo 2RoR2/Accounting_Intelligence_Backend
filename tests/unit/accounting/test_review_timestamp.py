@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import patch
 from fastapi.testclient import TestClient
 import main
+from services.routes.documents import routes as app
 
 
 class ReviewTimestampTests(unittest.TestCase):

@@ -5,8 +5,17 @@ import os
 from pathlib import Path
 
 
+BACKEND_ROOT = Path(__file__).resolve().parents[2]
+
+
 def enabled() -> bool:
     return bool(os.getenv("S3_BUCKET"))
+
+
+def local_storage_root() -> Path:
+    """The one local document root for upload, worker and preview; relative paths anchor at the backend."""
+    root = Path(os.getenv("DOCUMENT_STORAGE_PATH", "storage")).expanduser()
+    return (root if root.is_absolute() else BACKEND_ROOT / root).resolve()
 
 
 def _client():

@@ -9,11 +9,13 @@ from services.extraction.layout.layout_headers import records
 
 DESCRIPTION = re.compile(r'^(?:description|item(?: description)?|product|particulars|details|charges?|(?:iva\s+)?descri[cç][aã]o|nome do artigo)$', re.I)
 AMOUNT = re.compile(r'^(?:line total|line amount|amount|amt|total|valor|value|total incl\.? tax)(?:\s*\((?:RM|MYR)\))?$', re.I)
-QUANTITY = re.compile(r'^(?:qty|quantity|quantidade|qtd\.?)$', re.I)
+QUANTITY = re.compile(r'^(?:[qo]ty\.?|quantity|quantidade|qtd\.?)$', re.I)  # "Oty." is a recurring OCR read of "Qty."
 PRICE = re.compile(r'^(?:unit price|unit cost|price|price/unit|s/price|rate|pre[cç]o(?: unit[aá]rio)?)$', re.I)
-SUMMARY = re.compile(r'^(?:sub\s*total|grand total|total(?:\s+(?:a pagar|amount|due|eur|rm|myr))?|amount due|balance(?: due)?|previous balance|current charges|units sold|payment(?: method)?|cash|change|tax inclusive|tax summary|iva%|taxa|entregue|troco)\s*[:：]?(?:\s+.*)?$', re.I)
+SUMMARY = re.compile(r'^(?:sub[-\s]*total(?:\s*\([^)]*\))?|grand total|total(?:\s+(?:a pagar|amount|due|eur|rm|myr))?|amount due|balance(?: due)?|previous balance|current charges|units sold|payment(?: method)?|cash|change|tax inclusive|tax summary|iva%|taxa|entregue|troco)\s*[:：]?(?:\s+.*)?$', re.I)
 NUMBER = r'-?\d[\d.,]*'
 MULTIPLIER = re.compile(r'^\s*(' + NUMBER + r')\s*[x×X]\s*(' + NUMBER + r')\s*$')
+TAXED_AMOUNT = re.compile(NUMBER + r'(?:\s+[A-Z]{1,3})?')  # A printed tax code may follow a line amount (193.00 SR).
+QTY_PRICE_CELL = re.compile(r'(\d+(?:\.\d+)?)\s+(\d+\.\d{2,4})')  # OCR can merge adjacent quantity and price cells.
 
 
 def number(text, currency, scale=2, *, invoice=False):
@@ -101,7 +103,7 @@ def recover_rows(document, kind, currency, location, field, issue):
 
     def row(description, amounts, quantity=(), prices=()):
         return {'description': cell(description, 'description', lambda s: ' '.join((s if kind == 'invoice' else re.sub(r'^\d+(?:[.,]\d+)?%\s*', '', s)).split())),
-                'line_total': cell(amounts, 'line_total', lambda s: number(s if kind=='invoice' else re.sub(r'\s+[A-Z]$', '', s), currency, invoice=kind=='invoice')),
+                'line_total': cell(amounts, 'line_total', lambda s: number(s if kind=='invoice' else re.sub(r'\s+[A-Z]{1,3}$', '', s), currency, invoice=kind=='invoice')),
                 'quantity': cell(quantity, 'quantity', lambda s: number(s, currency, 3, invoice=kind=='invoice')),
                 'unit_price': cell(prices, 'unit_price', lambda s: number(s, currency, 4, invoice=kind=='invoice'))}
 
@@ -263,22 +265,29 @@ def recover_rows(document, kind, currency, location, field, issue):
                 # description underneath. Require the explicit Item/Qty/Amount
                 # grid and printed code anchors; never borrow the next row's value.
                 code = re.compile(r'(?=.*\d)[A-Z0-9/-]{3,32}$', re.I)
-                anchors = [x for x in body if re.fullmatch(r'item',desc['text'],re.I) and qheaders
+                anchors = [x for x in body if re.fullmatch(r'item|description',desc['text'],re.I) and qheaders
                            and x['box']['l'] < desc_right and code.fullmatch(x['text'])
                            and any(aligned(x,n) and n['box']['l']>=amount['box']['l']-20
-                                   and re.fullmatch(NUMBER,n['text']) for n in body)]
-                if kind == 'receipt' and len(anchors) >= 2:
+                                   and TAXED_AMOUNT.fullmatch(n['text']) for n in body)]
+                # A single anchor needs the complete Qty/Price/Amount grid as corroboration.
+                if kind == 'receipt' and (len(anchors) >= 2 or (len(anchors) == 1 and pheaders)):
                     for ai,anchor in enumerate(anchors):
                         end=anchors[ai+1]['box']['t'] if ai+1<len(anchors) else bottom
                         texts=[x for x in body if anchor['box']['b']-2<=x['box']['t']<end
                                and abs(x['box']['l']-desc['box']['l'])<=max(20,(desc['box']['b']-desc['box']['t'])*2)
                                and re.search(r'[A-Za-z]',x['text']) and not code.fullmatch(x['text'])
-                               and not SUMMARY.fullmatch(x['text'])]
-                        amounts=[x for x in body if aligned(anchor,x) and x['box']['l']>=amount['box']['l']-20 and re.fullmatch(NUMBER,x['text'])]
+                               and not SUMMARY.fullmatch(x['text']) and not re.match(r'(?:qty|quantity)\s*:',x['text'],re.I)]
+                        amounts=[x for x in body if aligned(anchor,x) and x['box']['l']>=amount['box']['l']-20 and TAXED_AMOUNT.fullmatch(x['text'])]
                         if not texts or not amounts:continue
                         q=[x for x in body if aligned(anchor,x) and abs(x['box']['l']-qheaders[0]['box']['l'])<max(15,qheaders[0]['box']['r']-qheaders[0]['box']['l']) and re.fullmatch(NUMBER,x['text'])]
                         p=[x for x in body if aligned(anchor,x) and re.fullmatch(NUMBER,x['text'])
                            and any(abs(x['box']['r']-h['box']['r'])<max(10,h['box']['r']-h['box']['l']) for h in pheaders)]
+                        merged=[x for x in body if not q and not p and aligned(anchor,x) and QTY_PRICE_CELL.fullmatch(x['text'])
+                                and x['box']['l']>=qheaders[0]['box']['l'] and x['box']['r']<amount['box']['l']]
+                        if len(merged)==1:
+                            # Both values are printed in one source line; keep that whole line as evidence.
+                            parts=QTY_PRICE_CELL.fullmatch(merged[0]['text'])
+                            q=[{**merged[0],'text':parts[1]}]; p=[{**merged[0],'text':parts[2]}]
                         joined={**texts[0],'text':'\n'.join(x['text'] for x in texts),'evidence':[x['ev'] for x in texts]}
                         result.append(row([joined],amounts,q,p))
                     continue
@@ -351,3 +360,225 @@ def recover_rows(document, kind, currency, location, field, issue):
     if result:
         issue('LAYOUT_LINE_RECOVERY', 'Rows recovered from source line geometry; missing cells were not inferred')
     return result
+
+
+RECEIPT_MONEY = re.compile(r'^\(?(?:RM)?\s*(\d[\d,]*\.\d{2})\s*\*?\s*(?:[A-Za-z]{1,2})?$')
+RECEIPT_END = re.compile(r'(?i)\b(?:total|sub-?\s*total|rounding|cash|tender|change|gst\s*summary)\b')
+RECEIPT_HEAD = re.compile(r'(?i)\b(?:[qo]ty\.?|item|description|u/p|price|disc%?|amoun\w*|tax)\b')
+AT_PRICE = re.compile(r'@\s*(\d+(?:[. ]\d{2,4})?)\s*$')
+
+
+_STACKED_HEADER = re.compile(r'(?i)\b(?:u\.?\s*price|unit\s+price|price|u/p)\b')
+_STACKED_AMOUNT = re.compile(r'(?i)^(?:amount|amt)$')
+_STACKED_QUANTITY = re.compile(r'(\d+(?:\.\d+)?)(?:\s+[A-Za-z]{1,4})?$')
+_STACKED_MONEY = re.compile(r'-?\d+\.\d{2}$')
+
+
+def recover_stacked_rows(document, currency, location, field, issue):
+    """POS rows that print the name on one line and "1.00 PC * 9.30 0.00 9.30" beneath it.
+
+    Published only if, in exact Decimal, every row's quantity x price less its printed
+    discount equals its amount, and the amounts add up to a printed summary value.
+    """
+    lines = []
+    for item in records(document):
+        prov = item.get('prov', [])
+        text = item.get('text', '').strip()
+        if len(prov) != 1 or prov[0].get('page_no') != 1 or not text:
+            continue
+        ev = location(document, 1, prov[0].get('bbox'), item.get('self_ref'), text)
+        if ev.get('bbox'):
+            ev.update(from_ocr=item.get('from_ocr'), ocr_score=item.get('ocr_score'), bbox_scope='source_line')
+            lines.append({'text': text, 'ev': ev, 'box': ev['bbox'], 'mid': (ev['bbox']['t'] + ev['bbox']['b']) / 2})
+    groups = []
+    for line in sorted(lines, key=lambda x: x['mid']):
+        height = line['box']['b'] - line['box']['t']
+        if groups and abs(groups[-1][0]['mid'] - line['mid']) <= height * .65:
+            groups[-1].append(line)
+        else:
+            groups.append([line])
+    for group in groups:
+        group.sort(key=lambda x: x['box']['l'])
+    head = next((i for i, g in enumerate(groups) if any(_STACKED_HEADER.search(x['text']) for x in g)
+                 and any(_STACKED_AMOUNT.match(x['text']) for x in g)), None)
+    if head is None:
+        return []
+    rows, total, name, used = [], Decimal('0'), None, None
+    for index in range(head + 1, len(groups)):
+        group = groups[index]
+        money = [x for x in group if _STACKED_MONEY.fullmatch(x['text'])]
+        quantity = _STACKED_QUANTITY.fullmatch(group[0]['text'])
+        if len(group) == 1 and not money and not quantity and re.search(r'[A-Za-z]{2}', group[0]['text']) and not SUMMARY.fullmatch(group[0]['text']):
+            name = group[0]
+            continue
+        if quantity and len(money) >= 2 and group[0] not in money:
+            if name is None or len(money) > 3:
+                return []
+            price, amount = Decimal(money[0]['text']), Decimal(money[-1]['text'])
+            discount = Decimal(money[1]['text']) if len(money) == 3 else Decimal('0')
+            count = Decimal(quantity[1])
+            if count * price - discount != amount:
+                return []
+            cell = lambda raw, value, evidence: field(raw, value, evidence, 'mapped',
+                                                      [{'raw_text': raw, 'value': value, 'evidence': evidence}])
+            rows.append({'description': cell(name['text'], ' '.join(name['text'].split()), [name['ev']]),
+                         'quantity': cell(group[0]['text'], number(quantity[1], currency, 3), [group[0]['ev']]),
+                         # With a line discount, quantity x price is not the amount, so the price cell stays empty.
+                         'unit_price': cell(money[0]['text'], number(money[0]['text'], currency, 4), [money[0]['ev']]) if not discount else field(),
+                         'line_total': cell(money[-1]['text'], number(money[-1]['text'], currency), [money[-1]['ev']])})
+            total += amount
+            name, used = None, index
+            continue
+        if rows or name is not None:
+            break
+    if not rows or name is not None:
+        return []
+    printed = {Decimal(token) for g in groups[used + 1:] for x in g for token in re.findall(r'\d+\.\d{2}\b', x['text'])}
+    if total not in printed:
+        return []
+    issue('LAYOUT_LINE_RECOVERY', 'Stacked rows recovered from source line geometry and checked in exact decimals against a printed total; missing cells were not inferred')
+    return rows
+
+
+def recover_receipt_rows(document, currency, location, field, issue):
+    """Item rows from one receipt's OCR geometry, published only if their amounts add up to a printed summary value.
+
+    Nothing is inferred. A printed unit price is kept only when quantity x price equals the
+    printed amount, so a discount or tax-inclusive amount leaves that cell empty, not wrong.
+    """
+    lines = []
+    for item in records(document):
+        prov = item.get('prov', [])
+        text = item.get('text', '').strip()
+        if len(prov) != 1 or prov[0].get('page_no') != 1 or not text:
+            continue
+        ev = location(document, 1, prov[0].get('bbox'), item.get('self_ref'), text)
+        if ev.get('bbox'):
+            ev.update(from_ocr=item.get('from_ocr'), ocr_score=item.get('ocr_score'), bbox_scope='source_line')
+            lines.append({'text': text, 'ev': ev, 'box': ev['bbox'], 'mid': (ev['bbox']['t'] + ev['bbox']['b']) / 2})
+    groups = []
+    for line in sorted(lines, key=lambda x: x['mid']):
+        height = line['box']['b'] - line['box']['t']
+        if groups and abs(groups[-1][0]['mid'] - line['mid']) <= height * .65:
+            groups[-1].append(line)
+        else:
+            groups.append([line])
+    for group in groups:
+        group.sort(key=lambda x: x['box']['l'])
+    # The item heading comes before the first amount. A later one belongs to the GST summary.
+    first_money = next((i for i, g in enumerate(groups) if any(RECEIPT_MONEY.match(x['text']) for x in g)), len(groups))
+    head = next((i for i, g in enumerate(groups[:first_money]) if len(RECEIPT_HEAD.findall(' '.join(x['text'] for x in g))) >= 2), None)
+    first = head + 1 if head is not None else next((i for i, g in enumerate(groups) if RECEIPT_MONEY.match(g[-1]['text'])), None)
+    if first is None:
+        return []
+    end = next((i for i in range(first, len(groups)) if RECEIPT_END.search(' '.join(x['text'] for x in groups[i]))), None)
+    if end is None or end == first:
+        return []
+    region = groups[first:end]
+    right = max(x['box']['r'] for g in region for x in g)
+    width = right - min(x['box']['l'] for g in region for x in g)
+    columns = {}
+    if head is not None:
+        for x in groups[head]:
+            word = x['text'].casefold()
+            if re.fullmatch(r'[qo]ty\.?', word):
+                columns['quantity'] = x['box']
+            elif word == 'u/p' or word.startswith('price'):
+                columns['unit_price'] = x['box']
+    leading_quantity = head is not None and bool(re.search(r'(?i)\b[qo]ty\b', ' '.join(x['text'] for x in groups[head])))
+
+    def in_column(x, box):
+        return box['l'] - 12 <= (x['box']['l'] + x['box']['r']) / 2 <= box['r'] + 12
+
+    found, spare = [], []
+    if head is None:
+        # No column heading, and a tilted scan can shift text and amounts by a line: pair them in printed order.
+        flat = sorted((x for g in region for x in g), key=lambda x: x['mid'])
+        amounts = [x for x in flat if RECEIPT_MONEY.match(x['text']) and x['box']['r'] >= right - width * .2]
+        texts = [x for x in flat if x not in amounts and re.search(r'[A-Za-z]{3}', x['text'])]
+        if not texts or len(amounts) < len(texts):
+            return []
+        found = [{'amount': a, 'left': [t], 'more': []} for a, t in zip(amounts, texts)]
+        spare = amounts[len(texts):]
+    else:
+        for group in region:
+            last = group[-1]
+            if RECEIPT_MONEY.match(last['text']) and last['box']['r'] >= right - width * .2:
+                found.append({'amount': last, 'left': group[:-1], 'more': []})
+            elif found:
+                found[-1]['more'].extend(group)
+    # On a tilted scan the printed total can sit just above its own label: a bare amount with no text is not an item.
+    while found and not found[-1]['left'] and not found[-1]['more']:
+        found.pop()
+    rows, total = [], Decimal('0')
+    for row in found:
+        amount = Decimal(RECEIPT_MONEY.match(row['amount']['text'])[1].replace(',', ''))
+        total += amount
+        picked = {key: next((x for x in row['left'] if in_column(x, box) and re.fullmatch(r'\d+(?:\.\d+)?', x['text'])), None)
+                  for key, box in columns.items()}
+        words = [x for x in row['left'] + row['more'] if x not in picked.values()
+                 and sum(c.isalnum() for c in x['text']) >= 3 and re.search(r'[A-Za-z]', x['text'])]
+        if not words and not any(re.search(r'@', x['text']) for x in row['more']):
+            return []
+        joined = ' '.join(x['text'] for x in words + [x for x in row['more'] if x not in words and x not in picked.values()])
+        price = picked.get('unit_price')['text'] if picked.get('unit_price') else None
+        at = AT_PRICE.search(joined)
+        if not price and at:
+            price = at[1].replace(' ', '.')
+        lead = re.match(r'^(\d{1,3})\s*(?=[A-Za-z])', words[0]['text']) if words and leading_quantity and 'quantity' not in columns else None
+        quantity = picked['quantity']['text'] if picked.get('quantity') else (lead[1] if lead else None)
+        names = [re.sub(r'\s*@.*$', '', re.sub(r'^-\s*', '', x['text'])) for x in words]
+        if lead:
+            names[0] = names[0][lead.end():]
+        name = ' '.join(n.strip() for n in names if n.strip())
+        if not name:
+            return []
+        description = field(' '.join(x['text'] for x in words), name, [x['ev'] for x in words], 'mapped',
+                            [{'raw_text': ' '.join(x['text'] for x in words), 'value': name, 'evidence': [x['ev'] for x in words]}])
+        cell = lambda raw, value, ev: field(raw, value, ev, 'mapped', [{'raw_text': raw, 'value': value, 'evidence': ev}])
+        sources = [picked['quantity']['ev']] if picked.get('quantity') else [x['ev'] for x in words[:1]]
+        quantity_cell, price_cell = field(), field()
+        try:
+            if quantity:
+                quantity_cell = cell(quantity, number(quantity, currency, 3), sources)
+            if quantity and price:
+                value = number(price, currency, 4)
+                if abs(Decimal(quantity) * Decimal(value) - amount) <= Decimal('0.01'):
+                    evidence = [picked['unit_price']['ev']] if picked.get('unit_price') else [x['ev'] for x in row['left'] + row['more'] if '@' in x['text'] or AT_PRICE.search(x['text']) or x['text'] == price][:2] or sources
+                    price_cell = cell(price, value, evidence)
+        except (ValueError, ArithmeticError):
+            # An unreadable number leaves its cell empty; the printed amount and description still stand.
+            pass
+        rows.append({'description': description, 'line_total': cell(row['amount']['text'], str(amount), [row['amount']['ev']]),
+                     'quantity': quantity_cell, 'unit_price': price_cell})
+    printed = {Decimal(token.replace(',', '')) for x in [x for g in groups[end:] for x in g] + spare
+               for token in re.findall(r'\d[\d,]*\.\d{2}\b', x['text'])}
+    if not rows or not any(abs(total - value) <= Decimal('0.01') for value in printed):
+        return []
+    issue('LAYOUT_LINE_RECOVERY', 'Receipt rows recovered from source line geometry and checked against a printed total; missing cells were not inferred')
+    return rows
+
+
+_ITEM_HEADER_WORD = re.compile(r'(?i)\b(?:desc(?:ription)?|item|particulars|qty|quantity|u\.?\s*price|unit\s+price|price|u/p|amount|amt)\b')
+
+
+def item_structure(document, rows):
+    """Whether the source prints item rows. A fact for validation: zero lines is right only for 'not_itemized'.
+
+    Errs towards 'unmapped_rows', which sends the document to a person, not towards hiding rows.
+    """
+    if rows:
+        return {'status': 'itemized', 'rows': len(rows)}
+    if any(len(table.get('data', {}).get('table_cells', [])) >= 4 for table in document.get('tables', [])):
+        return {'status': 'unmapped_rows', 'reason': 'A table is printed, and no rows were read from it.'}
+    groups = defaultdict(list)
+    for item in records(document):
+        prov = item.get('prov') or []
+        box = prov[0].get('bbox') if len(prov) == 1 else None
+        if box and 't' in box and 'b' in box:
+            groups[(prov[0].get('page_no'), round((box['t'] + box['b']) / 2 / max(abs(box['b'] - box['t']), 1)))].append(item.get('text', ''))
+    for texts in groups.values():
+        joined = ' '.join(texts)
+        if len(set(word.casefold() for word in _ITEM_HEADER_WORD.findall(joined))) >= 2:
+            return {'status': 'unmapped_rows', 'reason': 'An item heading is printed, and no rows were read beneath it.'}
+    return {'status': 'not_itemized'}

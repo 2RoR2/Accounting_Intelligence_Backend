@@ -13,3 +13,21 @@ storage/
 *.log
 *.err
 logs/
+
+# Private runtime configuration and local artifacts
+.env
+.env.*
+venv/
+venv-*/
+backups/
+*.dump
+*.backup
+*.bak
+*.pem
+*.key
+ai/models/
+models/
+*.onnx
+*.safetensors
+*.pt
+*.pth

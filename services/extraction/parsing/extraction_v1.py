@@ -62,7 +62,8 @@ class ExtractionResultV1(StrictModel):
     document_type: Classification = Field(default_factory=Classification)
     field_schema: Literal['invoice_headers_and_simple_rows_v1', 'bill_headers_and_simple_rows_v1',
                           'receipt_headers_and_simple_rows_v1', 'credit_note_headers_and_simple_rows_v1',
-                          'debit_note_headers_and_simple_rows_v1', 'unknown_no_accounting_fields_v1'] = 'invoice_headers_and_simple_rows_v1'
+                          'debit_note_headers_and_simple_rows_v1', 'unknown_no_accounting_fields_v1',
+                          'unknown_provisional_fields_v1'] = 'invoice_headers_and_simple_rows_v1'
     status: Literal['needs_review'] = 'needs_review'
     review_required: Literal[True] = True
     fields: dict[str, FieldResult]
@@ -78,9 +79,18 @@ class ExtractionResultV1(StrictModel):
         profile = next((name for name in PROFILE_FIELDS if self.field_schema.startswith(name + '_')), 'unknown')
         required = PROFILE_FIELDS[profile]
         allowed = required | {'invoice': INVOICE_OPTIONAL, 'bill': BILL_OPTIONAL, 'receipt': RECEIPT_OPTIONAL}.get(profile, set())
+        provisional = self.field_schema == 'unknown_provisional_fields_v1'
+        if provisional:
+            allowed = PROFILE_FIELDS['invoice'] | INVOICE_OPTIONAL
+            if not self.provenance.get('provisional_fields') or not any(
+                    i.get('code') == 'PROVISIONAL_DOCUMENT_FIELDS' for i in self.issues):
+                raise ValueError('Provisional extraction requires its review reason and provenance')
+            if any(cell.state == 'resolved' for cell in list(self.fields.values()) + [
+                    cell for row in self.line_items for cell in row.values()]):
+                raise ValueError('Unknown document fields must remain unselected candidates')
         if not required <= set(self.fields) <= allowed:
             raise ValueError('Unexpected fields for document profile')
-        if profile == 'unknown' and self.line_items:
+        if profile == 'unknown' and self.line_items and not provisional:
             raise ValueError('Unknown documents cannot contain mapped accounting rows')
         for row in self.line_items:
             if set(row) != ROW_FIELDS:
@@ -121,7 +131,8 @@ def adapt_result(legacy, document_id, source_path, source_sha256):
         document_id=document_id,
         extraction_run_id='extraction-' + uuid4().hex,
         created_at=datetime.now(timezone.utc).isoformat(),
-        field_schema=({'unknown': 'unknown_no_accounting_fields_v1'}.get(legacy['provenance'].get('document_profile'))
+        field_schema=('unknown_provisional_fields_v1' if legacy['provenance'].get('provisional_fields') else
+                      {'unknown': 'unknown_no_accounting_fields_v1'}.get(legacy['provenance'].get('document_profile'))
                       or legacy['provenance'].get('document_profile', 'invoice') + '_headers_and_simple_rows_v1'),
         fields={k: adapt_field(v) for k, v in legacy['fields'].items()},
         line_items=[{k: adapt_field(v) for k, v in row.items()} for row in legacy['line_items']],
