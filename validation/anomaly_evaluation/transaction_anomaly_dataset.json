@@ -1,0 +1,21 @@
+[
+  {"transaction_id": "TX001", "amount": "100.00", "currency": "MYR", "actual_anomaly": false},
+  {"transaction_id": "TX002", "amount": "110.00", "currency": "MYR", "actual_anomaly": false},
+  {"transaction_id": "TX003", "amount": "95.00", "currency": "MYR", "actual_anomaly": false},
+  {"transaction_id": "TX004", "amount": "105.00", "currency": "MYR", "actual_anomaly": false},
+  {"transaction_id": "TX005", "amount": "98.00", "currency": "MYR", "actual_anomaly": false},
+  {"transaction_id": "TX006", "amount": "102.00", "currency": "MYR", "actual_anomaly": false},
+  {"transaction_id": "TX007", "amount": "97.00", "currency": "MYR", "actual_anomaly": false},
+  {"transaction_id": "TX008", "amount": "103.00", "currency": "MYR", "actual_anomaly": false},
+  {"transaction_id": "TX009", "amount": "99.00", "currency": "MYR", "actual_anomaly": false},
+  {"transaction_id": "TX010", "amount": "101.00", "currency": "MYR", "actual_anomaly": false},
+  {"transaction_id": "TX011", "amount": "105.00", "currency": "MYR", "actual_anomaly": false},
+  {"transaction_id": "TX012", "amount": "96.00", "currency": "MYR", "actual_anomaly": false},
+  {"transaction_id": "TX013", "amount": "5000.00", "currency": "MYR", "actual_anomaly": true},
+  {"transaction_id": "TX014", "amount": "8000.00", "currency": "MYR", "actual_anomaly": true},
+  {"transaction_id": "TX015", "amount": "1000000.00", "currency": "MYR", "actual_anomaly": true},
+  {"transaction_id": "TX016", "amount": "250.00", "currency": "MYR", "actual_anomaly": false},
+  {"transaction_id": "TX017", "amount": "350.00", "currency": "MYR", "actual_anomaly": false},
+  {"transaction_id": "TX018", "amount": "120.00", "currency": "MYR", "actual_anomaly": true},
+  {"transaction_id": "TX019", "amount": "500.00", "currency": "MYR", "actual_anomaly": false}
+]

@@ -1,0 +1,648 @@
+{
+  "schema_version": "0.1.0-proposed",
+  "mode": "module2_public_result",
+  "document_id": "11111111-1111-4111-8111-111111111111",
+  "document_type": {
+    "value": "invoice",
+    "status": "classified",
+    "method": "explicit_heading_rules",
+    "reason": "EXPLICIT_DOCUMENT_HEADING"
+  },
+  "status": "parser_only_needs_review",
+  "review_required": true,
+  "accounting_approval_performed": false,
+  "fields": {
+    "supplier_name": {
+      "raw_text": "Supplier: Example Stationery (Synthetic)",
+      "value": "Example Stationery (Synthetic)",
+      "state": "resolved",
+      "method": "parser_mapping",
+      "evidence": [
+        {
+          "page": 1,
+          "text": "Supplier: Example Stationery (Synthetic)",
+          "source_ref": "#/texts/1",
+          "bbox_original": {
+            "l": 46.4999980625,
+            "t": 688.2483555436096,
+            "r": 288.86058287414187,
+            "b": 675.5789224777527,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "page_size": {
+            "width": 594.95996,
+            "height": 841.91998
+          },
+          "bbox": {
+            "l": 46.4999980625,
+            "t": 153.67162445639042,
+            "r": 288.86058287414187,
+            "b": 166.3410575222473,
+            "coord_origin": "TOPLEFT"
+          },
+          "coordinate_units": "document_points"
+        }
+      ],
+      "candidates": [
+        {
+          "raw_text": "Supplier: Example Stationery (Synthetic)",
+          "value": "Example Stationery (Synthetic)",
+          "evidence": [
+            {
+              "page": 1,
+              "text": "Supplier: Example Stationery (Synthetic)",
+              "source_ref": "#/texts/1",
+              "bbox_original": {
+                "l": 46.4999980625,
+                "t": 688.2483555436096,
+                "r": 288.86058287414187,
+                "b": 675.5789224777527,
+                "coord_origin": "BOTTOMLEFT"
+              },
+              "page_size": {
+                "width": 594.95996,
+                "height": 841.91998
+              },
+              "bbox": {
+                "l": 46.4999980625,
+                "t": 153.67162445639042,
+                "r": 288.86058287414187,
+                "b": 166.3410575222473,
+                "coord_origin": "TOPLEFT"
+              },
+              "coordinate_units": "document_points"
+            }
+          ]
+        }
+      ],
+      "ai_candidate": null,
+      "resolution": "parser_resolved",
+      "review_required": true
+    },
+    "invoice_number": {
+      "raw_text": "Invoice number: SYN-001",
+      "value": "SYN-001",
+      "state": "resolved",
+      "method": "parser_mapping",
+      "evidence": [
+        {
+          "page": 1,
+          "text": "Invoice number: SYN-001",
+          "source_ref": "#/texts/2",
+          "bbox_original": {
+            "l": 46.4999980625,
+            "t": 658.9983567623595,
+            "r": 201.07762776676518,
+            "b": 649.0051931162415,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "page_size": {
+            "width": 594.95996,
+            "height": 841.91998
+          },
+          "bbox": {
+            "l": 46.4999980625,
+            "t": 182.92162323764046,
+            "r": 201.07762776676518,
+            "b": 192.91478688375855,
+            "coord_origin": "TOPLEFT"
+          },
+          "coordinate_units": "document_points"
+        }
+      ],
+      "candidates": [
+        {
+          "raw_text": "Invoice number: SYN-001",
+          "value": "SYN-001",
+          "evidence": [
+            {
+              "page": 1,
+              "text": "Invoice number: SYN-001",
+              "source_ref": "#/texts/2",
+              "bbox_original": {
+                "l": 46.4999980625,
+                "t": 658.9983567623595,
+                "r": 201.07762776676518,
+                "b": 649.0051931162415,
+                "coord_origin": "BOTTOMLEFT"
+              },
+              "page_size": {
+                "width": 594.95996,
+                "height": 841.91998
+              },
+              "bbox": {
+                "l": 46.4999980625,
+                "t": 182.92162323764046,
+                "r": 201.07762776676518,
+                "b": 192.91478688375855,
+                "coord_origin": "TOPLEFT"
+              },
+              "coordinate_units": "document_points"
+            }
+          ]
+        }
+      ],
+      "ai_candidate": null,
+      "resolution": "parser_resolved",
+      "review_required": true
+    },
+    "invoice_date": {
+      "raw_text": "Date: 2026-10-01",
+      "value": "2026-10-01",
+      "state": "resolved",
+      "method": "parser_mapping",
+      "evidence": [
+        {
+          "page": 1,
+          "text": "Date: 2026-10-01",
+          "source_ref": "#/texts/3",
+          "bbox_original": {
+            "l": 46.4999980625,
+            "t": 643.1231132832031,
+            "r": 151.57323526444827,
+            "b": 633.2551937724915,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "page_size": {
+            "width": 594.95996,
+            "height": 841.91998
+          },
+          "bbox": {
+            "l": 46.4999980625,
+            "t": 198.7968667167969,
+            "r": 151.57323526444827,
+            "b": 208.66478622750856,
+            "coord_origin": "TOPLEFT"
+          },
+          "coordinate_units": "document_points"
+        }
+      ],
+      "candidates": [
+        {
+          "raw_text": "Date: 2026-10-01",
+          "value": "2026-10-01",
+          "evidence": [
+            {
+              "page": 1,
+              "text": "Date: 2026-10-01",
+              "source_ref": "#/texts/3",
+              "bbox_original": {
+                "l": 46.4999980625,
+                "t": 643.1231132832031,
+                "r": 151.57323526444827,
+                "b": 633.2551937724915,
+                "coord_origin": "BOTTOMLEFT"
+              },
+              "page_size": {
+                "width": 594.95996,
+                "height": 841.91998
+              },
+              "bbox": {
+                "l": 46.4999980625,
+                "t": 198.7968667167969,
+                "r": 151.57323526444827,
+                "b": 208.66478622750856,
+                "coord_origin": "TOPLEFT"
+              },
+              "coordinate_units": "document_points"
+            }
+          ]
+        }
+      ],
+      "ai_candidate": null,
+      "resolution": "parser_resolved",
+      "review_required": true
+    },
+    "currency": {
+      "raw_text": "Currency: MYR",
+      "value": "MYR",
+      "state": "resolved",
+      "method": "parser_mapping",
+      "evidence": [
+        {
+          "page": 1,
+          "text": "Currency: MYR",
+          "source_ref": "#/texts/4",
+          "bbox_original": {
+            "l": 46.4999980625,
+            "t": 627.4983580748597,
+            "r": 138.76537485810914,
+            "b": 614.8289250090027,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "page_size": {
+            "width": 594.95996,
+            "height": 841.91998
+          },
+          "bbox": {
+            "l": 46.4999980625,
+            "t": 214.42162192514036,
+            "r": 138.76537485810914,
+            "b": 227.09105499099735,
+            "coord_origin": "TOPLEFT"
+          },
+          "coordinate_units": "document_points"
+        }
+      ],
+      "candidates": [
+        {
+          "raw_text": "Currency: MYR",
+          "value": "MYR",
+          "evidence": [
+            {
+              "page": 1,
+              "text": "Currency: MYR",
+              "source_ref": "#/texts/4",
+              "bbox_original": {
+                "l": 46.4999980625,
+                "t": 627.4983580748597,
+                "r": 138.76537485810914,
+                "b": 614.8289250090027,
+                "coord_origin": "BOTTOMLEFT"
+              },
+              "page_size": {
+                "width": 594.95996,
+                "height": 841.91998
+              },
+              "bbox": {
+                "l": 46.4999980625,
+                "t": 214.42162192514036,
+                "r": 138.76537485810914,
+                "b": 227.09105499099735,
+                "coord_origin": "TOPLEFT"
+              },
+              "coordinate_units": "document_points"
+            }
+          ]
+        }
+      ],
+      "ai_candidate": null,
+      "resolution": "parser_resolved",
+      "review_required": true
+    },
+    "subtotal": {
+      "raw_text": "Subtotal: MYR 50.00",
+      "value": "50.00",
+      "state": "resolved",
+      "method": "parser_mapping",
+      "evidence": [
+        {
+          "page": 1,
+          "text": "Subtotal: MYR 50.00",
+          "source_ref": "#/texts/5",
+          "bbox_original": {
+            "l": 46.4999980625,
+            "t": 514.9983627623596,
+            "r": 171.0717697770093,
+            "b": 505.00519911624144,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "page_size": {
+            "width": 594.95996,
+            "height": 841.91998
+          },
+          "bbox": {
+            "l": 46.4999980625,
+            "t": 326.92161723764036,
+            "r": 171.0717697770093,
+            "b": 336.91478088375857,
+            "coord_origin": "TOPLEFT"
+          },
+          "coordinate_units": "document_points"
+        }
+      ],
+      "candidates": [
+        {
+          "raw_text": "Subtotal: MYR 50.00",
+          "value": "MYR 50.00",
+          "evidence": [
+            {
+              "page": 1,
+              "text": "Subtotal: MYR 50.00",
+              "source_ref": "#/texts/5",
+              "bbox_original": {
+                "l": 46.4999980625,
+                "t": 514.9983627623596,
+                "r": 171.0717697770093,
+                "b": 505.00519911624144,
+                "coord_origin": "BOTTOMLEFT"
+              },
+              "page_size": {
+                "width": 594.95996,
+                "height": 841.91998
+              },
+              "bbox": {
+                "l": 46.4999980625,
+                "t": 326.92161723764036,
+                "r": 171.0717697770093,
+                "b": 336.91478088375857,
+                "coord_origin": "TOPLEFT"
+              },
+              "coordinate_units": "document_points"
+            }
+          ]
+        }
+      ],
+      "ai_candidate": null,
+      "resolution": "parser_resolved",
+      "review_required": true
+    },
+    "tax_amount": {
+      "raw_text": "Tax amount: MYR 0.00",
+      "value": "0.00",
+      "state": "resolved",
+      "method": "parser_mapping",
+      "evidence": [
+        {
+          "page": 1,
+          "text": "Tax amount: MYR 0.00",
+          "source_ref": "#/texts/6",
+          "bbox_original": {
+            "l": 46.4999980625,
+            "t": 499.1231192832031,
+            "r": 183.813712521095,
+            "b": 489.25519977249144,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "page_size": {
+            "width": 594.95996,
+            "height": 841.91998
+          },
+          "bbox": {
+            "l": 46.4999980625,
+            "t": 342.7968607167969,
+            "r": 183.813712521095,
+            "b": 352.6647802275086,
+            "coord_origin": "TOPLEFT"
+          },
+          "coordinate_units": "document_points"
+        }
+      ],
+      "candidates": [
+        {
+          "raw_text": "Tax amount: MYR 0.00",
+          "value": "MYR 0.00",
+          "evidence": [
+            {
+              "page": 1,
+              "text": "Tax amount: MYR 0.00",
+              "source_ref": "#/texts/6",
+              "bbox_original": {
+                "l": 46.4999980625,
+                "t": 499.1231192832031,
+                "r": 183.813712521095,
+                "b": 489.25519977249144,
+                "coord_origin": "BOTTOMLEFT"
+              },
+              "page_size": {
+                "width": 594.95996,
+                "height": 841.91998
+              },
+              "bbox": {
+                "l": 46.4999980625,
+                "t": 342.7968607167969,
+                "r": 183.813712521095,
+                "b": 352.6647802275086,
+                "coord_origin": "TOPLEFT"
+              },
+              "coordinate_units": "document_points"
+            }
+          ]
+        }
+      ],
+      "ai_candidate": null,
+      "resolution": "parser_resolved",
+      "review_required": true
+    },
+    "total_amount": {
+      "raw_text": "Total amount: MYR 50.00",
+      "value": "50.00",
+      "state": "resolved",
+      "method": "parser_mapping",
+      "evidence": [
+        {
+          "page": 1,
+          "text": "Total amount: MYR 50.00",
+          "source_ref": "#/texts/7",
+          "bbox_original": {
+            "l": 46.4999980625,
+            "t": 483.3731199394531,
+            "r": 198.82982507542363,
+            "b": 473.50520042874143,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "page_size": {
+            "width": 594.95996,
+            "height": 841.91998
+          },
+          "bbox": {
+            "l": 46.4999980625,
+            "t": 358.5468600605469,
+            "r": 198.82982507542363,
+            "b": 368.4147795712586,
+            "coord_origin": "TOPLEFT"
+          },
+          "coordinate_units": "document_points"
+        }
+      ],
+      "candidates": [
+        {
+          "raw_text": "Total amount: MYR 50.00",
+          "value": "MYR 50.00",
+          "evidence": [
+            {
+              "page": 1,
+              "text": "Total amount: MYR 50.00",
+              "source_ref": "#/texts/7",
+              "bbox_original": {
+                "l": 46.4999980625,
+                "t": 483.3731199394531,
+                "r": 198.82982507542363,
+                "b": 473.50520042874143,
+                "coord_origin": "BOTTOMLEFT"
+              },
+              "page_size": {
+                "width": 594.95996,
+                "height": 841.91998
+              },
+              "bbox": {
+                "l": 46.4999980625,
+                "t": 358.5468600605469,
+                "r": 198.82982507542363,
+                "b": 368.4147795712586,
+                "coord_origin": "TOPLEFT"
+              },
+              "coordinate_units": "document_points"
+            }
+          ]
+        }
+      ],
+      "ai_candidate": null,
+      "resolution": "parser_resolved",
+      "review_required": true
+    }
+  },
+  "line_items": [
+    {
+      "description": {
+        "raw_text": "Notebook",
+        "value": "Notebook",
+        "state": "resolved",
+        "method": "parser_mapping",
+        "evidence": [
+          {
+            "page": 1,
+            "text": "Notebook",
+            "source_ref": "#/tables/0/data/table_cells/4",
+            "bbox_original": {
+              "l": 56.24999765625,
+              "t": 288.086413777649,
+              "r": 114.04027819832154,
+              "b": 297.9081907121582,
+              "coord_origin": "TOPLEFT"
+            },
+            "page_size": {
+              "width": 594.95996,
+              "height": 841.91998
+            },
+            "bbox": {
+              "l": 56.24999765625,
+              "t": 288.086413777649,
+              "r": 114.04027819832154,
+              "b": 297.9081907121582,
+              "coord_origin": "TOPLEFT"
+            },
+            "coordinate_units": "document_points"
+          }
+        ],
+        "candidates": [],
+        "ai_candidate": null,
+        "resolution": "parser_resolved",
+        "review_required": true
+      },
+      "quantity": {
+        "raw_text": "2",
+        "value": "2",
+        "state": "resolved",
+        "method": "parser_mapping",
+        "evidence": [
+          {
+            "page": 1,
+            "text": "2",
+            "source_ref": "#/tables/0/data/table_cells/5",
+            "bbox_original": {
+              "l": 199.4999916875,
+              "t": 288.0468629980469,
+              "r": 207.00804796466429,
+              "b": 297.74998759375,
+              "coord_origin": "TOPLEFT"
+            },
+            "page_size": {
+              "width": 594.95996,
+              "height": 841.91998
+            },
+            "bbox": {
+              "l": 199.4999916875,
+              "t": 288.0468629980469,
+              "r": 207.00804796466429,
+              "b": 297.74998759375,
+              "coord_origin": "TOPLEFT"
+            },
+            "coordinate_units": "document_points"
+          }
+        ],
+        "candidates": [],
+        "ai_candidate": null,
+        "resolution": "parser_resolved",
+        "review_required": true
+      },
+      "unit_price": {
+        "raw_text": "25.00",
+        "value": "25.00",
+        "state": "resolved",
+        "method": "parser_mapping",
+        "evidence": [
+          {
+            "page": 1,
+            "text": "25.00",
+            "source_ref": "#/tables/0/data/table_cells/6",
+            "bbox_original": {
+              "l": 312.7031119707031,
+              "t": 288.0468629980469,
+              "r": 346.48606932807974,
+              "b": 297.91478250875855,
+              "coord_origin": "TOPLEFT"
+            },
+            "page_size": {
+              "width": 594.95996,
+              "height": 841.91998
+            },
+            "bbox": {
+              "l": 312.7031119707031,
+              "t": 288.0468629980469,
+              "r": 346.48606932807974,
+              "b": 297.91478250875855,
+              "coord_origin": "TOPLEFT"
+            },
+            "coordinate_units": "document_points"
+          }
+        ],
+        "candidates": [],
+        "ai_candidate": null,
+        "resolution": "parser_resolved",
+        "review_required": true
+      },
+      "line_total": {
+        "raw_text": "50.00",
+        "value": "50.00",
+        "state": "resolved",
+        "method": "parser_mapping",
+        "evidence": [
+          {
+            "page": 1,
+            "text": "50.00",
+            "source_ref": "#/tables/0/data/table_cells/7",
+            "bbox_original": {
+              "l": 437.4609192724609,
+              "t": 288.0468629980469,
+              "r": 471.24387662983776,
+              "b": 297.91478250875855,
+              "coord_origin": "TOPLEFT"
+            },
+            "page_size": {
+              "width": 594.95996,
+              "height": 841.91998
+            },
+            "bbox": {
+              "l": 437.4609192724609,
+              "t": 288.0468629980469,
+              "r": 471.24387662983776,
+              "b": 297.91478250875855,
+              "coord_origin": "TOPLEFT"
+            },
+            "coordinate_units": "document_points"
+          }
+        ],
+        "candidates": [],
+        "ai_candidate": null,
+        "resolution": "parser_resolved",
+        "review_required": true
+      }
+    }
+  ],
+  "routing": {
+    "decision": "parser_only",
+    "requested_fields": [],
+    "candidate_reasons": [],
+    "blocking_reasons": []
+  },
+  "provenance": {
+    "service_run_id": "contract-syn001-from-c0",
+    "source_sha256": "f0b658bbc6df334c14d2254d420281eb88d4b456efb77c3afff26b304fe824bb",
+    "docling_document_sha256": "75808d32adf558d8cf6b629c7578f934c780ee1487a8ecba8670d7621af02ca9"
+  },
+  "safety": {
+    "ai_candidate_auto_accepted": false,
+    "automatic_accounting_approval": false
+  }
+}

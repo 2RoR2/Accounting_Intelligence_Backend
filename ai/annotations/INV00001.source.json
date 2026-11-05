@@ -1,0 +1,91 @@
+{
+  "filename": "invoice_51109302.pdf",
+  "json_data": {
+    "invoice_no": "51109302",
+    "date_of_issue": "25/09/2023",
+    "seller": {
+      "name": "TechVision Distributors Pvt Ltd",
+      "address": "Plot 14, MIDC Industrial Area, Andheri East, Mumbai, Maharashtra - 400093",
+      "tax_id": "27AABCT1234F1Z5",
+      "gstin": "27AABCT1234F1Z5"
+    },
+    "client": {
+      "name": "Sharma Tech Solutions",
+      "address": "15 Connaught Place, New Delhi, Delhi - 110001",
+      "tax_id": "322-76-5821"
+    },
+    "items": [
+      {
+        "item_no": "1.",
+        "description": "Apple MacBook Air M2 8GB 256GB Silver",
+        "quantity": "7.00",
+        "unit_measure": "pcs",
+        "net_price": "102,933.00",
+        "net_worth": "720,531.00",
+        "vat_pct": "10%",
+        "gross_worth": "792,584.10"
+      },
+      {
+        "item_no": "2.",
+        "description": "TP-Link Archer AX73 WiFi 6 Router",
+        "quantity": "5.00",
+        "unit_measure": "pcs",
+        "net_price": "15,075.00",
+        "net_worth": "75,375.00",
+        "vat_pct": "10%",
+        "gross_worth": "82,912.50"
+      },
+      {
+        "item_no": "3.",
+        "description": "Samsung Galaxy Tab S9 256GB Graphite",
+        "quantity": "1.00",
+        "unit_measure": "pcs",
+        "net_price": "76,786.00",
+        "net_worth": "76,786.00",
+        "vat_pct": "10%",
+        "gross_worth": "84,464.60"
+      },
+      {
+        "item_no": "4.",
+        "description": "LG UltraGear 27 inch 165Hz Gaming Monitor",
+        "quantity": "5.00",
+        "unit_measure": "pcs",
+        "net_price": "28,169.00",
+        "net_worth": "140,845.00",
+        "vat_pct": "10%",
+        "gross_worth": "154,929.50"
+      },
+      {
+        "item_no": "5.",
+        "description": "JBL Flip 6 Portable Bluetooth Speaker",
+        "quantity": "4.00",
+        "unit_measure": "pcs",
+        "net_price": "11,692.00",
+        "net_worth": "46,768.00",
+        "vat_pct": "10%",
+        "gross_worth": "51,444.80"
+      },
+      {
+        "item_no": "6.",
+        "description": "Vivo X100 Pro 256GB Asteroid Black",
+        "quantity": "8.00",
+        "unit_measure": "pcs",
+        "net_price": "90,026.00",
+        "net_worth": "720,208.00",
+        "vat_pct": "10%",
+        "gross_worth": "792,228.80"
+      }
+    ],
+    "summary": {
+      "vat_pct": "10%",
+      "net_worth": "1,780,513.00",
+      "vat_amount": "178,051.30",
+      "gross_worth": "1,958,564.30",
+      "total_net_worth": "INR 1,780,513.00",
+      "total_vat": "INR 178,051.30",
+      "total_gross_worth": "INR 1,958,564.30"
+    }
+  },
+  "original_json_annotation_text": "{\n  \"invoice_no\": \"51109302\",\n  \"date_of_issue\": \"25/09/2023\",\n  \"seller\": {\n    \"name\": \"TechVision Distributors Pvt Ltd\",\n    \"address\": \"Plot 14, MIDC Industrial Area, Andheri East, Mumbai, Maharashtra - 400093\",\n    \"tax_id\": \"27AABCT1234F1Z5\",\n    \"gstin\": \"27AABCT1234F1Z5\"\n  },\n  \"client\": {\n    \"name\": \"Sharma Tech Solutions\",\n    \"address\": \"15 Connaught Place, New Delhi, Delhi - 110001\",\n    \"tax_id\": \"322-76-5821\"\n  },\n  \"items\": [\n    {\n      \"item_no\": \"1.\",\n      \"description\": \"Apple MacBook Air M2 8GB 256GB Silver\",\n      \"quantity\": \"7.00\",\n      \"unit_measure\": \"pcs\",\n      \"net_price\": \"102,933.00\",\n      \"net_worth\": \"720,531.00\",\n      \"vat_pct\": \"10%\",\n      \"gross_worth\": \"792,584.10\"\n    },\n    {\n      \"item_no\": \"2.\",\n      \"description\": \"TP-Link Archer AX73 WiFi 6 Router\",\n      \"quantity\": \"5.00\",\n      \"unit_measure\": \"pcs\",\n      \"net_price\": \"15,075.00\",\n      \"net_worth\": \"75,375.00\",\n      \"vat_pct\": \"10%\",\n      \"gross_worth\": \"82,912.50\"\n    },\n    {\n      \"item_no\": \"3.\",\n      \"description\": \"Samsung Galaxy Tab S9 256GB Graphite\",\n      \"quantity\": \"1.00\",\n      \"unit_measure\": \"pcs\",\n      \"net_price\": \"76,786.00\",\n      \"net_worth\": \"76,786.00\",\n      \"vat_pct\": \"10%\",\n      \"gross_worth\": \"84,464.60\"\n    },\n    {\n      \"item_no\": \"4.\",\n      \"description\": \"LG UltraGear 27 inch 165Hz Gaming Monitor\",\n      \"quantity\": \"5.00\",\n      \"unit_measure\": \"pcs\",\n      \"net_price\": \"28,169.00\",\n      \"net_worth\": \"140,845.00\",\n      \"vat_pct\": \"10%\",\n      \"gross_worth\": \"154,929.50\"\n    },\n    {\n      \"item_no\": \"5.\",\n      \"description\": \"JBL Flip 6 Portable Bluetooth Speaker\",\n      \"quantity\": \"4.00\",\n      \"unit_measure\": \"pcs\",\n      \"net_price\": \"11,692.00\",\n      \"net_worth\": \"46,768.00\",\n      \"vat_pct\": \"10%\",\n      \"gross_worth\": \"51,444.80\"\n    },\n    {\n      \"item_no\": \"6.\",\n      \"description\": \"Vivo X100 Pro 256GB Asteroid Black\",\n      \"quantity\": \"8.00\",\n      \"unit_measure\": \"pcs\",\n      \"net_price\": \"90,026.00\",\n      \"net_worth\": \"720,208.00\",\n      \"vat_pct\": \"10%\",\n      \"gross_worth\": \"792,228.80\"\n    }\n  ],\n  \"summary\": {\n    \"vat_pct\": \"10%\",\n    \"net_worth\": \"1,780,513.00\",\n    \"vat_amount\": \"178,051.30\",\n    \"gross_worth\": \"1,958,564.30\",\n    \"total_net_worth\": \"INR 1,780,513.00\",\n    \"total_vat\": \"INR 178,051.30\",\n    \"total_gross_worth\": \"INR 1,958,564.30\"\n  }\n}",
+  "published_ocred_text": "Invoice no: 51109302\nDate of issue: 25/09/2023\nSeller: Client:\nTechVision Distributors Pvt Ltd Sharma Tech Solutions\nPlot 14, MIDC Industrial Area, Andheri East 15 Connaught Place\nMumbai, Maharashtra - 400093 New Delhi, Delhi - 110001\nTax Id: 27AABCT1234F1Z5 Tax Id: 322-76-5821\nGSTIN: 27AABCT1234F1Z5\nITEMS\nNo. Description Qty UM Net Price Net Worth VAT % Gross\nWorth\n1. Apple MacBook Air M2 8GB 256GB 7.00 pcs 102,933.00 720,531.00 10% 792,584.10\nSilver\n2. TP-Link Archer AX73 WiFi 6 Router 5.00 pcs 15,075.00 75,375.00 10% 82,912.50\n3. Samsung Galaxy Tab S9 256GB 1.00 pcs 76,786.00 76,786.00 10% 84,464.60\nGraphite\n4. LG UltraGear 27 inch 165Hz Gaming 5.00 pcs 28,169.00 140,845.00 10% 154,929.50\nMonitor\n5. JBL Flip 6 Portable Bluetooth Speaker 4.00 pcs 11,692.00 46,768.00 10% 51,444.80\n6. Vivo X100 Pro 256GB Asteroid Black 8.00 pcs 90,026.00 720,208.00 10% 792,228.80\nSUMMARY\nVAT % Net Worth VAT Gross Worth\n10% 1,780,513.00 178,051.30 1,958,564.30\nINR\nTotal INR 1,780,513.00 INR 1,958,564.30\n178,051.30"
+}

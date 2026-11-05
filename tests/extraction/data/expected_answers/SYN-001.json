@@ -1,0 +1,21 @@
+{
+  "synthetic": true,
+  "document_id": "SYN-001",
+  "fields": {
+    "supplier_name": "Example Stationery (Synthetic)",
+    "invoice_number": "SYN-001",
+    "invoice_date": "2026-10-01",
+    "currency": "MYR",
+    "subtotal": "50.00",
+    "tax_amount": "0.00",
+    "total_amount": "50.00"
+  },
+  "line_items": [
+    {
+      "description": "Notebook",
+      "quantity": "2",
+      "unit_price": "25.00",
+      "line_total": "50.00"
+    }
+  ]
+}

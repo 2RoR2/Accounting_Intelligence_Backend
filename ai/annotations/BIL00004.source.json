@@ -1,0 +1,141 @@
+{
+  "source_row_index": 69,
+  "row": {
+    "file_name": "synth_0071_5325dbed.png",
+    "supplier_name": "O'Connor Energy Services",
+    "supplier_address": "12 Main Street, Dublin 8, Ireland",
+    "supplier_phone": null,
+    "supplier_email": "billing@ocenergy.ie",
+    "supplier_website": null,
+    "supplier_company_registrations": "IE 3298401F",
+    "customer_name": "John Smith",
+    "customer_id": "CUST-001234",
+    "customer_address": "45 High Street, Cork 2, Ireland",
+    "billing_address": null,
+    "shipping_address": null,
+    "customer_company_registrations": null,
+    "document_type_extended": null,
+    "document_number": null,
+    "invoice_number": "INV-20240515-001",
+    "receipt_number": null,
+    "reference_numbers": null,
+    "po_number": "PO-987654321",
+    "document_date": "2024-05-15",
+    "document_time": null,
+    "due_date": "2024-06-14",
+    "payment_date": null,
+    "document_currency": "EUR",
+    "document_total_amount": "130.0",
+    "document_total_net": "130.0",
+    "document_total_tax": "0.0",
+    "document_category": "utilities",
+    "subcategory": "electricity",
+    "locale": "en",
+    "notes": "Please settle promptly",
+    "_template_used": "utility_bill",
+    "_font_info": "Roboto",
+    "line_items": [
+      {
+        "description": "Electricity consumption for May 2024",
+        "quantity": "1.0",
+        "unit_price": "120.0",
+        "amount": "120.0",
+        "tax_rate": "0%",
+        "tax_amount": "0.0"
+      },
+      {
+        "description": "Fixed supply charge",
+        "quantity": "1.0",
+        "unit_price": "10.0",
+        "amount": "10.0",
+        "tax_rate": "0%",
+        "tax_amount": "0.0"
+      }
+    ],
+    "taxes": [
+      {
+        "base": "130.0",
+        "rate": "0%",
+        "code": "VAT",
+        "value": "0.0"
+      }
+    ],
+    "image": {
+      "src": "https://datasets-server.huggingface.co/cached-assets/alamgirqazi/invoice-ocr-synthetic/--/673ff85be462eb7f3715ec188a295dd17ca11115/--/default/train/69/image/image.jpg",
+      "height": 2339,
+      "width": 1654
+    },
+    "quality": "clean"
+  },
+  "released_record_index": 69,
+  "released_record_decimal_strings": {
+    "file_name": "synth_0071_5325dbed.png",
+    "supplier_name": "O'Connor Energy Services",
+    "document_date": "2024-05-15",
+    "document_time": null,
+    "document_currency": "EUR",
+    "document_total_amount": "130.0",
+    "document_total_net": "130.0",
+    "document_total_tax": "0.0",
+    "document_category": "utilities",
+    "subcategory": "electricity",
+    "due_date": "2024-06-14",
+    "payment_date": null,
+    "document_type_extended": null,
+    "document_number": null,
+    "receipt_number": null,
+    "invoice_number": "INV-20240515-001",
+    "reference_numbers": null,
+    "po_number": "PO-987654321",
+    "locale": "en",
+    "customer_name": "John Smith",
+    "customer_id": "CUST-001234",
+    "customer_address": "45 High Street, Cork 2, Ireland",
+    "billing_address": null,
+    "shipping_address": null,
+    "customer_company_registrations": null,
+    "supplier_address": "12 Main Street, Dublin 8, Ireland",
+    "supplier_phone": null,
+    "supplier_email": "billing@ocenergy.ie",
+    "supplier_website": null,
+    "supplier_company_registrations": "IE 3298401F",
+    "line_items": [
+      {
+        "description": "Electricity consumption for May 2024",
+        "quantity": "1.0",
+        "unit_price": "120.0",
+        "amount": "120.0",
+        "tax_rate": "0%",
+        "tax_amount": "0.0"
+      },
+      {
+        "description": "Fixed supply charge",
+        "quantity": "1.0",
+        "unit_price": "10.0",
+        "amount": "10.0",
+        "tax_rate": "0%",
+        "tax_amount": "0.0"
+      }
+    ],
+    "taxes": [
+      {
+        "base": "130.0",
+        "rate": "0%",
+        "code": "VAT",
+        "value": "0.0"
+      }
+    ],
+    "notes": "Please settle promptly",
+    "mime_type": "image/png",
+    "labeled_at": "2026-03-16T07:58:41.732339",
+    "_template_used": "utility_bill",
+    "_synthetic": true,
+    "_font_info": "Roboto",
+    "degradation_variants": {
+      "clean": "synth_0071_5325dbed.png",
+      "bad_scan": "synth_0071_5325dbed.png",
+      "faded": "synth_0071_5325dbed.png"
+    }
+  },
+  "representation": "Publisher-hosted full-size JPEG viewer asset of original embedded PNG; no local conversion."
+}

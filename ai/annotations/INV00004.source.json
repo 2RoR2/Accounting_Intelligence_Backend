@@ -1,0 +1,41 @@
+{
+  "filename": "invoice_51109309.pdf",
+  "json_data": {
+    "invoice_no": "51109309",
+    "date_of_issue": "15/04/2023",
+    "seller": {
+      "name": "TechVision Distributors Pvt Ltd",
+      "address": "Plot 14, MIDC Industrial Area, Andheri East, Mumbai, Maharashtra - 400093",
+      "tax_id": "27AABCT1234F1Z5",
+      "gstin": "27AABCT1234F1Z5"
+    },
+    "client": {
+      "name": "Pune Gadget Zone",
+      "address": "67 FC Road, Pune, Maharashtra - 411004",
+      "tax_id": "405-39-5538"
+    },
+    "items": [
+      {
+        "item_no": "1.",
+        "description": "Lenovo Tab P12 Pro 256GB Storm Grey",
+        "quantity": "6.00",
+        "unit_measure": "pcs",
+        "net_price": "46,537.00",
+        "net_worth": "279,222.00",
+        "vat_pct": "10%",
+        "gross_worth": "307,144.20"
+      }
+    ],
+    "summary": {
+      "vat_pct": "10%",
+      "net_worth": "279,222.00",
+      "vat_amount": "27,922.20",
+      "gross_worth": "307,144.20",
+      "total_net_worth": "INR 279,222.00",
+      "total_vat": "INR 27,922.20",
+      "total_gross_worth": "INR 307,144.20"
+    }
+  },
+  "original_json_annotation_text": "{\n  \"invoice_no\": \"51109309\",\n  \"date_of_issue\": \"15/04/2023\",\n  \"seller\": {\n    \"name\": \"TechVision Distributors Pvt Ltd\",\n    \"address\": \"Plot 14, MIDC Industrial Area, Andheri East, Mumbai, Maharashtra - 400093\",\n    \"tax_id\": \"27AABCT1234F1Z5\",\n    \"gstin\": \"27AABCT1234F1Z5\"\n  },\n  \"client\": {\n    \"name\": \"Pune Gadget Zone\",\n    \"address\": \"67 FC Road, Pune, Maharashtra - 411004\",\n    \"tax_id\": \"405-39-5538\"\n  },\n  \"items\": [\n    {\n      \"item_no\": \"1.\",\n      \"description\": \"Lenovo Tab P12 Pro 256GB Storm Grey\",\n      \"quantity\": \"6.00\",\n      \"unit_measure\": \"pcs\",\n      \"net_price\": \"46,537.00\",\n      \"net_worth\": \"279,222.00\",\n      \"vat_pct\": \"10%\",\n      \"gross_worth\": \"307,144.20\"\n    }\n  ],\n  \"summary\": {\n    \"vat_pct\": \"10%\",\n    \"net_worth\": \"279,222.00\",\n    \"vat_amount\": \"27,922.20\",\n    \"gross_worth\": \"307,144.20\",\n    \"total_net_worth\": \"INR 279,222.00\",\n    \"total_vat\": \"INR 27,922.20\",\n    \"total_gross_worth\": \"INR 307,144.20\"\n  }\n}",
+  "published_ocred_text": "Invoice no: 51109309\nDate of issue: 15/04/2023\nSeller: Client:\nTechVision Distributors Pvt Ltd Pune Gadget Zone\nPlot 14, MIDC Industrial Area, Andheri East 67 FC Road\nMumbai, Maharashtra - 400093 Pune, Maharashtra - 411004\nTax Id: 27AABCT1234F1Z5 Tax Id: 405-39-5538\nGSTIN: 27AABCT1234F1Z5\nITEMS\nNo. Description Qty UM Net Price Net Worth VAT % Gross\nWorth\n1. Lenovo Tab P12 Pro 256GB Storm Grey 6.00 pcs 46,537.00 279,222.00 10% 307,144.20\nSUMMARY\nVAT % Net Worth VAT Gross Worth\n10% 279,222.00 27,922.20 307,144.20\nTotal INR 279,222.00 INR 27,922.20 INR 307,144.20"
+}

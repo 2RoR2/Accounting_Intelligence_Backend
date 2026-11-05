@@ -1,0 +1,55 @@
+{
+  "original_id": "6984bad10f763d83586fdd8f",
+  "original_filepath": "data/batch1-0004.jpg",
+  "json_annotation": {
+    "invoice": {
+      "client_name": "Castillo LLC",
+      "client_address": "70391 Kelsey Terrace\nGarcialand, VT 41740",
+      "seller_name": "Reyes, Holloway and Lee",
+      "seller_address": "38676 Johnson Burg Suite 666\nWest Rebeccamouth, SD 02588",
+      "invoice_number": "16273983",
+      "invoice_date": "04/01/2017",
+      "due_date": ""
+    },
+    "items": [
+      {
+        "description": "Handmade Thick round warm crochet Rug Carpet Mat 97% acrylic 3% me Floor Decor",
+        "quantity": "4.00",
+        "total_price": "197.96"
+      },
+      {
+        "description": "Rug White Moroccan Beni Ourain Trellis Shag Area Rug Authentic Handmade Carpet",
+        "quantity": "2.00",
+        "total_price": "539.00"
+      },
+      {
+        "description": "Abstract Living Room Carpet Home Decor Nordic Style Bedside Area Rug Floor Mats",
+        "quantity": "1.00",
+        "total_price": "26.41"
+      },
+      {
+        "description": "Leopard Printed Rug Skin Mat Leather Faux Fur Animals Area Rugs Home Carpets",
+        "quantity": "1.00",
+        "total_price": "21.44"
+      },
+      {
+        "description": "1pc Exquisite Durable Foot Cloth Christmas Carpet Xmas Cushion for Kitchen",
+        "quantity": "2.00",
+        "total_price": "34.25"
+      }
+    ],
+    "subtotal": {
+      "tax": "74.46",
+      "discount": "",
+      "total": "819.06"
+    },
+    "payment_instructions": {
+      "due_date": "",
+      "bank_name": "",
+      "account_number": "",
+      "payment_method": ""
+    }
+  },
+  "original_json_annotation_text": "{\n  \"invoice\": {\n    \"client_name\": \"Castillo LLC\",\n    \"client_address\": \"70391 Kelsey Terrace\\nGarcialand, VT 41740\",\n    \"seller_name\": \"Reyes, Holloway and Lee\",\n    \"seller_address\": \"38676 Johnson Burg Suite 666\\nWest Rebeccamouth, SD 02588\",\n    \"invoice_number\": \"16273983\",\n    \"invoice_date\": \"04/01/2017\",\n    \"due_date\": \"\"\n  },\n  \"items\": [\n    {\n      \"description\": \"Handmade Thick round warm crochet Rug Carpet Mat 97% acrylic 3% me Floor Decor\",\n      \"quantity\": \"4.00\",\n      \"total_price\": \"197.96\"\n    },\n    {\n      \"description\": \"Rug White Moroccan Beni Ourain Trellis Shag Area Rug Authentic Handmade Carpet\",\n      \"quantity\": \"2.00\",\n      \"total_price\": \"539.00\"\n    },\n    {\n      \"description\": \"Abstract Living Room Carpet Home Decor Nordic Style Bedside Area Rug Floor Mats\",\n      \"quantity\": \"1.00\",\n      \"total_price\": \"26.41\"\n    },\n    {\n      \"description\": \"Leopard Printed Rug Skin Mat Leather Faux Fur Animals Area Rugs Home Carpets\",\n      \"quantity\": \"1.00\",\n      \"total_price\": \"21.44\"\n    },\n    {\n      \"description\": \"1pc Exquisite Durable Foot Cloth Christmas Carpet Xmas Cushion for Kitchen\",\n      \"quantity\": \"2.00\",\n      \"total_price\": \"34.25\"\n    }\n  ],\n  \"subtotal\": {\n    \"tax\": \"74.46\",\n    \"discount\": \"\",\n    \"total\": \"819.06\"\n  },\n  \"payment_instructions\": {\n    \"due_date\": \"\",\n    \"bank_name\": \"\",\n    \"account_number\": \"\",\n    \"payment_method\": \"\"\n  }\n}",
+  "ocr_text": "Invoice no: 16273983 Date of issue: 04/01/2017 Seller: Client: Reyes, Holloway and Lee Castillo LLC 38676 Johnson Burg Suite 666 70391 Kelsey Terrace West Rebeccamouth, SD 02588 Garcialand, VT 41740 Tax Id: 909-83-7738 Tax Id: 901-88-0463 IBAN: GBOGVWUL52026848004193 ITEMS No. Description Qty UM Net price Net worth VAT [%] Gross worth 1. Handmade Thick round warm 4,00 each 44,99 179,96 10% 197,96 crochet Rug Carpet Mat 97% acrylic 3% me Floor Decor 2 Rug White Moroccan Beni 2,00 each 245,00 490,00 10% 539,00 Ourain Trellis Shag Area Rug Authentic Handmade Carpet 3 Abstract Living Room Carpet 1,00 each 24,01 24,01 10% 26,41 Home Decor Nordic Style Bedside Area Rug Floor Mats Leopard Printed Rug Skin Mat 1,00 each 19,49 19,49 10% 21,44 Leather Faux Fur Animals Area Rugs Home Carpets 5 lpc Exquisite Durable Foot 2,00 each 15,57 31,14 10% 34,25 Cloth Christmas Carpet Xmas Cushion for Kitchen SUMMARY VAT [%] Net worth VAT Gross worth 10% 744,60 74,46 819,06 Total $ 744,60 $ 74,46 $ 819,06"
+}

@@ -1,0 +1,22 @@
+[
+  {
+    "document_id": "DOC-001",
+    "document_type": "invoice",
+    "expected": {
+      "supplier_name": "Example Sdn Bhd",
+      "invoice_number": "INV-001",
+      "invoice_date": "2026-01-15",
+      "currency": "MYR",
+      "total_amount": "100.00",
+      "duplicate": false,
+      "arithmetic_valid": true
+    },
+    "expected_line_items": [],
+    "predicted": {},
+    "predicted_line_items": [],
+    "processing_seconds": null,
+    "corrected_fields": [],
+    "baseline_manual_seconds": null,
+    "manual_seconds": null
+  }
+]

@@ -1,0 +1,191 @@
+{
+  "checked_at": "2026-11-06T06:24:27.845849+08:00",
+  "documents": [
+    {
+      "status": "exception",
+      "count": 66
+    },
+    {
+      "status": "processing",
+      "count": 2
+    },
+    {
+      "status": "queued",
+      "count": 112
+    },
+    {
+      "status": "validated",
+      "count": 10
+    }
+  ],
+  "latest_attempts": [
+    {
+      "status": "pending",
+      "count": 112
+    },
+    {
+      "status": "processing",
+      "count": 2
+    },
+    {
+      "status": "succeeded",
+      "count": 66
+    }
+  ],
+  "real_persisted": {
+    "count": 66
+  },
+  "active_duplicates": [],
+  "current_run_duplicates": [],
+  "remaining_failures": [],
+  "running_attempts": [
+    {
+      "document_id": "552105b1-581a-43f8-89c7-bccc2fc4d8eb",
+      "claimed_at": "2026-11-05 22:24:06.419789+00:00",
+      "heartbeat_at": "2026-11-05 22:24:06.419789+00:00",
+      "processing_expires_at": "2026-11-05 22:54:06.419789+00:00",
+      "original_filename": "INV00008.jpg"
+    },
+    {
+      "document_id": "562c1a53-0bce-46d9-91f8-e35d054059ff",
+      "claimed_at": "2026-11-05 22:24:13.464322+00:00",
+      "heartbeat_at": "2026-11-05 22:24:13.464322+00:00",
+      "processing_expires_at": "2026-11-05 22:54:13.464322+00:00",
+      "original_filename": "REC00002.jpg"
+    }
+  ],
+  "original_failure_documents": [
+    {
+      "id": "08581d15-6cd0-47c7-9e72-9a1a094901d4",
+      "original_filename": "BIL00008.jpg",
+      "status": "exception",
+      "persisted": true
+    },
+    {
+      "id": "10704001-48da-424d-8f85-131790b62dbc",
+      "original_filename": "12847181.jpg",
+      "status": "exception",
+      "persisted": true
+    },
+    {
+      "id": "28a1eec8-4840-4168-909f-720e97284612",
+      "original_filename": "BIL00010.jpg",
+      "status": "exception",
+      "persisted": true
+    },
+    {
+      "id": "432e20e1-7e8c-4d99-8bf3-06d0a789cdff",
+      "original_filename": "BIL00008.jpg",
+      "status": "exception",
+      "persisted": true
+    },
+    {
+      "id": "556cebbf-59af-49a5-89e0-ce953defa229",
+      "original_filename": "BIL00006.jpg",
+      "status": "exception",
+      "persisted": true
+    },
+    {
+      "id": "6030ac03-2e7c-4883-a67f-836509efaf49",
+      "original_filename": "BIL00003.jpg",
+      "status": "exception",
+      "persisted": true
+    },
+    {
+      "id": "88874a81-2203-4705-87a6-b1cd6b7aa94e",
+      "original_filename": "72128555.jpg",
+      "status": "exception",
+      "persisted": true
+    },
+    {
+      "id": "9dcd64ff-fb5f-4102-9064-81b9620c77b6",
+      "original_filename": "BIL00005.jpg",
+      "status": "exception",
+      "persisted": true
+    },
+    {
+      "id": "b19bb2c2-69c7-416f-a08f-5ff74b232b13",
+      "original_filename": "51109338.jpg",
+      "status": "exception",
+      "persisted": true
+    },
+    {
+      "id": "c28ab641-b4d3-4e08-b4b1-f8040fba6889",
+      "original_filename": "REC00003.jpg",
+      "status": "exception",
+      "persisted": true
+    },
+    {
+      "id": "c35791a8-cad3-4511-aae4-1e41a6db7c54",
+      "original_filename": "12847181.jpg",
+      "status": "exception",
+      "persisted": true
+    },
+    {
+      "id": "d0131296-0fa6-4146-a00b-bd7610e958b0",
+      "original_filename": "51109302.pdf",
+      "status": "exception",
+      "persisted": true
+    },
+    {
+      "id": "e9fe3a0b-3859-4090-8f84-0e994fd97686",
+      "original_filename": "REC00009.jpg",
+      "status": "exception",
+      "persisted": true
+    },
+    {
+      "id": "fbbdf44f-a085-4a04-b2d3-8ee19bb646f9",
+      "original_filename": "REC00004.jpg",
+      "status": "exception",
+      "persisted": true
+    }
+  ],
+  "redis": {
+    "queued": 0,
+    "running": 2,
+    "finished": 64,
+    "historical_failed": 949
+  },
+  "workers": [
+    {
+      "name": "accounting-batch-ocr-2",
+      "state": "busy",
+      "pid": 38656,
+      "local_process_alive": true,
+      "last_heartbeat": "2026-11-05 22:24:05.414008+00:00",
+      "runtime": {
+        "python": "C:\\AI-Python312\\python.exe",
+        "rq": "2.12.0",
+        "class": "WindowsWorker",
+        "serializer": "JSONSerializer",
+        "queue": "cpu_tasks",
+        "redis_db": 0,
+        "ocr_engine": "Docling/RapidOCR",
+        "ENABLE_IMAGE_OCR": "false",
+        "DOCLING_MODELS_DIR": "ai/models/docling",
+        "IMAGE_OCR_PYTHON": null,
+        "QWEN_RECOVERY_MODE": "off"
+      }
+    },
+    {
+      "name": "accounting-batch-ocr-1",
+      "state": "busy",
+      "pid": 47280,
+      "local_process_alive": true,
+      "last_heartbeat": "2026-11-05 22:24:12.643509+00:00",
+      "runtime": {
+        "python": "C:\\AI-Python312\\python.exe",
+        "rq": "2.12.0",
+        "class": "WindowsWorker",
+        "serializer": "JSONSerializer",
+        "queue": "cpu_tasks",
+        "redis_db": 0,
+        "ocr_engine": "Docling/RapidOCR",
+        "ENABLE_IMAGE_OCR": "false",
+        "DOCLING_MODELS_DIR": "ai/models/docling",
+        "IMAGE_OCR_PYTHON": null,
+        "QWEN_RECOVERY_MODE": "off"
+      }
+    }
+  ]
+}

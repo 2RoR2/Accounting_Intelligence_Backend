@@ -1,0 +1,249 @@
+{
+  "source_row_index": 136,
+  "row": {
+    "file_name": "synth_0144_99011fc5.png",
+    "supplier_name": "PowerGrid Utilities Ltd",
+    "supplier_address": null,
+    "supplier_phone": null,
+    "supplier_email": null,
+    "supplier_website": "https://www.powergrid.co.uk",
+    "supplier_company_registrations": null,
+    "customer_name": null,
+    "customer_id": null,
+    "customer_address": "10 Oak Street, Birmingham B12 3DF",
+    "billing_address": null,
+    "shipping_address": null,
+    "customer_company_registrations": "GB9876543",
+    "document_type_extended": null,
+    "document_number": "2023-07-15-001",
+    "invoice_number": "GB-20230715-INV-001",
+    "receipt_number": null,
+    "reference_numbers": null,
+    "po_number": null,
+    "document_date": "2023-07-15",
+    "document_time": null,
+    "due_date": "2023-08-14",
+    "payment_date": null,
+    "document_currency": "GBP",
+    "document_total_amount": "424.32",
+    "document_total_net": "356.1",
+    "document_total_tax": "68.22",
+    "document_category": "utilities",
+    "subcategory": "electricity",
+    "locale": "en",
+    "notes": "",
+    "_template_used": "utility_bill",
+    "_font_info": "Liberation Sans",
+    "line_items": [
+      {
+        "description": "Electricity usage - Q3 2023",
+        "quantity": "1.0",
+        "unit_price": "120.0",
+        "amount": "120.0",
+        "tax_rate": "20%",
+        "tax_amount": "24.0"
+      },
+      {
+        "description": "Connection Charge",
+        "quantity": "1.0",
+        "unit_price": "35.0",
+        "amount": "35.0",
+        "tax_rate": "20%",
+        "tax_amount": "7.0"
+      },
+      {
+        "description": "Metering Service Fee",
+        "quantity": "1.0",
+        "unit_price": "12.5",
+        "amount": "12.5",
+        "tax_rate": "20%",
+        "tax_amount": "2.5"
+      },
+      {
+        "description": "Standing Charge",
+        "quantity": "30.0",
+        "unit_price": "0.12",
+        "amount": "3.6",
+        "tax_rate": "20%",
+        "tax_amount": "0.72"
+      },
+      {
+        "description": "Waste Disposal",
+        "quantity": "1.0",
+        "unit_price": "40.0",
+        "amount": "40.0",
+        "tax_rate": "20%",
+        "tax_amount": "8.0"
+      },
+      {
+        "description": "Water Supply",
+        "quantity": "1.0",
+        "unit_price": "50.0",
+        "amount": "50.0",
+        "tax_rate": "20%",
+        "tax_amount": "10.0"
+      },
+      {
+        "description": "TV Licence",
+        "quantity": "1.0",
+        "unit_price": "15.0",
+        "amount": "15.0",
+        "tax_rate": "0%",
+        "tax_amount": "0.0"
+      },
+      {
+        "description": "Gas Usage",
+        "quantity": "1.0",
+        "unit_price": "80.0",
+        "amount": "80.0",
+        "tax_rate": "20%",
+        "tax_amount": "16.0"
+      }
+    ],
+    "taxes": [
+      {
+        "base": "341.1",
+        "rate": "20%",
+        "code": "VAT",
+        "value": "68.22"
+      },
+      {
+        "base": "15.0",
+        "rate": "0%",
+        "code": "VAT",
+        "value": "0.0"
+      }
+    ],
+    "image": {
+      "src": "https://datasets-server.huggingface.co/cached-assets/alamgirqazi/invoice-ocr-synthetic/--/673ff85be462eb7f3715ec188a295dd17ca11115/--/default/train/136/image/image.jpg",
+      "height": 2339,
+      "width": 1654
+    },
+    "quality": "clean"
+  },
+  "released_record_index": 136,
+  "released_record_decimal_strings": {
+    "file_name": "synth_0144_99011fc5.png",
+    "supplier_name": "PowerGrid Utilities Ltd",
+    "document_date": "2023-07-15",
+    "document_time": null,
+    "document_currency": "GBP",
+    "document_total_amount": "424.32",
+    "document_total_net": "356.1",
+    "document_total_tax": "68.22",
+    "document_category": "utilities",
+    "subcategory": "electricity",
+    "due_date": "2023-08-14",
+    "payment_date": null,
+    "document_type_extended": null,
+    "document_number": "2023-07-15-001",
+    "receipt_number": null,
+    "invoice_number": "GB-20230715-INV-001",
+    "reference_numbers": null,
+    "po_number": null,
+    "locale": "en",
+    "customer_name": null,
+    "customer_id": null,
+    "customer_address": "10 Oak Street, Birmingham B12 3DF",
+    "billing_address": null,
+    "shipping_address": null,
+    "customer_company_registrations": "GB9876543",
+    "supplier_address": null,
+    "supplier_phone": null,
+    "supplier_email": null,
+    "supplier_website": "https://www.powergrid.co.uk",
+    "supplier_company_registrations": null,
+    "line_items": [
+      {
+        "description": "Electricity usage - Q3 2023",
+        "quantity": "1.0",
+        "unit_price": "120.0",
+        "amount": "120.0",
+        "tax_rate": "20%",
+        "tax_amount": "24.0"
+      },
+      {
+        "description": "Connection Charge",
+        "quantity": "1.0",
+        "unit_price": "35.0",
+        "amount": "35.0",
+        "tax_rate": "20%",
+        "tax_amount": "7.0"
+      },
+      {
+        "description": "Metering Service Fee",
+        "quantity": "1.0",
+        "unit_price": "12.5",
+        "amount": "12.5",
+        "tax_rate": "20%",
+        "tax_amount": "2.5"
+      },
+      {
+        "description": "Standing Charge",
+        "quantity": "30.0",
+        "unit_price": "0.12",
+        "amount": "3.6",
+        "tax_rate": "20%",
+        "tax_amount": "0.72"
+      },
+      {
+        "description": "Waste Disposal",
+        "quantity": "1.0",
+        "unit_price": "40.0",
+        "amount": "40.0",
+        "tax_rate": "20%",
+        "tax_amount": "8.0"
+      },
+      {
+        "description": "Water Supply",
+        "quantity": "1.0",
+        "unit_price": "50.0",
+        "amount": "50.0",
+        "tax_rate": "20%",
+        "tax_amount": "10.0"
+      },
+      {
+        "description": "TV Licence",
+        "quantity": "1.0",
+        "unit_price": "15.0",
+        "amount": "15.0",
+        "tax_rate": "0%",
+        "tax_amount": "0.0"
+      },
+      {
+        "description": "Gas Usage",
+        "quantity": "1.0",
+        "unit_price": "80.0",
+        "amount": "80.0",
+        "tax_rate": "20%",
+        "tax_amount": "16.0"
+      }
+    ],
+    "taxes": [
+      {
+        "base": "341.1",
+        "rate": "20%",
+        "code": "VAT",
+        "value": "68.22"
+      },
+      {
+        "base": "15.0",
+        "rate": "0%",
+        "code": "VAT",
+        "value": "0.0"
+      }
+    ],
+    "notes": "",
+    "mime_type": "image/png",
+    "labeled_at": "2026-03-16T08:01:51.021246",
+    "_template_used": "utility_bill",
+    "_synthetic": true,
+    "_font_info": "Liberation Sans",
+    "degradation_variants": {
+      "clean": "synth_0144_99011fc5.png",
+      "bad_scan": "synth_0144_99011fc5.png",
+      "faded": "synth_0144_99011fc5.png"
+    }
+  },
+  "representation": "Publisher-hosted full-size JPEG viewer asset of original embedded PNG; no local conversion."
+}

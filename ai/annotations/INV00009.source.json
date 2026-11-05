@@ -1,0 +1,65 @@
+{
+  "original_id": "6984bad10f763d83586fddf2",
+  "original_filepath": "data/batch1-0007.jpg",
+  "json_annotation": {
+    "invoice": {
+      "client_name": "Tapia LLC",
+      "client_address": "53393 Peters Overpass\nBoothside, WY 76847",
+      "seller_name": "Wood, Simpson and Summers",
+      "seller_address": "7000 Graves Ville\nJuliastad, OH 02764",
+      "invoice_number": "11580833",
+      "invoice_date": "11/24/2019",
+      "due_date": ""
+    },
+    "items": [
+      {
+        "description": "Dell Optiplex SFF Desktop Computer Windows 10 4GB 160GB",
+        "quantity": "1.00",
+        "total_price": "98.99"
+      },
+      {
+        "description": "Dell Desktop Computer Intel Core 2 Duo 8GB 1TB HD\nWindows 10 PC 22\" LCD Wifi",
+        "quantity": "3.00",
+        "total_price": "230.84"
+      },
+      {
+        "description": "HP 6200 Pro Core i7 3.4GHz Quad Core 16GB 500GB Computer",
+        "quantity": "5.00",
+        "total_price": "1411.74"
+      },
+      {
+        "description": "Vintage Microsolutions Pentium 133mhz Desktop Tower PC Windows 95 5.25 Floppy",
+        "quantity": "3.00",
+        "total_price": "1287.00"
+      },
+      {
+        "description": "Dell OptiPlex 7060 SFF Computer, 8th Gen Core i5, 8GB DDR4, New 240GB SSD, DVD",
+        "quantity": "4.00",
+        "total_price": "891.00"
+      },
+      {
+        "description": "Custom Gaming PC Computer FX-6300 3.5GHz 8GB RAM 128GB SSD 1 TB HDD RX 580 4GB",
+        "quantity": "1.00",
+        "total_price": "494.99"
+      },
+      {
+        "description": "Custom Build HP Desktop Computer 16GB | 2TB | SSD | Windows 10 Windows 7 PC WiFi",
+        "quantity": "2.00",
+        "total_price": "723.80"
+      }
+    ],
+    "subtotal": {
+      "tax": "467.12",
+      "discount": "",
+      "total": "5138.35"
+    },
+    "payment_instructions": {
+      "due_date": "",
+      "bank_name": "",
+      "account_number": "",
+      "payment_method": ""
+    }
+  },
+  "original_json_annotation_text": "{\n  \"invoice\": {\n    \"client_name\": \"Tapia LLC\",\n    \"client_address\": \"53393 Peters Overpass\\nBoothside, WY 76847\",\n    \"seller_name\": \"Wood, Simpson and Summers\",\n    \"seller_address\": \"7000 Graves Ville\\nJuliastad, OH 02764\",\n    \"invoice_number\": \"11580833\",\n    \"invoice_date\": \"11/24/2019\",\n    \"due_date\": \"\"\n  },\n  \"items\": [\n    {\n      \"description\": \"Dell Optiplex SFF Desktop Computer Windows 10 4GB 160GB\",\n      \"quantity\": \"1.00\",\n      \"total_price\": \"98.99\"\n    },\n    {\n      \"description\": \"Dell Desktop Computer Intel Core 2 Duo 8GB 1TB HD\\nWindows 10 PC 22\\\" LCD Wifi\",\n      \"quantity\": \"3.00\",\n      \"total_price\": \"230.84\"\n    },\n    {\n      \"description\": \"HP 6200 Pro Core i7 3.4GHz Quad Core 16GB 500GB Computer\",\n      \"quantity\": \"5.00\",\n      \"total_price\": \"1411.74\"\n    },\n    {\n      \"description\": \"Vintage Microsolutions Pentium 133mhz Desktop Tower PC Windows 95 5.25 Floppy\",\n      \"quantity\": \"3.00\",\n      \"total_price\": \"1287.00\"\n    },\n    {\n      \"description\": \"Dell OptiPlex 7060 SFF Computer, 8th Gen Core i5, 8GB DDR4, New 240GB SSD, DVD\",\n      \"quantity\": \"4.00\",\n      \"total_price\": \"891.00\"\n    },\n    {\n      \"description\": \"Custom Gaming PC Computer FX-6300 3.5GHz 8GB RAM 128GB SSD 1 TB HDD RX 580 4GB\",\n      \"quantity\": \"1.00\",\n      \"total_price\": \"494.99\"\n    },\n    {\n      \"description\": \"Custom Build HP Desktop Computer 16GB | 2TB | SSD | Windows 10 Windows 7 PC WiFi\",\n      \"quantity\": \"2.00\",\n      \"total_price\": \"723.80\"\n    }\n  ],\n  \"subtotal\": {\n    \"tax\": \"467.12\",\n    \"discount\": \"\",\n    \"total\": \"5138.35\"\n  },\n  \"payment_instructions\": {\n    \"due_date\": \"\",\n    \"bank_name\": \"\",\n    \"account_number\": \"\",\n    \"payment_method\": \"\"\n  }\n}",
+  "ocr_text": "Invoice no: 11580833 Date of issue: 11/24/2019 Seller: Client: Wood, Simpson and Summers Tapia LLC 7000 Graves Ville 53393 Peters Overpass Juliastad, OH 02764 Boothside, WY 76847 Tax Id: 968-86-1662 Tax Id: 979-96-3992 IBAN: GB61VHVS67246807986062 ITEMS No. Description Qty UM Net price Net worth VAT [%] Gross worth 1. Dell Optiplex SFF Desktop 1,00 each 89,99 89,99 10% 98,99 Computer Windows 10 4GB 160GB 2 Dell Desktop ComputerDIntel 3,00 each 69,95 209,85 10% 230,84 Core 2 Duo 8GB 1TB HD [Windows 10 PC 22 LCD Wifi 3 HP 6200 Pro Core i7 3.4GHz 5,00 each 256,68 1 283,40 10% 1 411,74 Quad Core 16GB 500GB Computer Vintage Microsolutions Pentium 3,00 each 390,00 1 170,00 10% 1 287,00 133mhz Desktop Tower PC Windows 95 5.25 Floppy 5 Dell OptiPlex 7060 SFF 4,00 each 202,50 810,00 10% 891,00 Computer, 8th Gen Core i5, 8GB DDR4, New 240GB SSD DVD 6 Custom Gaming PC Computer 1,00 each 449,99 449,99 10% 494,99 FX-6300 3.SGHz 8GB RAM 128GB SSD 1 TB HDD RX 580 4GB Custom Build HP Desktop 2,00 each 329,00 658,00 10% 723,80 Computer 16GB 2TB SSD Windows 10 Windows PC WiFi SUMMARY VAT [%] Net worth VAT Gross worth 10% 4 671,23 467,12 5 138,35 Total $ 4 671,23 $ 467,12 $ 5 138,35"
+}

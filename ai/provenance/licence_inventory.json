@@ -1,0 +1,705 @@
+{
+  "samples": [
+    {
+      "demo_code": "INV00001",
+      "sample_id": "KAGGLE-PDF-invoice_51109302",
+      "source_dataset": "kaggle/devp1866/high-quality-ocr-ready-invoice-pdfs",
+      "source_revision": "kaggle-dataset-version/1",
+      "publisher_attribution": "Kaggle devp1866, OCR-Ready Invoice PDFs consumer-electronics collection",
+      "licence": "Apache-2.0",
+      "licence_reference": "https://www.kaggle.com/datasets/devp1866/high-quality-ocr-ready-invoice-pdfs",
+      "included_licence_file": "licenses/Apache-2.0.txt",
+      "sharing_status": "SHAREABLE_WITH_NOTICES",
+      "changes": "Source file bytes unchanged. Gold path references relocated; viewer metadata URL signatures removed. Labels/words/boxes unchanged.",
+      "reacquisition": {
+        "dataset": "kaggle/devp1866/high-quality-ocr-ready-invoice-pdfs",
+        "revision": "kaggle-dataset-version/1",
+        "original_sample_id": "invoice_51109302.pdf",
+        "source_row_index": null,
+        "original_filepath": null,
+        "method": "Use publisher pinned source or fresh viewer rows with matching x-revision; never reuse expired signed URLs."
+      }
+    },
+    {
+      "demo_code": "INV00002",
+      "sample_id": "KAGGLE-PDF-invoice_51109306",
+      "source_dataset": "kaggle/devp1866/high-quality-ocr-ready-invoice-pdfs",
+      "source_revision": "kaggle-dataset-version/1",
+      "publisher_attribution": "Kaggle devp1866, OCR-Ready Invoice PDFs consumer-electronics collection",
+      "licence": "Apache-2.0",
+      "licence_reference": "https://www.kaggle.com/datasets/devp1866/high-quality-ocr-ready-invoice-pdfs",
+      "included_licence_file": "licenses/Apache-2.0.txt",
+      "sharing_status": "SHAREABLE_WITH_NOTICES",
+      "changes": "Source file bytes unchanged. Gold path references relocated; viewer metadata URL signatures removed. Labels/words/boxes unchanged.",
+      "reacquisition": {
+        "dataset": "kaggle/devp1866/high-quality-ocr-ready-invoice-pdfs",
+        "revision": "kaggle-dataset-version/1",
+        "original_sample_id": "invoice_51109306.pdf",
+        "source_row_index": null,
+        "original_filepath": null,
+        "method": "Use publisher pinned source or fresh viewer rows with matching x-revision; never reuse expired signed URLs."
+      }
+    },
+    {
+      "demo_code": "INV00003",
+      "sample_id": "KAGGLE-PDF-invoice_51109308",
+      "source_dataset": "kaggle/devp1866/high-quality-ocr-ready-invoice-pdfs",
+      "source_revision": "kaggle-dataset-version/1",
+      "publisher_attribution": "Kaggle devp1866, OCR-Ready Invoice PDFs consumer-electronics collection",
+      "licence": "Apache-2.0",
+      "licence_reference": "https://www.kaggle.com/datasets/devp1866/high-quality-ocr-ready-invoice-pdfs",
+      "included_licence_file": "licenses/Apache-2.0.txt",
+      "sharing_status": "SHAREABLE_WITH_NOTICES",
+      "changes": "Source file bytes unchanged. Gold path references relocated; viewer metadata URL signatures removed. Labels/words/boxes unchanged.",
+      "reacquisition": {
+        "dataset": "kaggle/devp1866/high-quality-ocr-ready-invoice-pdfs",
+        "revision": "kaggle-dataset-version/1",
+        "original_sample_id": "invoice_51109308.pdf",
+        "source_row_index": null,
+        "original_filepath": null,
+        "method": "Use publisher pinned source or fresh viewer rows with matching x-revision; never reuse expired signed URLs."
+      }
+    },
+    {
+      "demo_code": "INV00004",
+      "sample_id": "KAGGLE-PDF-invoice_51109309",
+      "source_dataset": "kaggle/devp1866/high-quality-ocr-ready-invoice-pdfs",
+      "source_revision": "kaggle-dataset-version/1",
+      "publisher_attribution": "Kaggle devp1866, OCR-Ready Invoice PDFs consumer-electronics collection",
+      "licence": "Apache-2.0",
+      "licence_reference": "https://www.kaggle.com/datasets/devp1866/high-quality-ocr-ready-invoice-pdfs",
+      "included_licence_file": "licenses/Apache-2.0.txt",
+      "sharing_status": "SHAREABLE_WITH_NOTICES",
+      "changes": "Source file bytes unchanged. Gold path references relocated; viewer metadata URL signatures removed. Labels/words/boxes unchanged.",
+      "reacquisition": {
+        "dataset": "kaggle/devp1866/high-quality-ocr-ready-invoice-pdfs",
+        "revision": "kaggle-dataset-version/1",
+        "original_sample_id": "invoice_51109309.pdf",
+        "source_row_index": null,
+        "original_filepath": null,
+        "method": "Use publisher pinned source or fresh viewer rows with matching x-revision; never reuse expired signed URLs."
+      }
+    },
+    {
+      "demo_code": "INV00005",
+      "sample_id": "KAGGLE-PDF-invoice_51109313",
+      "source_dataset": "kaggle/devp1866/high-quality-ocr-ready-invoice-pdfs",
+      "source_revision": "kaggle-dataset-version/1",
+      "publisher_attribution": "Kaggle devp1866, OCR-Ready Invoice PDFs consumer-electronics collection",
+      "licence": "Apache-2.0",
+      "licence_reference": "https://www.kaggle.com/datasets/devp1866/high-quality-ocr-ready-invoice-pdfs",
+      "included_licence_file": "licenses/Apache-2.0.txt",
+      "sharing_status": "SHAREABLE_WITH_NOTICES",
+      "changes": "Source file bytes unchanged. Gold path references relocated; viewer metadata URL signatures removed. Labels/words/boxes unchanged.",
+      "reacquisition": {
+        "dataset": "kaggle/devp1866/high-quality-ocr-ready-invoice-pdfs",
+        "revision": "kaggle-dataset-version/1",
+        "original_sample_id": "invoice_51109313.pdf",
+        "source_row_index": null,
+        "original_filepath": null,
+        "method": "Use publisher pinned source or fresh viewer rows with matching x-revision; never reuse expired signed URLs."
+      }
+    },
+    {
+      "demo_code": "INV00006",
+      "sample_id": "VOXEL-6984bad10f763d83586fdd68",
+      "source_dataset": "Voxel51/high-quality-invoice-images-for-ocr",
+      "source_revision": "d21f03cfeea2b330e15a229883c66d7ebece8e69",
+      "publisher_attribution": "Osama Hosam Abdellatif (Kaggle); Harpreet Sahota / Voxel51 port",
+      "licence": "ODbL-1.0 AND DbCL-1.0",
+      "licence_reference": "https://www.kaggle.com/datasets/osamahosamabdellatif/high-quality-invoice-images-for-ocr",
+      "included_licence_file": "licenses/ODbL-1.0.html",
+      "sharing_status": "SHAREABLE_WITH_NOTICES",
+      "changes": "Source file bytes unchanged. Gold path references relocated; viewer metadata URL signatures removed. Labels/words/boxes unchanged.",
+      "reacquisition": {
+        "dataset": "Voxel51/high-quality-invoice-images-for-ocr",
+        "revision": "d21f03cfeea2b330e15a229883c66d7ebece8e69",
+        "original_sample_id": "6984bad10f763d83586fdd68",
+        "source_row_index": null,
+        "original_filepath": "data/batch1-0006.jpg",
+        "method": "Use publisher pinned source or fresh viewer rows with matching x-revision; never reuse expired signed URLs."
+      }
+    },
+    {
+      "demo_code": "INV00007",
+      "sample_id": "VOXEL-6984bad10f763d83586fdd8f",
+      "source_dataset": "Voxel51/high-quality-invoice-images-for-ocr",
+      "source_revision": "d21f03cfeea2b330e15a229883c66d7ebece8e69",
+      "publisher_attribution": "Osama Hosam Abdellatif (Kaggle); Harpreet Sahota / Voxel51 port",
+      "licence": "ODbL-1.0 AND DbCL-1.0",
+      "licence_reference": "https://www.kaggle.com/datasets/osamahosamabdellatif/high-quality-invoice-images-for-ocr",
+      "included_licence_file": "licenses/ODbL-1.0.html",
+      "sharing_status": "SHAREABLE_WITH_NOTICES",
+      "changes": "Source file bytes unchanged. Gold path references relocated; viewer metadata URL signatures removed. Labels/words/boxes unchanged.",
+      "reacquisition": {
+        "dataset": "Voxel51/high-quality-invoice-images-for-ocr",
+        "revision": "d21f03cfeea2b330e15a229883c66d7ebece8e69",
+        "original_sample_id": "6984bad10f763d83586fdd8f",
+        "source_row_index": null,
+        "original_filepath": "data/batch1-0004.jpg",
+        "method": "Use publisher pinned source or fresh viewer rows with matching x-revision; never reuse expired signed URLs."
+      }
+    },
+    {
+      "demo_code": "INV00008",
+      "sample_id": "VOXEL-6984bad10f763d83586fdd9e",
+      "source_dataset": "Voxel51/high-quality-invoice-images-for-ocr",
+      "source_revision": "d21f03cfeea2b330e15a229883c66d7ebece8e69",
+      "publisher_attribution": "Osama Hosam Abdellatif (Kaggle); Harpreet Sahota / Voxel51 port",
+      "licence": "ODbL-1.0 AND DbCL-1.0",
+      "licence_reference": "https://www.kaggle.com/datasets/osamahosamabdellatif/high-quality-invoice-images-for-ocr",
+      "included_licence_file": "licenses/ODbL-1.0.html",
+      "sharing_status": "SHAREABLE_WITH_NOTICES",
+      "changes": "Source file bytes unchanged. Gold path references relocated; viewer metadata URL signatures removed. Labels/words/boxes unchanged.",
+      "reacquisition": {
+        "dataset": "Voxel51/high-quality-invoice-images-for-ocr",
+        "revision": "d21f03cfeea2b330e15a229883c66d7ebece8e69",
+        "original_sample_id": "6984bad10f763d83586fdd9e",
+        "source_row_index": null,
+        "original_filepath": "data/batch1-0009.jpg",
+        "method": "Use publisher pinned source or fresh viewer rows with matching x-revision; never reuse expired signed URLs."
+      }
+    },
+    {
+      "demo_code": "INV00009",
+      "sample_id": "VOXEL-6984bad10f763d83586fddf2",
+      "source_dataset": "Voxel51/high-quality-invoice-images-for-ocr",
+      "source_revision": "d21f03cfeea2b330e15a229883c66d7ebece8e69",
+      "publisher_attribution": "Osama Hosam Abdellatif (Kaggle); Harpreet Sahota / Voxel51 port",
+      "licence": "ODbL-1.0 AND DbCL-1.0",
+      "licence_reference": "https://www.kaggle.com/datasets/osamahosamabdellatif/high-quality-invoice-images-for-ocr",
+      "included_licence_file": "licenses/ODbL-1.0.html",
+      "sharing_status": "SHAREABLE_WITH_NOTICES",
+      "changes": "Source file bytes unchanged. Gold path references relocated; viewer metadata URL signatures removed. Labels/words/boxes unchanged.",
+      "reacquisition": {
+        "dataset": "Voxel51/high-quality-invoice-images-for-ocr",
+        "revision": "d21f03cfeea2b330e15a229883c66d7ebece8e69",
+        "original_sample_id": "6984bad10f763d83586fddf2",
+        "source_row_index": null,
+        "original_filepath": "data/batch1-0007.jpg",
+        "method": "Use publisher pinned source or fresh viewer rows with matching x-revision; never reuse expired signed URLs."
+      }
+    },
+    {
+      "demo_code": "INV00010",
+      "sample_id": "VOXEL-6984bad10f763d83586fde05",
+      "source_dataset": "Voxel51/high-quality-invoice-images-for-ocr",
+      "source_revision": "d21f03cfeea2b330e15a229883c66d7ebece8e69",
+      "publisher_attribution": "Osama Hosam Abdellatif (Kaggle); Harpreet Sahota / Voxel51 port",
+      "licence": "ODbL-1.0 AND DbCL-1.0",
+      "licence_reference": "https://www.kaggle.com/datasets/osamahosamabdellatif/high-quality-invoice-images-for-ocr",
+      "included_licence_file": "licenses/ODbL-1.0.html",
+      "sharing_status": "SHAREABLE_WITH_NOTICES",
+      "changes": "Source file bytes unchanged. Gold path references relocated; viewer metadata URL signatures removed. Labels/words/boxes unchanged.",
+      "reacquisition": {
+        "dataset": "Voxel51/high-quality-invoice-images-for-ocr",
+        "revision": "d21f03cfeea2b330e15a229883c66d7ebece8e69",
+        "original_sample_id": "6984bad10f763d83586fde05",
+        "source_row_index": null,
+        "original_filepath": "data/batch1-0008.jpg",
+        "method": "Use publisher pinned source or fresh viewer rows with matching x-revision; never reuse expired signed URLs."
+      }
+    },
+    {
+      "demo_code": "INV00011",
+      "sample_id": "VOXEL-6984bad10f763d83586fde36",
+      "source_dataset": "Voxel51/high-quality-invoice-images-for-ocr",
+      "source_revision": "d21f03cfeea2b330e15a229883c66d7ebece8e69",
+      "publisher_attribution": "Osama Hosam Abdellatif (Kaggle); Harpreet Sahota / Voxel51 port",
+      "licence": "ODbL-1.0 AND DbCL-1.0",
+      "licence_reference": "https://www.kaggle.com/datasets/osamahosamabdellatif/high-quality-invoice-images-for-ocr",
+      "included_licence_file": "licenses/ODbL-1.0.html",
+      "sharing_status": "SHAREABLE_WITH_NOTICES",
+      "changes": "Source file bytes unchanged. Gold path references relocated; viewer metadata URL signatures removed. Labels/words/boxes unchanged.",
+      "reacquisition": {
+        "dataset": "Voxel51/high-quality-invoice-images-for-ocr",
+        "revision": "d21f03cfeea2b330e15a229883c66d7ebece8e69",
+        "original_sample_id": "6984bad10f763d83586fde36",
+        "source_row_index": null,
+        "original_filepath": "data/batch1-0002.jpg",
+        "method": "Use publisher pinned source or fresh viewer rows with matching x-revision; never reuse expired signed URLs."
+      }
+    },
+    {
+      "demo_code": "INV00012",
+      "sample_id": "VOXEL-6984bad10f763d83586fde85",
+      "source_dataset": "Voxel51/high-quality-invoice-images-for-ocr",
+      "source_revision": "d21f03cfeea2b330e15a229883c66d7ebece8e69",
+      "publisher_attribution": "Osama Hosam Abdellatif (Kaggle); Harpreet Sahota / Voxel51 port",
+      "licence": "ODbL-1.0 AND DbCL-1.0",
+      "licence_reference": "https://www.kaggle.com/datasets/osamahosamabdellatif/high-quality-invoice-images-for-ocr",
+      "included_licence_file": "licenses/ODbL-1.0.html",
+      "sharing_status": "SHAREABLE_WITH_NOTICES",
+      "changes": "Source file bytes unchanged. Gold path references relocated; viewer metadata URL signatures removed. Labels/words/boxes unchanged.",
+      "reacquisition": {
+        "dataset": "Voxel51/high-quality-invoice-images-for-ocr",
+        "revision": "d21f03cfeea2b330e15a229883c66d7ebece8e69",
+        "original_sample_id": "6984bad10f763d83586fde85",
+        "source_row_index": null,
+        "original_filepath": "data/batch1-0010.jpg",
+        "method": "Use publisher pinned source or fresh viewer rows with matching x-revision; never reuse expired signed URLs."
+      }
+    },
+    {
+      "demo_code": "INV00013",
+      "sample_id": "VOXEL-6984bad10f763d83586fdeb7",
+      "source_dataset": "Voxel51/high-quality-invoice-images-for-ocr",
+      "source_revision": "d21f03cfeea2b330e15a229883c66d7ebece8e69",
+      "publisher_attribution": "Osama Hosam Abdellatif (Kaggle); Harpreet Sahota / Voxel51 port",
+      "licence": "ODbL-1.0 AND DbCL-1.0",
+      "licence_reference": "https://www.kaggle.com/datasets/osamahosamabdellatif/high-quality-invoice-images-for-ocr",
+      "included_licence_file": "licenses/ODbL-1.0.html",
+      "sharing_status": "SHAREABLE_WITH_NOTICES",
+      "changes": "Source file bytes unchanged. Gold path references relocated; viewer metadata URL signatures removed. Labels/words/boxes unchanged.",
+      "reacquisition": {
+        "dataset": "Voxel51/high-quality-invoice-images-for-ocr",
+        "revision": "d21f03cfeea2b330e15a229883c66d7ebece8e69",
+        "original_sample_id": "6984bad10f763d83586fdeb7",
+        "source_row_index": null,
+        "original_filepath": "data/batch1-0003.jpg",
+        "method": "Use publisher pinned source or fresh viewer rows with matching x-revision; never reuse expired signed URLs."
+      }
+    },
+    {
+      "demo_code": "INV00014",
+      "sample_id": "VOXEL-6984bad10f763d83586fdef2",
+      "source_dataset": "Voxel51/high-quality-invoice-images-for-ocr",
+      "source_revision": "d21f03cfeea2b330e15a229883c66d7ebece8e69",
+      "publisher_attribution": "Osama Hosam Abdellatif (Kaggle); Harpreet Sahota / Voxel51 port",
+      "licence": "ODbL-1.0 AND DbCL-1.0",
+      "licence_reference": "https://www.kaggle.com/datasets/osamahosamabdellatif/high-quality-invoice-images-for-ocr",
+      "included_licence_file": "licenses/ODbL-1.0.html",
+      "sharing_status": "SHAREABLE_WITH_NOTICES",
+      "changes": "Source file bytes unchanged. Gold path references relocated; viewer metadata URL signatures removed. Labels/words/boxes unchanged.",
+      "reacquisition": {
+        "dataset": "Voxel51/high-quality-invoice-images-for-ocr",
+        "revision": "d21f03cfeea2b330e15a229883c66d7ebece8e69",
+        "original_sample_id": "6984bad10f763d83586fdef2",
+        "source_row_index": null,
+        "original_filepath": "data/batch1-0005.jpg",
+        "method": "Use publisher pinned source or fresh viewer rows with matching x-revision; never reuse expired signed URLs."
+      }
+    },
+    {
+      "demo_code": "INV00015",
+      "sample_id": "VOXEL-6984bad10f763d83586fdefe",
+      "source_dataset": "Voxel51/high-quality-invoice-images-for-ocr",
+      "source_revision": "d21f03cfeea2b330e15a229883c66d7ebece8e69",
+      "publisher_attribution": "Osama Hosam Abdellatif (Kaggle); Harpreet Sahota / Voxel51 port",
+      "licence": "ODbL-1.0 AND DbCL-1.0",
+      "licence_reference": "https://www.kaggle.com/datasets/osamahosamabdellatif/high-quality-invoice-images-for-ocr",
+      "included_licence_file": "licenses/ODbL-1.0.html",
+      "sharing_status": "SHAREABLE_WITH_NOTICES",
+      "changes": "Source file bytes unchanged. Gold path references relocated; viewer metadata URL signatures removed. Labels/words/boxes unchanged.",
+      "reacquisition": {
+        "dataset": "Voxel51/high-quality-invoice-images-for-ocr",
+        "revision": "d21f03cfeea2b330e15a229883c66d7ebece8e69",
+        "original_sample_id": "6984bad10f763d83586fdefe",
+        "source_row_index": null,
+        "original_filepath": "data/batch1-0001.jpg",
+        "method": "Use publisher pinned source or fresh viewer rows with matching x-revision; never reuse expired signed URLs."
+      }
+    },
+    {
+      "demo_code": "BIL00001",
+      "sample_id": "BILL-synth_0035_a5ac881a-clean",
+      "source_dataset": "alamgirqazi/invoice-ocr-synthetic",
+      "source_revision": "673ff85be462eb7f3715ec188a295dd17ca11115",
+      "publisher_attribution": "Alamgir Munir Qazi, Jamal Abdul Nasir, Pratheesh Chambeth, Waqar Shahid",
+      "licence": "CC-BY-4.0",
+      "licence_reference": "https://huggingface.co/datasets/alamgirqazi/invoice-ocr-synthetic/blob/673ff85be462eb7f3715ec188a295dd17ca11115/README.md",
+      "included_licence_file": "licenses/CC-BY-4.0.txt",
+      "sharing_status": "SHAREABLE_WITH_NOTICES",
+      "changes": "Source file bytes unchanged. Gold path references relocated; viewer metadata URL signatures removed. Labels/words/boxes unchanged.",
+      "reacquisition": {
+        "dataset": "alamgirqazi/invoice-ocr-synthetic",
+        "revision": "673ff85be462eb7f3715ec188a295dd17ca11115",
+        "original_sample_id": "synth_0035_a5ac881a.png",
+        "source_row_index": 34,
+        "original_filepath": null,
+        "method": "Use publisher pinned source or fresh viewer rows with matching x-revision; never reuse expired signed URLs."
+      }
+    },
+    {
+      "demo_code": "BIL00002",
+      "sample_id": "BILL-synth_0042_76a17777-clean",
+      "source_dataset": "alamgirqazi/invoice-ocr-synthetic",
+      "source_revision": "673ff85be462eb7f3715ec188a295dd17ca11115",
+      "publisher_attribution": "Alamgir Munir Qazi, Jamal Abdul Nasir, Pratheesh Chambeth, Waqar Shahid",
+      "licence": "CC-BY-4.0",
+      "licence_reference": "https://huggingface.co/datasets/alamgirqazi/invoice-ocr-synthetic/blob/673ff85be462eb7f3715ec188a295dd17ca11115/README.md",
+      "included_licence_file": "licenses/CC-BY-4.0.txt",
+      "sharing_status": "SHAREABLE_WITH_NOTICES",
+      "changes": "Source file bytes unchanged. Gold path references relocated; viewer metadata URL signatures removed. Labels/words/boxes unchanged.",
+      "reacquisition": {
+        "dataset": "alamgirqazi/invoice-ocr-synthetic",
+        "revision": "673ff85be462eb7f3715ec188a295dd17ca11115",
+        "original_sample_id": "synth_0042_76a17777.png",
+        "source_row_index": 40,
+        "original_filepath": null,
+        "method": "Use publisher pinned source or fresh viewer rows with matching x-revision; never reuse expired signed URLs."
+      }
+    },
+    {
+      "demo_code": "BIL00003",
+      "sample_id": "BILL-synth_0065_6144286e-clean",
+      "source_dataset": "alamgirqazi/invoice-ocr-synthetic",
+      "source_revision": "673ff85be462eb7f3715ec188a295dd17ca11115",
+      "publisher_attribution": "Alamgir Munir Qazi, Jamal Abdul Nasir, Pratheesh Chambeth, Waqar Shahid",
+      "licence": "CC-BY-4.0",
+      "licence_reference": "https://huggingface.co/datasets/alamgirqazi/invoice-ocr-synthetic/blob/673ff85be462eb7f3715ec188a295dd17ca11115/README.md",
+      "included_licence_file": "licenses/CC-BY-4.0.txt",
+      "sharing_status": "SHAREABLE_WITH_NOTICES",
+      "changes": "Source file bytes unchanged. Gold path references relocated; viewer metadata URL signatures removed. Labels/words/boxes unchanged.",
+      "reacquisition": {
+        "dataset": "alamgirqazi/invoice-ocr-synthetic",
+        "revision": "673ff85be462eb7f3715ec188a295dd17ca11115",
+        "original_sample_id": "synth_0065_6144286e.png",
+        "source_row_index": 63,
+        "original_filepath": null,
+        "method": "Use publisher pinned source or fresh viewer rows with matching x-revision; never reuse expired signed URLs."
+      }
+    },
+    {
+      "demo_code": "BIL00004",
+      "sample_id": "BILL-synth_0071_5325dbed-clean",
+      "source_dataset": "alamgirqazi/invoice-ocr-synthetic",
+      "source_revision": "673ff85be462eb7f3715ec188a295dd17ca11115",
+      "publisher_attribution": "Alamgir Munir Qazi, Jamal Abdul Nasir, Pratheesh Chambeth, Waqar Shahid",
+      "licence": "CC-BY-4.0",
+      "licence_reference": "https://huggingface.co/datasets/alamgirqazi/invoice-ocr-synthetic/blob/673ff85be462eb7f3715ec188a295dd17ca11115/README.md",
+      "included_licence_file": "licenses/CC-BY-4.0.txt",
+      "sharing_status": "SHAREABLE_WITH_NOTICES",
+      "changes": "Source file bytes unchanged. Gold path references relocated; viewer metadata URL signatures removed. Labels/words/boxes unchanged.",
+      "reacquisition": {
+        "dataset": "alamgirqazi/invoice-ocr-synthetic",
+        "revision": "673ff85be462eb7f3715ec188a295dd17ca11115",
+        "original_sample_id": "synth_0071_5325dbed.png",
+        "source_row_index": 69,
+        "original_filepath": null,
+        "method": "Use publisher pinned source or fresh viewer rows with matching x-revision; never reuse expired signed URLs."
+      }
+    },
+    {
+      "demo_code": "BIL00005",
+      "sample_id": "BILL-synth_0089_31e5808a-clean",
+      "source_dataset": "alamgirqazi/invoice-ocr-synthetic",
+      "source_revision": "673ff85be462eb7f3715ec188a295dd17ca11115",
+      "publisher_attribution": "Alamgir Munir Qazi, Jamal Abdul Nasir, Pratheesh Chambeth, Waqar Shahid",
+      "licence": "CC-BY-4.0",
+      "licence_reference": "https://huggingface.co/datasets/alamgirqazi/invoice-ocr-synthetic/blob/673ff85be462eb7f3715ec188a295dd17ca11115/README.md",
+      "included_licence_file": "licenses/CC-BY-4.0.txt",
+      "sharing_status": "SHAREABLE_WITH_NOTICES",
+      "changes": "Source file bytes unchanged. Gold path references relocated; viewer metadata URL signatures removed. Labels/words/boxes unchanged.",
+      "reacquisition": {
+        "dataset": "alamgirqazi/invoice-ocr-synthetic",
+        "revision": "673ff85be462eb7f3715ec188a295dd17ca11115",
+        "original_sample_id": "synth_0089_31e5808a.png",
+        "source_row_index": 87,
+        "original_filepath": null,
+        "method": "Use publisher pinned source or fresh viewer rows with matching x-revision; never reuse expired signed URLs."
+      }
+    },
+    {
+      "demo_code": "BIL00006",
+      "sample_id": "BILL-synth_0128_73325b13-clean",
+      "source_dataset": "alamgirqazi/invoice-ocr-synthetic",
+      "source_revision": "673ff85be462eb7f3715ec188a295dd17ca11115",
+      "publisher_attribution": "Alamgir Munir Qazi, Jamal Abdul Nasir, Pratheesh Chambeth, Waqar Shahid",
+      "licence": "CC-BY-4.0",
+      "licence_reference": "https://huggingface.co/datasets/alamgirqazi/invoice-ocr-synthetic/blob/673ff85be462eb7f3715ec188a295dd17ca11115/README.md",
+      "included_licence_file": "licenses/CC-BY-4.0.txt",
+      "sharing_status": "SHAREABLE_WITH_NOTICES",
+      "changes": "Source file bytes unchanged. Gold path references relocated; viewer metadata URL signatures removed. Labels/words/boxes unchanged.",
+      "reacquisition": {
+        "dataset": "alamgirqazi/invoice-ocr-synthetic",
+        "revision": "673ff85be462eb7f3715ec188a295dd17ca11115",
+        "original_sample_id": "synth_0128_73325b13.png",
+        "source_row_index": 121,
+        "original_filepath": null,
+        "method": "Use publisher pinned source or fresh viewer rows with matching x-revision; never reuse expired signed URLs."
+      }
+    },
+    {
+      "demo_code": "BIL00007",
+      "sample_id": "BILL-synth_0137_6bbd647e-clean",
+      "source_dataset": "alamgirqazi/invoice-ocr-synthetic",
+      "source_revision": "673ff85be462eb7f3715ec188a295dd17ca11115",
+      "publisher_attribution": "Alamgir Munir Qazi, Jamal Abdul Nasir, Pratheesh Chambeth, Waqar Shahid",
+      "licence": "CC-BY-4.0",
+      "licence_reference": "https://huggingface.co/datasets/alamgirqazi/invoice-ocr-synthetic/blob/673ff85be462eb7f3715ec188a295dd17ca11115/README.md",
+      "included_licence_file": "licenses/CC-BY-4.0.txt",
+      "sharing_status": "SHAREABLE_WITH_NOTICES",
+      "changes": "Source file bytes unchanged. Gold path references relocated; viewer metadata URL signatures removed. Labels/words/boxes unchanged.",
+      "reacquisition": {
+        "dataset": "alamgirqazi/invoice-ocr-synthetic",
+        "revision": "673ff85be462eb7f3715ec188a295dd17ca11115",
+        "original_sample_id": "synth_0137_6bbd647e.png",
+        "source_row_index": 129,
+        "original_filepath": null,
+        "method": "Use publisher pinned source or fresh viewer rows with matching x-revision; never reuse expired signed URLs."
+      }
+    },
+    {
+      "demo_code": "BIL00008",
+      "sample_id": "BILL-synth_0144_99011fc5-clean",
+      "source_dataset": "alamgirqazi/invoice-ocr-synthetic",
+      "source_revision": "673ff85be462eb7f3715ec188a295dd17ca11115",
+      "publisher_attribution": "Alamgir Munir Qazi, Jamal Abdul Nasir, Pratheesh Chambeth, Waqar Shahid",
+      "licence": "CC-BY-4.0",
+      "licence_reference": "https://huggingface.co/datasets/alamgirqazi/invoice-ocr-synthetic/blob/673ff85be462eb7f3715ec188a295dd17ca11115/README.md",
+      "included_licence_file": "licenses/CC-BY-4.0.txt",
+      "sharing_status": "SHAREABLE_WITH_NOTICES",
+      "changes": "Source file bytes unchanged. Gold path references relocated; viewer metadata URL signatures removed. Labels/words/boxes unchanged.",
+      "reacquisition": {
+        "dataset": "alamgirqazi/invoice-ocr-synthetic",
+        "revision": "673ff85be462eb7f3715ec188a295dd17ca11115",
+        "original_sample_id": "synth_0144_99011fc5.png",
+        "source_row_index": 136,
+        "original_filepath": null,
+        "method": "Use publisher pinned source or fresh viewer rows with matching x-revision; never reuse expired signed URLs."
+      }
+    },
+    {
+      "demo_code": "BIL00009",
+      "sample_id": "BILL-synth_0147_df606e31-clean",
+      "source_dataset": "alamgirqazi/invoice-ocr-synthetic",
+      "source_revision": "673ff85be462eb7f3715ec188a295dd17ca11115",
+      "publisher_attribution": "Alamgir Munir Qazi, Jamal Abdul Nasir, Pratheesh Chambeth, Waqar Shahid",
+      "licence": "CC-BY-4.0",
+      "licence_reference": "https://huggingface.co/datasets/alamgirqazi/invoice-ocr-synthetic/blob/673ff85be462eb7f3715ec188a295dd17ca11115/README.md",
+      "included_licence_file": "licenses/CC-BY-4.0.txt",
+      "sharing_status": "SHAREABLE_WITH_NOTICES",
+      "changes": "Source file bytes unchanged. Gold path references relocated; viewer metadata URL signatures removed. Labels/words/boxes unchanged.",
+      "reacquisition": {
+        "dataset": "alamgirqazi/invoice-ocr-synthetic",
+        "revision": "673ff85be462eb7f3715ec188a295dd17ca11115",
+        "original_sample_id": "synth_0147_df606e31.png",
+        "source_row_index": 139,
+        "original_filepath": null,
+        "method": "Use publisher pinned source or fresh viewer rows with matching x-revision; never reuse expired signed URLs."
+      }
+    },
+    {
+      "demo_code": "BIL00010",
+      "sample_id": "BILL-synth_0151_7f157ddf-clean",
+      "source_dataset": "alamgirqazi/invoice-ocr-synthetic",
+      "source_revision": "673ff85be462eb7f3715ec188a295dd17ca11115",
+      "publisher_attribution": "Alamgir Munir Qazi, Jamal Abdul Nasir, Pratheesh Chambeth, Waqar Shahid",
+      "licence": "CC-BY-4.0",
+      "licence_reference": "https://huggingface.co/datasets/alamgirqazi/invoice-ocr-synthetic/blob/673ff85be462eb7f3715ec188a295dd17ca11115/README.md",
+      "included_licence_file": "licenses/CC-BY-4.0.txt",
+      "sharing_status": "SHAREABLE_WITH_NOTICES",
+      "changes": "Source file bytes unchanged. Gold path references relocated; viewer metadata URL signatures removed. Labels/words/boxes unchanged.",
+      "reacquisition": {
+        "dataset": "alamgirqazi/invoice-ocr-synthetic",
+        "revision": "673ff85be462eb7f3715ec188a295dd17ca11115",
+        "original_sample_id": "synth_0151_7f157ddf.png",
+        "source_row_index": 143,
+        "original_filepath": null,
+        "method": "Use publisher pinned source or fresh viewer rows with matching x-revision; never reuse expired signed URLs."
+      }
+    },
+    {
+      "demo_code": "REC00001",
+      "sample_id": "SROIE-X00016469670",
+      "source_dataset": "jsdnrs/ICDAR2019-SROIE",
+      "source_revision": "bffe40c26759f3376ec2b3ae9031dbba54cd587c",
+      "publisher_attribution": "SROIE original authors and jsdnrs port; retain SROIE NOTICE",
+      "licence": "CC-BY-4.0",
+      "licence_reference": "https://huggingface.co/datasets/jsdnrs/ICDAR2019-SROIE/blob/bffe40c26759f3376ec2b3ae9031dbba54cd587c/LICENSE",
+      "included_licence_file": "licenses/CC-BY-4.0.txt",
+      "sharing_status": "SHAREABLE_WITH_NOTICES",
+      "changes": "Source file bytes unchanged. Gold path references relocated; viewer metadata URL signatures removed. Labels/words/boxes unchanged.",
+      "reacquisition": {
+        "dataset": "jsdnrs/ICDAR2019-SROIE",
+        "revision": "bffe40c26759f3376ec2b3ae9031dbba54cd587c",
+        "original_sample_id": "X00016469670",
+        "source_row_index": 0,
+        "original_filepath": null,
+        "method": "Use publisher pinned source or fresh viewer rows with matching x-revision; never reuse expired signed URLs."
+      }
+    },
+    {
+      "demo_code": "REC00002",
+      "sample_id": "SROIE-X51005230616",
+      "source_dataset": "jsdnrs/ICDAR2019-SROIE",
+      "source_revision": "bffe40c26759f3376ec2b3ae9031dbba54cd587c",
+      "publisher_attribution": "SROIE original authors and jsdnrs port; retain SROIE NOTICE",
+      "licence": "CC-BY-4.0",
+      "licence_reference": "https://huggingface.co/datasets/jsdnrs/ICDAR2019-SROIE/blob/bffe40c26759f3376ec2b3ae9031dbba54cd587c/LICENSE",
+      "included_licence_file": "licenses/CC-BY-4.0.txt",
+      "sharing_status": "SHAREABLE_WITH_NOTICES",
+      "changes": "Source file bytes unchanged. Gold path references relocated; viewer metadata URL signatures removed. Labels/words/boxes unchanged.",
+      "reacquisition": {
+        "dataset": "jsdnrs/ICDAR2019-SROIE",
+        "revision": "bffe40c26759f3376ec2b3ae9031dbba54cd587c",
+        "original_sample_id": "X51005230616",
+        "source_row_index": 4,
+        "original_filepath": null,
+        "method": "Use publisher pinned source or fresh viewer rows with matching x-revision; never reuse expired signed URLs."
+      }
+    },
+    {
+      "demo_code": "REC00003",
+      "sample_id": "SROIE-X51005230648",
+      "source_dataset": "jsdnrs/ICDAR2019-SROIE",
+      "source_revision": "bffe40c26759f3376ec2b3ae9031dbba54cd587c",
+      "publisher_attribution": "SROIE original authors and jsdnrs port; retain SROIE NOTICE",
+      "licence": "CC-BY-4.0",
+      "licence_reference": "https://huggingface.co/datasets/jsdnrs/ICDAR2019-SROIE/blob/bffe40c26759f3376ec2b3ae9031dbba54cd587c/LICENSE",
+      "included_licence_file": "licenses/CC-BY-4.0.txt",
+      "sharing_status": "SHAREABLE_WITH_NOTICES",
+      "changes": "Source file bytes unchanged. Gold path references relocated; viewer metadata URL signatures removed. Labels/words/boxes unchanged.",
+      "reacquisition": {
+        "dataset": "jsdnrs/ICDAR2019-SROIE",
+        "revision": "bffe40c26759f3376ec2b3ae9031dbba54cd587c",
+        "original_sample_id": "X51005230648",
+        "source_row_index": 6,
+        "original_filepath": null,
+        "method": "Use publisher pinned source or fresh viewer rows with matching x-revision; never reuse expired signed URLs."
+      }
+    },
+    {
+      "demo_code": "REC00004",
+      "sample_id": "SROIE-X51005230657",
+      "source_dataset": "jsdnrs/ICDAR2019-SROIE",
+      "source_revision": "bffe40c26759f3376ec2b3ae9031dbba54cd587c",
+      "publisher_attribution": "SROIE original authors and jsdnrs port; retain SROIE NOTICE",
+      "licence": "CC-BY-4.0",
+      "licence_reference": "https://huggingface.co/datasets/jsdnrs/ICDAR2019-SROIE/blob/bffe40c26759f3376ec2b3ae9031dbba54cd587c/LICENSE",
+      "included_licence_file": "licenses/CC-BY-4.0.txt",
+      "sharing_status": "SHAREABLE_WITH_NOTICES",
+      "changes": "Source file bytes unchanged. Gold path references relocated; viewer metadata URL signatures removed. Labels/words/boxes unchanged.",
+      "reacquisition": {
+        "dataset": "jsdnrs/ICDAR2019-SROIE",
+        "revision": "bffe40c26759f3376ec2b3ae9031dbba54cd587c",
+        "original_sample_id": "X51005230657",
+        "source_row_index": 7,
+        "original_filepath": null,
+        "method": "Use publisher pinned source or fresh viewer rows with matching x-revision; never reuse expired signed URLs."
+      }
+    },
+    {
+      "demo_code": "REC00005",
+      "sample_id": "SROIE-X51005268275",
+      "source_dataset": "jsdnrs/ICDAR2019-SROIE",
+      "source_revision": "bffe40c26759f3376ec2b3ae9031dbba54cd587c",
+      "publisher_attribution": "SROIE original authors and jsdnrs port; retain SROIE NOTICE",
+      "licence": "CC-BY-4.0",
+      "licence_reference": "https://huggingface.co/datasets/jsdnrs/ICDAR2019-SROIE/blob/bffe40c26759f3376ec2b3ae9031dbba54cd587c/LICENSE",
+      "included_licence_file": "licenses/CC-BY-4.0.txt",
+      "sharing_status": "SHAREABLE_WITH_NOTICES",
+      "changes": "Source file bytes unchanged. Gold path references relocated; viewer metadata URL signatures removed. Labels/words/boxes unchanged.",
+      "reacquisition": {
+        "dataset": "jsdnrs/ICDAR2019-SROIE",
+        "revision": "bffe40c26759f3376ec2b3ae9031dbba54cd587c",
+        "original_sample_id": "X51005268275",
+        "source_row_index": 9,
+        "original_filepath": null,
+        "method": "Use publisher pinned source or fresh viewer rows with matching x-revision; never reuse expired signed URLs."
+      }
+    },
+    {
+      "demo_code": "REC00006",
+      "sample_id": "SROIE-X51005268408",
+      "source_dataset": "jsdnrs/ICDAR2019-SROIE",
+      "source_revision": "bffe40c26759f3376ec2b3ae9031dbba54cd587c",
+      "publisher_attribution": "SROIE original authors and jsdnrs port; retain SROIE NOTICE",
+      "licence": "CC-BY-4.0",
+      "licence_reference": "https://huggingface.co/datasets/jsdnrs/ICDAR2019-SROIE/blob/bffe40c26759f3376ec2b3ae9031dbba54cd587c/LICENSE",
+      "included_licence_file": "licenses/CC-BY-4.0.txt",
+      "sharing_status": "SHAREABLE_WITH_NOTICES",
+      "changes": "Source file bytes unchanged. Gold path references relocated; viewer metadata URL signatures removed. Labels/words/boxes unchanged.",
+      "reacquisition": {
+        "dataset": "jsdnrs/ICDAR2019-SROIE",
+        "revision": "bffe40c26759f3376ec2b3ae9031dbba54cd587c",
+        "original_sample_id": "X51005268408",
+        "source_row_index": 10,
+        "original_filepath": null,
+        "method": "Use publisher pinned source or fresh viewer rows with matching x-revision; never reuse expired signed URLs."
+      }
+    },
+    {
+      "demo_code": "REC00007",
+      "sample_id": "SROIE-X51005337877",
+      "source_dataset": "jsdnrs/ICDAR2019-SROIE",
+      "source_revision": "bffe40c26759f3376ec2b3ae9031dbba54cd587c",
+      "publisher_attribution": "SROIE original authors and jsdnrs port; retain SROIE NOTICE",
+      "licence": "CC-BY-4.0",
+      "licence_reference": "https://huggingface.co/datasets/jsdnrs/ICDAR2019-SROIE/blob/bffe40c26759f3376ec2b3ae9031dbba54cd587c/LICENSE",
+      "included_licence_file": "licenses/CC-BY-4.0.txt",
+      "sharing_status": "SHAREABLE_WITH_NOTICES",
+      "changes": "Source file bytes unchanged. Gold path references relocated; viewer metadata URL signatures removed. Labels/words/boxes unchanged.",
+      "reacquisition": {
+        "dataset": "jsdnrs/ICDAR2019-SROIE",
+        "revision": "bffe40c26759f3376ec2b3ae9031dbba54cd587c",
+        "original_sample_id": "X51005337877",
+        "source_row_index": 14,
+        "original_filepath": null,
+        "method": "Use publisher pinned source or fresh viewer rows with matching x-revision; never reuse expired signed URLs."
+      }
+    },
+    {
+      "demo_code": "REC00008",
+      "sample_id": "SROIE-X51005361906",
+      "source_dataset": "jsdnrs/ICDAR2019-SROIE",
+      "source_revision": "bffe40c26759f3376ec2b3ae9031dbba54cd587c",
+      "publisher_attribution": "SROIE original authors and jsdnrs port; retain SROIE NOTICE",
+      "licence": "CC-BY-4.0",
+      "licence_reference": "https://huggingface.co/datasets/jsdnrs/ICDAR2019-SROIE/blob/bffe40c26759f3376ec2b3ae9031dbba54cd587c/LICENSE",
+      "included_licence_file": "licenses/CC-BY-4.0.txt",
+      "sharing_status": "SHAREABLE_WITH_NOTICES",
+      "changes": "Source file bytes unchanged. Gold path references relocated; viewer metadata URL signatures removed. Labels/words/boxes unchanged.",
+      "reacquisition": {
+        "dataset": "jsdnrs/ICDAR2019-SROIE",
+        "revision": "bffe40c26759f3376ec2b3ae9031dbba54cd587c",
+        "original_sample_id": "X51005361906",
+        "source_row_index": 15,
+        "original_filepath": null,
+        "method": "Use publisher pinned source or fresh viewer rows with matching x-revision; never reuse expired signed URLs."
+      }
+    },
+    {
+      "demo_code": "REC00009",
+      "sample_id": "SROIE-X51005361908",
+      "source_dataset": "jsdnrs/ICDAR2019-SROIE",
+      "source_revision": "bffe40c26759f3376ec2b3ae9031dbba54cd587c",
+      "publisher_attribution": "SROIE original authors and jsdnrs port; retain SROIE NOTICE",
+      "licence": "CC-BY-4.0",
+      "licence_reference": "https://huggingface.co/datasets/jsdnrs/ICDAR2019-SROIE/blob/bffe40c26759f3376ec2b3ae9031dbba54cd587c/LICENSE",
+      "included_licence_file": "licenses/CC-BY-4.0.txt",
+      "sharing_status": "SHAREABLE_WITH_NOTICES",
+      "changes": "Source file bytes unchanged. Gold path references relocated; viewer metadata URL signatures removed. Labels/words/boxes unchanged.",
+      "reacquisition": {
+        "dataset": "jsdnrs/ICDAR2019-SROIE",
+        "revision": "bffe40c26759f3376ec2b3ae9031dbba54cd587c",
+        "original_sample_id": "X51005361908",
+        "source_row_index": 16,
+        "original_filepath": null,
+        "method": "Use publisher pinned source or fresh viewer rows with matching x-revision; never reuse expired signed URLs."
+      }
+    },
+    {
+      "demo_code": "REC00010",
+      "sample_id": "SROIE-X51005361912",
+      "source_dataset": "jsdnrs/ICDAR2019-SROIE",
+      "source_revision": "bffe40c26759f3376ec2b3ae9031dbba54cd587c",
+      "publisher_attribution": "SROIE original authors and jsdnrs port; retain SROIE NOTICE",
+      "licence": "CC-BY-4.0",
+      "licence_reference": "https://huggingface.co/datasets/jsdnrs/ICDAR2019-SROIE/blob/bffe40c26759f3376ec2b3ae9031dbba54cd587c/LICENSE",
+      "included_licence_file": "licenses/CC-BY-4.0.txt",
+      "sharing_status": "SHAREABLE_WITH_NOTICES",
+      "changes": "Source file bytes unchanged. Gold path references relocated; viewer metadata URL signatures removed. Labels/words/boxes unchanged.",
+      "reacquisition": {
+        "dataset": "jsdnrs/ICDAR2019-SROIE",
+        "revision": "bffe40c26759f3376ec2b3ae9031dbba54cd587c",
+        "original_sample_id": "X51005361912",
+        "source_row_index": 17,
+        "original_filepath": null,
+        "method": "Use publisher pinned source or fresh viewer rows with matching x-revision; never reuse expired signed URLs."
+      }
+    }
+  ],
+  "collection_notice": "Private collective handoff. Retain per-cohort licences; adapted Kaggle/Voxel database subset remains under ODbL/DbCL, not relicensed."
+}

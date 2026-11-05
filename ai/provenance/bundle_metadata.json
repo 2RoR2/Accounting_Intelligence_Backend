@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0.0",
+  "manifests": {
+    "invoices.json": {
+      "original_sha256": "3860fca1af3918eda810af8c6d6537f2af25fd851911c98c10a06d92c7948741",
+      "portable_sha256": "64c7d3268cb24edc81f773de6e3d1fc33752d637cf78aa417c98af94f16f705d"
+    },
+    "bills.json": {
+      "original_sha256": "ee73c828250a1947fa73cf88b0075245908b680f1285be6348ea2b0a6c6d8e59",
+      "portable_sha256": "557ef92ca6cfd0824aca0e836278b20ae0f41cd460d64cf57dd4841f902838e8"
+    },
+    "receipts.json": {
+      "original_sha256": "3cc15d2b698ea3ff96a739c9f011092aee97150fb03356ef5e31644f5ee13652",
+      "portable_sha256": "0b02417f0c56a652ddfe7e7e9ea3610d46f84531bd9bd1afcc53706cf87ed7db"
+    }
+  },
+  "source_bytes_changed": false,
+  "original_ground_truth_labels_changed": false,
+  "prediction_runs_included": 0,
+  "runtime_credentials_included": false,
+  "representations": "Native invoice JPEG/PDF; publisher JPEG viewer assets for SROIE and utility PNG sample IDs."
+}

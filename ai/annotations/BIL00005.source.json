@@ -1,0 +1,169 @@
+{
+  "source_row_index": 87,
+  "row": {
+    "file_name": "synth_0089_31e5808a.png",
+    "supplier_name": "EirGrid Power Services Ltd",
+    "supplier_address": "Eirgrid House, 12 Power Street, Dublin 8",
+    "supplier_phone": "+353 1 234 5678",
+    "supplier_email": null,
+    "supplier_website": "https://www.eirgrid.ie",
+    "supplier_company_registrations": null,
+    "customer_name": "John Doe",
+    "customer_id": null,
+    "customer_address": null,
+    "billing_address": null,
+    "shipping_address": null,
+    "customer_company_registrations": "IE 1234567G",
+    "document_type_extended": null,
+    "document_number": "2024-INV-000123",
+    "invoice_number": "INV-2024-123",
+    "receipt_number": null,
+    "reference_numbers": null,
+    "po_number": "PO-9876543",
+    "document_date": "2024-02-15",
+    "document_time": null,
+    "due_date": "2024-03-15",
+    "payment_date": null,
+    "document_currency": "EUR",
+    "document_total_amount": "594.83",
+    "document_total_net": "521.0",
+    "document_total_tax": "73.83",
+    "document_category": "utilities",
+    "subcategory": "energy",
+    "locale": "en",
+    "notes": "",
+    "_template_used": "utility_bill",
+    "_font_info": "Open Sans",
+    "line_items": [
+      {
+        "description": "Electricity \u2013 January 2024",
+        "quantity": "1500.0",
+        "unit_price": "0.15",
+        "amount": "225.0",
+        "tax_rate": "23%",
+        "tax_amount": "51.75"
+      },
+      {
+        "description": "Gas \u2013 January 2024",
+        "quantity": "800.0",
+        "unit_price": "0.12",
+        "amount": "96.0",
+        "tax_rate": "23%",
+        "tax_amount": "22.08"
+      },
+      {
+        "description": "Water \u2013 January 2024",
+        "quantity": "100.0",
+        "unit_price": "2.0",
+        "amount": "200.0",
+        "tax_rate": "0%",
+        "tax_amount": "0.0"
+      }
+    ],
+    "taxes": [
+      {
+        "base": "321.0",
+        "rate": "23%",
+        "code": "VAT",
+        "value": "73.83"
+      },
+      {
+        "base": "200.0",
+        "rate": "0%",
+        "code": "VAT",
+        "value": "0.0"
+      }
+    ],
+    "image": {
+      "src": "https://datasets-server.huggingface.co/cached-assets/alamgirqazi/invoice-ocr-synthetic/--/673ff85be462eb7f3715ec188a295dd17ca11115/--/default/train/87/image/image.jpg",
+      "height": 2339,
+      "width": 1654
+    },
+    "quality": "clean"
+  },
+  "released_record_index": 87,
+  "released_record_decimal_strings": {
+    "file_name": "synth_0089_31e5808a.png",
+    "supplier_name": "EirGrid Power Services Ltd",
+    "document_date": "2024-02-15",
+    "document_time": null,
+    "document_currency": "EUR",
+    "document_total_amount": "594.83",
+    "document_total_net": "521.0",
+    "document_total_tax": "73.83",
+    "document_category": "utilities",
+    "subcategory": "energy",
+    "due_date": "2024-03-15",
+    "payment_date": null,
+    "document_type_extended": null,
+    "document_number": "2024-INV-000123",
+    "receipt_number": null,
+    "invoice_number": "INV-2024-123",
+    "reference_numbers": null,
+    "po_number": "PO-9876543",
+    "locale": "en",
+    "customer_name": "John Doe",
+    "customer_id": null,
+    "customer_address": null,
+    "billing_address": null,
+    "shipping_address": null,
+    "customer_company_registrations": "IE 1234567G",
+    "supplier_address": "Eirgrid House, 12 Power Street, Dublin 8",
+    "supplier_phone": "+353 1 234 5678",
+    "supplier_email": null,
+    "supplier_website": "https://www.eirgrid.ie",
+    "supplier_company_registrations": null,
+    "line_items": [
+      {
+        "description": "Electricity \u2013 January 2024",
+        "quantity": "1500.0",
+        "unit_price": "0.15",
+        "amount": "225.0",
+        "tax_rate": "23%",
+        "tax_amount": "51.75"
+      },
+      {
+        "description": "Gas \u2013 January 2024",
+        "quantity": "800.0",
+        "unit_price": "0.12",
+        "amount": "96.0",
+        "tax_rate": "23%",
+        "tax_amount": "22.08"
+      },
+      {
+        "description": "Water \u2013 January 2024",
+        "quantity": "100.0",
+        "unit_price": "2.0",
+        "amount": "200.0",
+        "tax_rate": "0%",
+        "tax_amount": "0.0"
+      }
+    ],
+    "taxes": [
+      {
+        "base": "321.0",
+        "rate": "23%",
+        "code": "VAT",
+        "value": "73.83"
+      },
+      {
+        "base": "200.0",
+        "rate": "0%",
+        "code": "VAT",
+        "value": "0.0"
+      }
+    ],
+    "notes": "",
+    "mime_type": "image/png",
+    "labeled_at": "2026-03-16T07:59:24.684202",
+    "_template_used": "utility_bill",
+    "_synthetic": true,
+    "_font_info": "Open Sans",
+    "degradation_variants": {
+      "clean": "synth_0089_31e5808a.png",
+      "bad_scan": "synth_0089_31e5808a.png",
+      "faded": "synth_0089_31e5808a.png"
+    }
+  },
+  "representation": "Publisher-hosted full-size JPEG viewer asset of original embedded PNG; no local conversion."
+}
