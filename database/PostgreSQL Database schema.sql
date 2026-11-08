@@ -3012,3 +3012,193 @@ ON CONFLICT (module_key) DO UPDATE SET
 UPDATE workspace_modules
 SET label='Internal PoC ledger'
 WHERE module_key IN ('internal-ledger-local-admin','internal-ledger-accountant');
+
+-- ============================================================================
+-- Consolidated migration: 016_ledger_review_fixes.sql
+-- ============================================================================
+
+-- 016_ledger_review_fixes.sql
+-- Owner: Aleeya (Module 4). Run AFTER 012_to_015_ledger_from_repo.sql. Safe to run twice.
+-- No BEGIN or COMMIT: open the file, check the toolbar, press Alt+X.
+--
+-- A review of the new ledger section found three things that need a database change:
+--   1. The rule that a posted journal must balance (total debit equals total credit) was written as a function
+--      (ledger_journal_guard) but never attached to a trigger, so nothing enforced it.
+--   2. The backend's reverse route marks the original journal as 'reversed' after it posts the reversal. The append-only
+--      trigger refuses ANY change to a posted journal, so every reversal would fail. The trigger now allows exactly one
+--      change: a posted journal can become 'reversed', only when its reversal journal already exists, and nothing else may change.
+--   3. The backend now defaults the session timeout to 480 minutes, but the old settings rule only allowed 15, 30 and 60.
+
+-- ---------------------------------------------------------------- 1. a posted journal must balance, checked when the transaction commits
+DROP TRIGGER IF EXISTS trg_ledger_journal_guard ON journal_headers;
+CREATE CONSTRAINT TRIGGER trg_ledger_journal_guard
+    AFTER INSERT OR UPDATE ON journal_headers
+    DEFERRABLE INITIALLY DEFERRED
+    FOR EACH ROW EXECUTE FUNCTION ledger_journal_guard();
+
+-- ---------------------------------------------------------------- 2. posted history stays append only, except marking a reversed journal
+CREATE OR REPLACE FUNCTION ledger_append_only() RETURNS trigger AS $$
+DECLARE
+    journal_status TEXT;
+BEGIN
+    IF TG_TABLE_NAME = 'journal_headers' THEN
+        journal_status := OLD.status;
+        IF TG_OP = 'UPDATE' THEN
+            IF OLD.status = 'posted' AND NEW.status = 'reversed'
+               AND (to_jsonb(NEW) - 'status') = (to_jsonb(OLD) - 'status')
+               AND EXISTS (SELECT 1 FROM journal_headers r
+                           WHERE r.reversed_journal_id = OLD.id AND r.tenant_id = OLD.tenant_id AND r.status = 'posted') THEN
+                RETURN NEW;
+            END IF;
+        END IF;
+    ELSE
+        SELECT status INTO journal_status FROM journal_headers WHERE id = OLD.journal_id AND tenant_id = OLD.tenant_id;
+    END IF;
+    IF journal_status IS DISTINCT FROM 'draft' THEN
+        RAISE EXCEPTION 'Posted ledger history is append-only; create a reversal journal.';
+    END IF;
+    RETURN COALESCE(NEW, OLD);
+END;
+$$ LANGUAGE plpgsql;
+
+-- ---------------------------------------------------------------- 3. session timeout of 480 minutes
+DO $$
+DECLARE
+    c RECORD;
+BEGIN
+    FOR c IN SELECT conname FROM pg_constraint
+             WHERE conrelid = 'workspace_settings'::regclass AND contype = 'c'
+               AND position('session_timeout_minutes' in pg_get_constraintdef(oid)) > 0
+               AND position('480' in pg_get_constraintdef(oid)) = 0
+    LOOP
+        EXECUTE 'ALTER TABLE workspace_settings DROP CONSTRAINT ' || quote_ident(c.conname);
+    END LOOP;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ck_workspace_settings_session_timeout') THEN
+        ALTER TABLE workspace_settings ADD CONSTRAINT ck_workspace_settings_session_timeout
+            CHECK (session_timeout_minutes IN (15, 30, 60, 480));
+    END IF;
+END $$;
+
+ALTER TABLE workspace_settings ALTER COLUMN session_timeout_minutes SET DEFAULT 480;
+
+-- ============================================================================
+-- Consolidated migration: 017_amount_due_and_validation_settings.sql
+-- ============================================================================
+
+-- 017_amount_due_and_validation_settings.sql
+-- Owner: Aleeya (Module 4). Run AFTER 012 to 016. Safe to run twice. No BEGIN or COMMIT: open the file on Neon, press Alt+X.
+-- These four changes follow Aina's answers about her validation rules:
+--   1. standardised_records.amount_due: the amount still payable, which can differ from the bill's total after prior balances,
+--      credits or part payments. Optional. When it is empty, everything keeps using the total, so nothing changes until the
+--      backend starts filling it in. Bank matching and settlement allocation use it when it is there.
+--   2. A validation result can be 'not_applicable' (the rule does not apply), which is different from 'not_checked'.
+--   3. validation_results.details: a JSON field for the reason and the original result of a check.
+--   4. Two settings for each company: require_vendor_match and require_customer_match (default off).
+-- Negative amounts are allowed in amount_due, because credits stay signed.
+
+-- ---------------------------------------------------------------- 1. amount due on approved records
+ALTER TABLE standardised_records ADD COLUMN IF NOT EXISTS amount_due NUMERIC(14,2);
+
+-- Bank matching: a bank row matches the amount due when there is one, otherwise the total. Everything else is unchanged.
+CREATE OR REPLACE FUNCTION recon_decision_check() RETURNS trigger AS $$
+DECLARE
+    c_row   reconciliation_candidates%ROWTYPE;
+    tx_row  bank_transactions%ROWTYPE;
+    rec_row standardised_records%ROWTYPE;
+BEGIN
+    SELECT * INTO c_row FROM reconciliation_candidates
+    WHERE id = NEW.candidate_id AND tenant_id = NEW.tenant_id FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'The match candidate does not exist in this company.';
+    END IF;
+    SELECT * INTO tx_row FROM bank_transactions WHERE id = c_row.bank_transaction_id FOR UPDATE;
+    SELECT * INTO rec_row FROM standardised_records WHERE id = c_row.record_id;
+
+    IF NEW.decision = 'reversed' THEN
+        IF c_row.status <> 'confirmed' THEN
+            RAISE EXCEPTION 'Only a confirmed match can be reversed.';
+        END IF;
+        RETURN NEW;
+    END IF;
+
+    IF c_row.status <> 'proposed' THEN
+        RAISE EXCEPTION 'This match candidate has already been decided.';
+    END IF;
+
+    IF NEW.decision = 'confirmed' THEN
+        IF tx_row.status NOT IN ('imported', 'proposed') THEN
+            RAISE EXCEPTION 'This bank row cannot be matched in its current status.';
+        END IF;
+        IF tx_row.direction IS NULL OR tx_row.currency IS NULL OR tx_row.signed_amount_decimal IS NULL THEN
+            RAISE EXCEPTION 'A bank row with a missing direction, currency or amount needs review first.';
+        END IF;
+        IF rec_row.currency IS NULL OR rec_row.currency <> tx_row.currency THEN
+            RAISE EXCEPTION 'The bank row and the record must have the same currency.';
+        END IF;
+        IF COALESCE(rec_row.amount_due, rec_row.total_amount) IS NULL OR abs(tx_row.signed_amount_decimal) <> COALESCE(rec_row.amount_due, rec_row.total_amount) THEN
+            RAISE EXCEPTION 'Only full amount matches can be confirmed.';
+        END IF;
+        IF NOT rec_row.is_current OR rec_row.revision_number <> NEW.expected_revision THEN
+            RAISE EXCEPTION 'The record changed since it was reviewed.';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Settlement allocation: the same rule. Everything else is unchanged.
+CREATE OR REPLACE FUNCTION settlement_allocation_guard() RETURNS trigger AS $$
+DECLARE
+    s settlements%ROWTYPE;
+    r standardised_records%ROWTYPE;
+    used_settlement NUMERIC(18,2);
+    used_record NUMERIC(18,2);
+BEGIN
+    IF NEW.status <> 'active' THEN RETURN NEW; END IF;
+    SELECT * INTO s FROM settlements WHERE id = NEW.settlement_id AND tenant_id = NEW.tenant_id FOR UPDATE;
+    IF s.status <> 'recorded' THEN RAISE EXCEPTION 'Only recorded settlements can be allocated.'; END IF;
+    SELECT * INTO r FROM standardised_records WHERE id = NEW.record_id AND tenant_id = NEW.tenant_id FOR UPDATE;
+    IF NOT FOUND OR NOT r.is_current OR COALESCE(r.amount_due, r.total_amount) IS NULL THEN
+        RAISE EXCEPTION 'Only a current approved record with a total can be allocated.';
+    END IF;
+    IF r.currency <> s.currency THEN RAISE EXCEPTION 'Settlement and record currencies must match.'; END IF;
+    SELECT COALESCE(SUM(amount),0) INTO used_settlement FROM settlement_allocations
+      WHERE settlement_id=NEW.settlement_id AND tenant_id=NEW.tenant_id AND status='active';
+    SELECT COALESCE(SUM(amount),0) INTO used_record FROM settlement_allocations
+      WHERE record_id=NEW.record_id AND tenant_id=NEW.tenant_id AND status='active';
+    IF used_settlement + NEW.amount > s.amount THEN RAISE EXCEPTION 'Settlement allocation exceeds the unmatched amount.'; END IF;
+    IF used_record + NEW.amount > COALESCE(r.amount_due, r.total_amount) THEN RAISE EXCEPTION 'Record allocation exceeds the unmatched amount.'; END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ---------------------------------------------------------------- 2. the validation result 'not_applicable'
+DO $$
+DECLARE
+    c RECORD;
+BEGIN
+    FOR c IN SELECT conname FROM pg_constraint
+             WHERE conrelid = 'validation_results'::regclass AND contype = 'c'
+               AND position('not_checked' in pg_get_constraintdef(oid)) > 0
+               AND position('not_applicable' in pg_get_constraintdef(oid)) = 0
+    LOOP
+        EXECUTE 'ALTER TABLE validation_results DROP CONSTRAINT ' || quote_ident(c.conname);
+    END LOOP;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ck_validation_results_status') THEN
+        ALTER TABLE validation_results ADD CONSTRAINT ck_validation_results_status
+            CHECK (status IN ('passed', 'failed', 'not_checked', 'warning', 'not_applicable'));
+    END IF;
+    -- A rule that does not apply never blocks approval and never needs review.
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ck_validation_not_applicable_flags') THEN
+        ALTER TABLE validation_results ADD CONSTRAINT ck_validation_not_applicable_flags
+            CHECK (status <> 'not_applicable' OR (prevents_approval = FALSE AND requires_review = FALSE));
+    END IF;
+END $$;
+
+-- ---------------------------------------------------------------- 3. details of a check
+ALTER TABLE validation_results ADD COLUMN IF NOT EXISTS details JSONB NOT NULL DEFAULT '{}'::jsonb
+    CHECK (jsonb_typeof(details) = 'object');
+
+-- ---------------------------------------------------------------- 4. per company matching settings
+ALTER TABLE validation_rules ADD COLUMN IF NOT EXISTS require_vendor_match BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE validation_rules ADD COLUMN IF NOT EXISTS require_customer_match BOOLEAN NOT NULL DEFAULT FALSE;
