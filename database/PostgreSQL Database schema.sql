@@ -22,7 +22,7 @@
 DROP TABLE IF EXISTS
     benchmark_demo_documents, benchmark_demo_tenants, mfa_backup_codes,
     bank_coding_decisions, bank_coding_suggestions,
-    reconciliation_decisions, reconciliation_candidates, bank_transactions, bank_imports,
+    reconciliation_decisions, reconciliation_candidates, bank_transaction_anomalies, bank_transactions, bank_imports,
     po_match_decisions, po_match_proposals, coding_decisions, coding_suggestions,
     cost_centres, coa_accounts,
     audit_logs, workspace_settings, validation_rules, validation_results, standardised_records,
@@ -1886,6 +1886,32 @@ CREATE TABLE IF NOT EXISTS bank_transactions (
     ),
     FOREIGN KEY (import_id, tenant_id) REFERENCES bank_imports(id, tenant_id) ON DELETE RESTRICT
 );
+
+-- The anomaly is calculated once when an import is confirmed and kept beside the
+-- bank row so later imports cannot change the explanation shown to a reviewer.
+CREATE TABLE IF NOT EXISTS bank_transaction_anomalies (
+    bank_transaction_id UUID NOT NULL,
+    tenant_id UUID NOT NULL,
+    import_id UUID NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('anomaly', 'normal', 'insufficient_baseline')),
+    is_anomaly BOOLEAN NOT NULL,
+    label TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    amount NUMERIC(14,2) NOT NULL,
+    currency CHAR(3) NOT NULL,
+    baseline_median NUMERIC(14,2),
+    upper_bound NUMERIC(14,2),
+    baseline_count INTEGER NOT NULL DEFAULT 0 CHECK (baseline_count >= 0),
+    anomaly_score NUMERIC(18,6),
+    detector_version TEXT NOT NULL DEFAULT 'amount-v1',
+    calculated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (bank_transaction_id, tenant_id),
+    FOREIGN KEY (bank_transaction_id, tenant_id) REFERENCES bank_transactions(id, tenant_id) ON DELETE RESTRICT,
+    FOREIGN KEY (import_id, tenant_id) REFERENCES bank_imports(id, tenant_id) ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS idx_bank_transaction_anomalies_tenant_status
+    ON bank_transaction_anomalies (tenant_id, status, calculated_at);
 
 -- A bank row is evidence: only its status may change, and a row in a match cannot be deleted.
 CREATE OR REPLACE FUNCTION bank_transaction_guard() RETURNS trigger AS $$
