@@ -3,10 +3,11 @@ from main import *
 from main import _lock_upload_identity, _processing_error, _lock_workspace_document, _require_current_extraction, _authorised_document, _bank_row_values, _bank_transaction_dto, _uuid_or_422, _account_dto, _cost_centre_dto
 import hashlib
 import json
+from pathlib import Path
 from fastapi.concurrency import run_in_threadpool
 from psycopg.errors import RaiseException, UniqueViolation
 from pydantic import ValidationError
-from services.bank.csv_parser import parse_bank_csv
+from services.bank.statement_parser import inspect_statement, parse_bank_statement
 from validation.matching.bank_reconciliation import find_bank_match_candidates, direction_matches
 
 def _ensure_reconciliation_period_tables(db):
@@ -198,13 +199,14 @@ def _bank_audit(db, user, action, resource, details):
         action, str(resource), json.dumps(details, default=str)))
 
 
-def _preview_bank_statement(user, content, account_ref, mapping, date_format, default_currency="MYR"):
+def _preview_bank_statement(user, content, filename, account_ref, mapping, date_format, default_currency="MYR"):
     """Rows wait as ignored evidence, unseen on the Money pages, until a person confirms the import."""
     try:
-        rows, mapping_version = parse_bank_csv(content, mapping, date_format, user["tenant_id"], account_ref, default_currency)
+        rows, mapping_version = parse_bank_statement(content, filename, mapping, date_format, user["tenant_id"], account_ref, default_currency)
     except ValueError as error:
         raise HTTPException(422, str(error))
     source_hash = hashlib.sha256(content).hexdigest()
+    input_format = Path(filename).suffix.lower().lstrip(".")
     import_id = uuid.uuid4()
     samples, duplicates, needs_review = [], 0, 0
     with connect() as db:
@@ -217,8 +219,8 @@ def _preview_bank_statement(user, content, account_ref, mapping, date_format, de
         try:
             db.execute("""INSERT INTO bank_imports
                 (id,tenant_id,source_bank_account_ref,source_hash,input_format,mapping_version,imported_by,row_count,status)
-                VALUES (%s,%s,%s,%s,'csv',%s,%s,0,'previewed')""",
-                (import_id, user["tenant_id"], account_ref, source_hash, mapping_version, user["id"]))
+                VALUES (%s,%s,%s,%s,%s,%s,%s,0,'previewed')""",
+                (import_id, user["tenant_id"], account_ref, source_hash, input_format, mapping_version, user["id"]))
         except UniqueViolation:
             raise HTTPException(409, "This bank statement has already been imported.")
         count = 0
@@ -249,7 +251,7 @@ def _preview_bank_statement(user, content, account_ref, mapping, date_format, de
 
 
 async def create_bank_import(request: Request):
-    """A CSV file from the Money pages starts a preview. Rows sent as JSON are imported directly."""
+    """A bank statement file starts a preview. Rows sent as JSON are imported directly."""
     user = await run_in_threadpool(require_workspace_user, request, {"local_admin", "accountant"})
     if not user.get("tenant_id"):
         raise HTTPException(403, "A company workspace is required.")
@@ -258,17 +260,25 @@ async def create_bank_import(request: Request):
         upload = form.get('file')
         account_ref = str(form.get('source_bank_account_ref') or '').strip()
         if upload is None or not hasattr(upload, 'read'):
-            raise HTTPException(422, "Choose a CSV bank statement.")
-        if not account_ref or len(account_ref) > 200:
-            raise HTTPException(422, "Give the bank account a label.")
+            raise HTTPException(422, "Choose a CSV, Excel, or PDF bank statement.")
+        filename = str(getattr(upload, 'filename', '') or '')
+        if Path(filename).suffix.lower() not in {'.csv', '.xlsx', '.pdf'}:
+            raise HTTPException(422, "Bank statements must be CSV, Excel (.xlsx), or PDF files.")
         content = await upload.read()
         if not content or len(content) > MAX_STATEMENT_BYTES:
-            raise HTTPException(422, "The statement must be a non-empty CSV of at most 5 MB.")
+            raise HTTPException(422, "The statement must be a non-empty CSV, Excel, or PDF file of at most 5 MB.")
+        if str(form.get('inspect_only') or '').lower() == 'true':
+            try:
+                return await run_in_threadpool(inspect_statement, content, filename)
+            except ValueError as error:
+                raise HTTPException(422, str(error))
+        if not account_ref or len(account_ref) > 200:
+            raise HTTPException(422, "Give the bank account a label.")
         try:
             mapping = json.loads(str(form.get('mapping') or ''))
         except ValueError:
-            raise HTTPException(422, "CSV column mapping must be valid JSON.")
-        return await run_in_threadpool(_preview_bank_statement, user, content, account_ref, mapping, str(form.get('date_format') or ''), str(form.get('default_currency') or 'MYR'))
+            raise HTTPException(422, "Statement column mapping must be valid JSON.")
+        return await run_in_threadpool(_preview_bank_statement, user, content, filename, account_ref, mapping, str(form.get('date_format') or ''), str(form.get('default_currency') or 'MYR'))
     try:
         data = BankImportInput(**await request.json())
     except ValidationError as error:

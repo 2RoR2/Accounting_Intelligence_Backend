@@ -10,6 +10,7 @@ httpx>=0.27,<0.29
 python-multipart>=0.0.9,<1
 openpyxl>=3.1,<4
 Pillow>=10,<12
+pypdfium2>=5,<6
 docling>=2.141,<3
 rapidocr>=3.9.2,<4
 onnxruntime>=1.24,<2

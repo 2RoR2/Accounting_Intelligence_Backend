@@ -1815,7 +1815,7 @@ CREATE INDEX IF NOT EXISTS idx_po_match_proposals_document ON po_match_proposals
 CREATE INDEX IF NOT EXISTS idx_po_match_decisions_proposal ON po_match_decisions (proposal_id, created_at);
 
 -- 007_p1_bank_import_reconciliation.sql
--- P1 bank CSV import, Money In / Money Out and reconciliation (roadmap gate G6).
+-- P1 bank statement import (CSV/Excel/PDF), Money In / Money Out and reconciliation (roadmap gate G6).
 -- Owner: Aleeya (Module 4). Contract: docs/DOMAIN_AND_API_CONTRACTS_V2.md, section 5.
 --
 -- Rules this file enforces in the database:
@@ -1838,7 +1838,7 @@ CREATE TABLE IF NOT EXISTS bank_imports (
     tenant_id               UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     source_bank_account_ref TEXT NOT NULL CHECK (btrim(source_bank_account_ref) <> ''),
     source_hash             TEXT NOT NULL CHECK (source_hash ~ '^[0-9a-f]{64}$'),
-    input_format            TEXT NOT NULL CHECK (input_format IN ('csv')),
+    input_format            TEXT NOT NULL CHECK (input_format IN ('csv', 'xlsx', 'pdf')),
     mapping_version         TEXT NOT NULL CHECK (btrim(mapping_version) <> ''),
     imported_by             UUID NOT NULL,
     imported_at             TIMESTAMPTZ NOT NULL DEFAULT now(),

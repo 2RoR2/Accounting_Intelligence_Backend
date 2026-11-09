@@ -586,7 +586,9 @@ acceptance goes through the existing correction, audit and approval workflow.
 
 The frontend integration uses the existing route registry plus document AI Assist,
 validation-review and bank-import confirm/discard endpoints. Bank imports accept
-both the existing JSON body and the Money screen's multipart CSV form. Discarded
+both the existing JSON body and the Money screen's multipart CSV, Excel, or PDF
+form. Text extraction is preferred for PDFs and RapidOCR is used as a bounded
+fallback for scanned pages. Discarded
 previews use the existing database `reverted` state, while the discard API returns
 `discarded`. This integration changes no SQL schema or migration and does not
 apply migrations or modify shared databases. NOT_APPLICABLE validation results
