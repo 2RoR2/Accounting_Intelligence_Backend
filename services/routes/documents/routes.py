@@ -352,7 +352,23 @@ def get_record(record_id: str, request: Request):
         row = db.execute("SELECT * FROM standardised_records WHERE (record_code=%s OR id::text=%s) AND (%s IS NULL OR tenant_id=%s)", (record_id, record_id, scope, scope)).fetchone()
     if not row:
         raise HTTPException(404, "Standardised record not found.")
-    return {"id": str(row["id"]), "code": row["record_code"], "documentId": str(row["document_id"]), "tenantId": str(row["tenant_id"]), "revision": row["revision_number"], "category": row["category"].upper(), "supplier": row["supplier_name"], "customer": row["buyer_name"], "invoiceNumber": row["invoice_number"], "referenceNumber": row["reference_number"], "invoiceDate": str(row["invoice_date"]) if row["invoice_date"] else None, "dueDate": str(row["due_date"]) if row["due_date"] else None, "totalAmount": decimal_text(row["total_amount"]), "validation": row["validation_status"].upper(), "snapshot": row["snapshot"], "createdAt": str(row["created_at"])}
+    with connect() as db:
+        fields = db.execute("""SELECT fp.* FROM field_predictions fp
+            JOIN raw_extractions re ON re.id=fp.extraction_id AND re.is_current=true
+            WHERE fp.document_id=%s ORDER BY fp.field_key""", (row["document_id"],)).fetchall()
+        items = db.execute("""SELECT li.* FROM line_items li
+            JOIN raw_extractions re ON re.id=li.extraction_id AND re.is_current=true
+            WHERE li.document_id=%s ORDER BY li.line_number""", (row["document_id"],)).fetchall()
+        raw_extraction = db.execute("SELECT raw_json FROM raw_extractions WHERE document_id=%s AND is_current=true", (row["document_id"],)).fetchone()
+    snapshot = row["snapshot"] or {}
+    if isinstance(snapshot, str):
+        try:
+            snapshot = json.loads(snapshot)
+        except Exception:
+            snapshot = {}
+    snapshot_items = snapshot.get("lineItems") or snapshot.get("line_items") or [] if isinstance(snapshot, dict) else []
+    line_item_rows = [line_dto(item) for item in items] if items else (snapshot_items or _ubl_line_items(raw_extraction["raw_json"] if raw_extraction else {}))
+    return {"id": str(row["id"]), "code": row["record_code"], "documentId": str(row["document_id"]), "tenantId": str(row["tenant_id"]), "revision": row["revision_number"], "category": row["category"].upper(), "supplier": row["supplier_name"], "customer": row["buyer_name"], "invoiceNumber": row["invoice_number"], "referenceNumber": row["reference_number"], "invoiceDate": str(row["invoice_date"]) if row["invoice_date"] else None, "dueDate": str(row["due_date"]) if row["due_date"] else None, "totalAmount": decimal_text(row["total_amount"]), "validation": row["validation_status"].upper(), "snapshot": row["snapshot"], "extraction": {"documentId": str(row["document_id"]), "fields": [prediction_dto(field) for field in fields], "lineItems": line_item_rows, "raw": snapshot.get("extraction", {}) if isinstance(snapshot, dict) else {}}, "createdAt": str(row["created_at"])}
 
 def get_record_amendments(record_id: str, request: Request):
     user = require_workspace_user(request, {"super_admin", "local_admin", "accountant"})

@@ -29,7 +29,17 @@ def _ensure_reconciliation_period_tables(db):
         reason TEXT NOT NULL, reopened_by UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT, reopened_at TIMESTAMPTZ NOT NULL DEFAULT now())""")
 
 def _ensure_bank_anomaly_table(db):
-    db.execute("""CREATE TABLE IF NOT EXISTS bank_transaction_anomalies (
+    # Dashboard loads Money In and Money Out concurrently. Serialize this
+    # compatibility bootstrap so two first requests cannot race in PostgreSQL
+    # while creating the same table type.
+    db.execute("SELECT pg_advisory_xact_lock(hashtext('accordai.bank_transaction_anomalies'))")
+    # PostgreSQL can still report a duplicate type during compatibility
+    # bootstrap when another worker began the same CREATE before the lock was
+    # acquired. Keep the CREATE inside a savepoint so that harmless race does
+    # not abort the request transaction.
+    db.execute("SAVEPOINT ensure_bank_anomaly_table")
+    try:
+        db.execute("""CREATE TABLE IF NOT EXISTS bank_transaction_anomalies (
         bank_transaction_id UUID NOT NULL,
         tenant_id UUID NOT NULL,
         import_id UUID NOT NULL,
@@ -49,6 +59,10 @@ def _ensure_bank_anomaly_table(db):
         FOREIGN KEY (bank_transaction_id, tenant_id) REFERENCES bank_transactions(id, tenant_id) ON DELETE RESTRICT,
         FOREIGN KEY (import_id, tenant_id) REFERENCES bank_imports(id, tenant_id) ON DELETE RESTRICT
     )""")
+    except UniqueViolation:
+        db.execute("ROLLBACK TO SAVEPOINT ensure_bank_anomaly_table")
+    finally:
+        db.execute("RELEASE SAVEPOINT ensure_bank_anomaly_table")
 
 def _period_result(db, period):
     rows = db.execute("""SELECT t.*, EXISTS(SELECT 1 FROM reconciliation_candidates c WHERE c.bank_transaction_id=t.id AND c.status='confirmed') AS matched,
