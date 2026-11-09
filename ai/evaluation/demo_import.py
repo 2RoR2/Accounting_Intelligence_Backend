@@ -97,6 +97,7 @@ def run_import(bundle, target, connect, storage, attempts, *, dry_run=True, enqu
         result = {'demo_code': entry.demo_code, 'sample_id': entry.sample_id, 'document_id': None,
                   'document_code': None, 'extraction_run_id': None, 'processing_state': 'NOT_RUN'}
         delivery = None
+        scheduled = None
         try:
             with connect() as db:
                 if dry_run:
@@ -163,16 +164,18 @@ def run_import(bundle, target, connect, storage, attempts, *, dry_run=True, enqu
                     if document['status'] != 'uploaded':
                         result['processing_state'] = 'OBSERVE_EXISTING_PIPELINE_STATE'
                 if enqueue and not dry_run and document['status'] == 'uploaded':
-                    db.execute("UPDATE documents SET status='queued' WHERE id=%s AND tenant_id=%s",(document['id'],target.tenant_id))
-                    job = db.execute('INSERT INTO pending_jobs(tenant_id,document_id) VALUES (%s,%s) RETURNING id',
-                                     (target.tenant_id,document['id'])).fetchone()
-                    delivery = attempts.reserve_dispatch(db,str(document['id']),target.tenant_id,job_id=str(job['id']))
-                    result['job_id'] = str(job['id'])
+                    scheduled = attempts.schedule_document(db,str(document['id']),target.tenant_id)
+                    result['job_id'] = str(scheduled['id'])
                 elif enqueue and retry_failed and not dry_run and document['status'] in {'failed','queued'}:
                     delivery = attempts.reserve_dispatch(db,str(document['id']),target.tenant_id,retry=True)
                     result['job_id'] = delivery.job_id
                 result['action'] = action
             # No Redis operation while the SQL transaction/locks remain open.
+            if scheduled:
+                dispatch=attempts.dispatch_scheduled(str(scheduled['id']))
+                result.update(dispatch_accepted=dispatch['dispatchAccepted'],
+                              dispatch_state='ACCEPTED' if dispatch['dispatchAccepted'] else 'PENDING',
+                              stored_document_status=dispatch['status'],processing_state='OBSERVE_EXISTING_PIPELINE_STATE')
             if delivery:
                 try:
                     dispatch = attempts.publish(delivery)

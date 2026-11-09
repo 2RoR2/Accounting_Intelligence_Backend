@@ -870,7 +870,7 @@ CREATE TABLE workspace_settings (
     tenant_id      UUID REFERENCES tenants(id) ON DELETE CASCADE,
     timezone       TEXT NOT NULL DEFAULT 'Asia/Kuala_Lumpur',
     notifications  TEXT NOT NULL DEFAULT 'enabled',
-    session_timeout_minutes INTEGER NOT NULL DEFAULT 30 CHECK (session_timeout_minutes IN (15, 30, 60)),
+    session_timeout_minutes INTEGER NOT NULL DEFAULT 480 CHECK (session_timeout_minutes IN (15, 30, 60, 480)),
     default_document_view TEXT NOT NULL DEFAULT 'all' CHECK (default_document_view IN ('all', 'exceptions', 'review')),
     email_assignment_notifications BOOLEAN NOT NULL DEFAULT TRUE,
     processing_status_notifications BOOLEAN NOT NULL DEFAULT TRUE,
@@ -2770,4 +2770,469 @@ DROP TRIGGER IF EXISTS trg_bank_transactions_normalise_amounts ON bank_transacti
 CREATE TRIGGER trg_bank_transactions_normalise_amounts
     BEFORE INSERT ON bank_transactions
     FOR EACH ROW EXECUTE FUNCTION bank_transactions_normalise_amounts();
+
+-- ============================================================================
+-- Consolidated migration: 012_internal_ledger_foundation.sql
+-- ============================================================================
+-- Internal PoC ledger foundation.
+-- This migration records accounting data only; it never initiates payments or
+-- integrates with an external ERP/general ledger. Apply transactionally.
+
+CREATE TABLE IF NOT EXISTS accounting_periods (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    period_code TEXT NOT NULL,
+    starts_on DATE NOT NULL,
+    ends_on DATE NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','closed')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (tenant_id, period_code),
+    CHECK (starts_on <= ends_on)
+);
+
+CREATE TABLE IF NOT EXISTS ledger_accounts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    code TEXT NOT NULL,
+    name TEXT NOT NULL,
+    account_type TEXT NOT NULL CHECK (account_type IN ('asset','liability','equity','income','expense')),
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (tenant_id, code)
+    ,UNIQUE (id, tenant_id)
+);
+
+CREATE TABLE IF NOT EXISTS journal_headers (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    period_id UUID NOT NULL REFERENCES accounting_periods(id) ON DELETE RESTRICT,
+    idempotency_key TEXT NOT NULL,
+    source_type TEXT NOT NULL CHECK (source_type IN ('document','adjustment','settlement','reversal','manual')),
+    source_id UUID,
+    status TEXT NOT NULL DEFAULT 'posted' CHECK (status IN ('draft','posted','reversed')),
+    journal_date DATE NOT NULL,
+    description TEXT NOT NULL,
+    reversed_journal_id UUID REFERENCES journal_headers(id) ON DELETE RESTRICT,
+    posted_by UUID REFERENCES users(id) ON DELETE RESTRICT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    posted_at TIMESTAMPTZ,
+    UNIQUE (tenant_id, idempotency_key),
+    UNIQUE (id, tenant_id)
+);
+
+CREATE TABLE IF NOT EXISTS journal_lines (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL,
+    journal_id UUID NOT NULL,
+    account_id UUID NOT NULL,
+    line_number INTEGER NOT NULL CHECK (line_number > 0),
+    description TEXT NOT NULL DEFAULT '',
+    debit NUMERIC(18,2) NOT NULL DEFAULT 0 CHECK (debit >= 0),
+    credit NUMERIC(18,2) NOT NULL DEFAULT 0 CHECK (credit >= 0),
+    source_field TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (journal_id, line_number),
+    FOREIGN KEY (journal_id, tenant_id) REFERENCES journal_headers(id, tenant_id) ON DELETE RESTRICT,
+    FOREIGN KEY (account_id, tenant_id) REFERENCES ledger_accounts(id, tenant_id) ON DELETE RESTRICT,
+    CHECK ((debit > 0 AND credit = 0) OR (credit > 0 AND debit = 0))
+);
+
+CREATE INDEX IF NOT EXISTS idx_journal_headers_source ON journal_headers(tenant_id, source_type, source_id);
+CREATE INDEX IF NOT EXISTS idx_journal_lines_account ON journal_lines(tenant_id, account_id, journal_id);
+
+CREATE OR REPLACE FUNCTION ledger_journal_guard() RETURNS trigger AS $$
+DECLARE
+    total_debit NUMERIC(18,2);
+    total_credit NUMERIC(18,2);
+    h journal_headers%ROWTYPE;
+BEGIN
+    SELECT * INTO h FROM journal_headers WHERE id = NEW.id AND tenant_id = NEW.tenant_id FOR UPDATE;
+    IF h.status <> 'draft' THEN
+        SELECT COALESCE(SUM(debit),0), COALESCE(SUM(credit),0)
+          INTO total_debit, total_credit
+          FROM journal_lines WHERE journal_id = NEW.id AND tenant_id = NEW.tenant_id;
+        IF total_debit <> total_credit OR total_debit = 0 THEN
+            RAISE EXCEPTION 'Posted journal must have non-zero balanced debit and credit totals.';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- A posted journal cannot be edited or deleted. Reversals are new journals.
+CREATE OR REPLACE FUNCTION ledger_append_only() RETURNS trigger AS $$
+DECLARE journal_status TEXT;
+BEGIN
+    IF TG_OP IN ('UPDATE','DELETE') AND TG_TABLE_NAME = 'journal_lines' THEN
+        SELECT status INTO journal_status FROM journal_headers WHERE id = OLD.journal_id AND tenant_id = OLD.tenant_id;
+    ELSE
+        journal_status := OLD.status;
+    END IF;
+    IF TG_OP IN ('UPDATE','DELETE') AND journal_status <> 'draft' THEN
+        RAISE EXCEPTION 'Posted ledger history is append-only; create a reversal journal.';
+    END IF;
+    RETURN COALESCE(NEW, OLD);
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_ledger_headers_append_only ON journal_headers;
+CREATE TRIGGER trg_ledger_headers_append_only BEFORE UPDATE OR DELETE ON journal_headers
+FOR EACH ROW EXECUTE FUNCTION ledger_append_only();
+
+DROP TRIGGER IF EXISTS trg_ledger_lines_append_only ON journal_lines;
+CREATE TRIGGER trg_ledger_lines_append_only BEFORE UPDATE OR DELETE ON journal_lines
+FOR EACH ROW EXECUTE FUNCTION ledger_append_only();
+
+-- ============================================================================
+-- Consolidated migration: 013_settlements_allocations.sql
+-- ============================================================================
+-- Internal settlement records and many-to-many allocations.
+-- A settlement records a payment already made; it never initiates one.
+
+CREATE TABLE IF NOT EXISTS settlements (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    settlement_ref TEXT NOT NULL,
+    settlement_date DATE NOT NULL,
+    direction TEXT NOT NULL CHECK (direction IN ('money_in','money_out')),
+    amount NUMERIC(18,2) NOT NULL CHECK (amount > 0),
+    currency CHAR(3) NOT NULL CHECK (currency = upper(currency)),
+    source_type TEXT NOT NULL CHECK (source_type IN ('bank_import','manual_record','document_evidence')),
+    source_id UUID,
+    status TEXT NOT NULL DEFAULT 'recorded' CHECK (status IN ('recorded','voided')),
+    created_by UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (tenant_id, settlement_ref),
+    UNIQUE (id, tenant_id)
+);
+
+CREATE TABLE IF NOT EXISTS settlement_allocations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    settlement_id UUID NOT NULL,
+    record_id UUID NOT NULL,
+    amount NUMERIC(18,2) NOT NULL CHECK (amount > 0),
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','reversed')),
+    created_by UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    reversed_at TIMESTAMPTZ,
+    reversal_reason TEXT,
+    reverses_allocation_id UUID,
+    UNIQUE (id, tenant_id),
+    FOREIGN KEY (settlement_id, tenant_id) REFERENCES settlements(id, tenant_id) ON DELETE RESTRICT,
+    FOREIGN KEY (record_id, tenant_id) REFERENCES standardised_records(id, tenant_id) ON DELETE RESTRICT,
+    FOREIGN KEY (reverses_allocation_id, tenant_id) REFERENCES settlement_allocations(id, tenant_id) ON DELETE RESTRICT,
+    CHECK (status = 'active' OR (reversed_at IS NOT NULL AND btrim(COALESCE(reversal_reason,'')) <> ''))
+);
+
+CREATE INDEX IF NOT EXISTS idx_settlements_tenant_date ON settlements(tenant_id, settlement_date);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_settlement_bank_source
+    ON settlements(tenant_id, source_type, source_id)
+    WHERE source_type = 'bank_import' AND source_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_allocations_settlement ON settlement_allocations(tenant_id, settlement_id, status);
+CREATE INDEX IF NOT EXISTS idx_allocations_record ON settlement_allocations(tenant_id, record_id, status);
+
+-- Allocation history is append-only. Undo is represented by a new reversed row,
+-- not by editing the original allocation.
+CREATE OR REPLACE FUNCTION settlement_allocation_append_only() RETURNS trigger AS $$
+BEGIN
+    IF TG_OP IN ('UPDATE','DELETE') THEN
+        RAISE EXCEPTION 'Settlement allocation history is append-only; create a reversal allocation.';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_settlement_allocations_append_only ON settlement_allocations;
+CREATE TRIGGER trg_settlement_allocations_append_only
+BEFORE UPDATE OR DELETE ON settlement_allocations
+FOR EACH ROW EXECUTE FUNCTION settlement_allocation_append_only();
+
+CREATE OR REPLACE FUNCTION settlement_allocation_guard() RETURNS trigger AS $$
+DECLARE
+    s settlements%ROWTYPE;
+    r standardised_records%ROWTYPE;
+    used_settlement NUMERIC(18,2);
+    used_record NUMERIC(18,2);
+BEGIN
+    IF NEW.status <> 'active' THEN RETURN NEW; END IF;
+    SELECT * INTO s FROM settlements WHERE id = NEW.settlement_id AND tenant_id = NEW.tenant_id FOR UPDATE;
+    IF s.status <> 'recorded' THEN RAISE EXCEPTION 'Only recorded settlements can be allocated.'; END IF;
+    SELECT * INTO r FROM standardised_records WHERE id = NEW.record_id AND tenant_id = NEW.tenant_id FOR UPDATE;
+    IF NOT FOUND OR NOT r.is_current OR r.total_amount IS NULL THEN
+        RAISE EXCEPTION 'Only a current approved record with a total can be allocated.';
+    END IF;
+    IF r.currency <> s.currency THEN RAISE EXCEPTION 'Settlement and record currencies must match.'; END IF;
+    SELECT COALESCE(SUM(amount),0) INTO used_settlement FROM settlement_allocations
+      WHERE settlement_id=NEW.settlement_id AND tenant_id=NEW.tenant_id AND status='active';
+    SELECT COALESCE(SUM(amount),0) INTO used_record FROM settlement_allocations
+      WHERE record_id=NEW.record_id AND tenant_id=NEW.tenant_id AND status='active';
+    IF used_settlement + NEW.amount > s.amount THEN RAISE EXCEPTION 'Settlement allocation exceeds the unmatched amount.'; END IF;
+    IF used_record + NEW.amount > r.total_amount THEN RAISE EXCEPTION 'Record allocation exceeds the unmatched amount.'; END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_settlement_allocation_guard ON settlement_allocations;
+CREATE TRIGGER trg_settlement_allocation_guard
+BEFORE INSERT ON settlement_allocations
+FOR EACH ROW EXECUTE FUNCTION settlement_allocation_guard();
+
+-- Trial balance is derived from posted internal journals only.
+CREATE OR REPLACE VIEW internal_trial_balance AS
+SELECT j.tenant_id,
+       l.account_id,
+       a.code,
+       a.name,
+       a.account_type,
+       COALESCE(SUM(l.debit), 0)::NUMERIC(18,2) AS total_debit,
+       COALESCE(SUM(l.credit), 0)::NUMERIC(18,2) AS total_credit,
+       COALESCE(SUM(l.debit - l.credit), 0)::NUMERIC(18,2) AS net_balance
+FROM journal_headers j
+JOIN journal_lines l ON l.journal_id = j.id AND l.tenant_id = j.tenant_id
+JOIN ledger_accounts a ON a.id = l.account_id AND a.tenant_id = l.tenant_id
+WHERE j.status = 'posted'
+GROUP BY j.tenant_id, l.account_id, a.code, a.name, a.account_type;
+
+-- ============================================================================
+-- Consolidated migration: 014_ledger_navigation.sql
+-- ============================================================================
+-- Expose the internal ledger to workspace roles that can review and post.
+INSERT INTO workspace_modules(module_key, role, section, label, route, icon_key, sort_order, enabled)
+VALUES
+    ('internal-ledger-local-admin', 'local_admin', 'accounting', 'Internal Ledger', '/company/ledger', 'book-open', 75, TRUE),
+    ('internal-ledger-accountant', 'accountant', 'accounting', 'Internal Ledger', '/workspace/ledger', 'book-open', 75, TRUE)
+ON CONFLICT (module_key) DO UPDATE SET
+    section=EXCLUDED.section, label=EXCLUDED.label, route=EXCLUDED.route,
+    icon_key=EXCLUDED.icon_key, sort_order=EXCLUDED.sort_order, enabled=TRUE;
+
+-- ============================================================================
+-- Consolidated migration: 015_label_internal_poc_ledger.sql
+-- ============================================================================
+UPDATE workspace_modules
+SET label='Internal PoC ledger'
+WHERE module_key IN ('internal-ledger-local-admin','internal-ledger-accountant');
+
+-- ============================================================================
+-- Consolidated migration: 016_ledger_review_fixes.sql
+-- ============================================================================
+
+-- 016_ledger_review_fixes.sql
+-- Owner: Aleeya (Module 4). Run AFTER 012_to_015_ledger_from_repo.sql. Safe to run twice.
+-- No BEGIN or COMMIT: open the file, check the toolbar, press Alt+X.
+--
+-- A review of the new ledger section found three things that need a database change:
+--   1. The rule that a posted journal must balance (total debit equals total credit) was written as a function
+--      (ledger_journal_guard) but never attached to a trigger, so nothing enforced it.
+--   2. The backend's reverse route marks the original journal as 'reversed' after it posts the reversal. The append-only
+--      trigger refuses ANY change to a posted journal, so every reversal would fail. The trigger now allows exactly one
+--      change: a posted journal can become 'reversed', only when its reversal journal already exists, and nothing else may change.
+--   3. The backend now defaults the session timeout to 480 minutes, but the old settings rule only allowed 15, 30 and 60.
+
+-- ---------------------------------------------------------------- 1. a posted journal must balance, checked when the transaction commits
+DROP TRIGGER IF EXISTS trg_ledger_journal_guard ON journal_headers;
+CREATE CONSTRAINT TRIGGER trg_ledger_journal_guard
+    AFTER INSERT OR UPDATE ON journal_headers
+    DEFERRABLE INITIALLY DEFERRED
+    FOR EACH ROW EXECUTE FUNCTION ledger_journal_guard();
+
+-- ---------------------------------------------------------------- 2. posted history stays append only, except marking a reversed journal
+CREATE OR REPLACE FUNCTION ledger_append_only() RETURNS trigger AS $$
+DECLARE
+    journal_status TEXT;
+BEGIN
+    IF TG_TABLE_NAME = 'journal_headers' THEN
+        journal_status := OLD.status;
+        IF TG_OP = 'UPDATE' THEN
+            IF OLD.status = 'posted' AND NEW.status = 'reversed'
+               AND (to_jsonb(NEW) - 'status') = (to_jsonb(OLD) - 'status')
+               AND EXISTS (SELECT 1 FROM journal_headers r
+                           WHERE r.reversed_journal_id = OLD.id AND r.tenant_id = OLD.tenant_id AND r.status = 'posted') THEN
+                RETURN NEW;
+            END IF;
+        END IF;
+    ELSE
+        SELECT status INTO journal_status FROM journal_headers WHERE id = OLD.journal_id AND tenant_id = OLD.tenant_id;
+    END IF;
+    IF journal_status IS DISTINCT FROM 'draft' THEN
+        RAISE EXCEPTION 'Posted ledger history is append-only; create a reversal journal.';
+    END IF;
+    RETURN COALESCE(NEW, OLD);
+END;
+$$ LANGUAGE plpgsql;
+
+-- ---------------------------------------------------------------- 3. session timeout of 480 minutes
+DO $$
+DECLARE
+    c RECORD;
+BEGIN
+    FOR c IN SELECT conname FROM pg_constraint
+             WHERE conrelid = 'workspace_settings'::regclass AND contype = 'c'
+               AND position('session_timeout_minutes' in pg_get_constraintdef(oid)) > 0
+               AND position('480' in pg_get_constraintdef(oid)) = 0
+    LOOP
+        EXECUTE 'ALTER TABLE workspace_settings DROP CONSTRAINT ' || quote_ident(c.conname);
+    END LOOP;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ck_workspace_settings_session_timeout') THEN
+        ALTER TABLE workspace_settings ADD CONSTRAINT ck_workspace_settings_session_timeout
+            CHECK (session_timeout_minutes IN (15, 30, 60, 480));
+    END IF;
+END $$;
+
+ALTER TABLE workspace_settings ALTER COLUMN session_timeout_minutes SET DEFAULT 480;
+
+-- ============================================================================
+-- Consolidated migration: 017_amount_due_and_validation_settings.sql
+-- ============================================================================
+
+-- 017_amount_due_and_validation_settings.sql
+-- Owner: Aleeya (Module 4). Run AFTER 012 to 016. Safe to run twice. No BEGIN or COMMIT: open the file on Neon, press Alt+X.
+-- These four changes follow Aina's answers about her validation rules:
+--   1. standardised_records.amount_due: the amount still payable, which can differ from the bill's total after prior balances,
+--      credits or part payments. Optional. When it is empty, everything keeps using the total, so nothing changes until the
+--      backend starts filling it in. Bank matching and settlement allocation use it when it is there.
+--   2. A validation result can be 'not_applicable' (the rule does not apply), which is different from 'not_checked'.
+--   3. validation_results.details: a JSON field for the reason and the original result of a check.
+--   4. Two settings for each company: require_vendor_match and require_customer_match (default off).
+-- Negative amounts are allowed in amount_due, because credits stay signed.
+
+-- ---------------------------------------------------------------- 1. amount due on approved records
+ALTER TABLE standardised_records ADD COLUMN IF NOT EXISTS amount_due NUMERIC(14,2);
+
+-- Bank matching: a bank row matches the amount due when there is one, otherwise the total. Everything else is unchanged.
+CREATE OR REPLACE FUNCTION recon_decision_check() RETURNS trigger AS $$
+DECLARE
+    c_row   reconciliation_candidates%ROWTYPE;
+    tx_row  bank_transactions%ROWTYPE;
+    rec_row standardised_records%ROWTYPE;
+BEGIN
+    SELECT * INTO c_row FROM reconciliation_candidates
+    WHERE id = NEW.candidate_id AND tenant_id = NEW.tenant_id FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'The match candidate does not exist in this company.';
+    END IF;
+    SELECT * INTO tx_row FROM bank_transactions WHERE id = c_row.bank_transaction_id FOR UPDATE;
+    SELECT * INTO rec_row FROM standardised_records WHERE id = c_row.record_id;
+
+    IF NEW.decision = 'reversed' THEN
+        IF c_row.status <> 'confirmed' THEN
+            RAISE EXCEPTION 'Only a confirmed match can be reversed.';
+        END IF;
+        RETURN NEW;
+    END IF;
+
+    IF c_row.status <> 'proposed' THEN
+        RAISE EXCEPTION 'This match candidate has already been decided.';
+    END IF;
+
+    IF NEW.decision = 'confirmed' THEN
+        IF tx_row.status NOT IN ('imported', 'proposed') THEN
+            RAISE EXCEPTION 'This bank row cannot be matched in its current status.';
+        END IF;
+        IF tx_row.direction IS NULL OR tx_row.currency IS NULL OR tx_row.signed_amount_decimal IS NULL THEN
+            RAISE EXCEPTION 'A bank row with a missing direction, currency or amount needs review first.';
+        END IF;
+        IF rec_row.currency IS NULL OR rec_row.currency <> tx_row.currency THEN
+            RAISE EXCEPTION 'The bank row and the record must have the same currency.';
+        END IF;
+        IF COALESCE(rec_row.amount_due, rec_row.total_amount) IS NULL OR abs(tx_row.signed_amount_decimal) <> COALESCE(rec_row.amount_due, rec_row.total_amount) THEN
+            RAISE EXCEPTION 'Only full amount matches can be confirmed.';
+        END IF;
+        IF NOT rec_row.is_current OR rec_row.revision_number <> NEW.expected_revision THEN
+            RAISE EXCEPTION 'The record changed since it was reviewed.';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Settlement allocation: the same rule. Everything else is unchanged.
+CREATE OR REPLACE FUNCTION settlement_allocation_guard() RETURNS trigger AS $$
+DECLARE
+    s settlements%ROWTYPE;
+    r standardised_records%ROWTYPE;
+    used_settlement NUMERIC(18,2);
+    used_record NUMERIC(18,2);
+BEGIN
+    IF NEW.status <> 'active' THEN RETURN NEW; END IF;
+    SELECT * INTO s FROM settlements WHERE id = NEW.settlement_id AND tenant_id = NEW.tenant_id FOR UPDATE;
+    IF s.status <> 'recorded' THEN RAISE EXCEPTION 'Only recorded settlements can be allocated.'; END IF;
+    SELECT * INTO r FROM standardised_records WHERE id = NEW.record_id AND tenant_id = NEW.tenant_id FOR UPDATE;
+    IF NOT FOUND OR NOT r.is_current OR COALESCE(r.amount_due, r.total_amount) IS NULL THEN
+        RAISE EXCEPTION 'Only a current approved record with a total can be allocated.';
+    END IF;
+    IF r.currency <> s.currency THEN RAISE EXCEPTION 'Settlement and record currencies must match.'; END IF;
+    SELECT COALESCE(SUM(amount),0) INTO used_settlement FROM settlement_allocations
+      WHERE settlement_id=NEW.settlement_id AND tenant_id=NEW.tenant_id AND status='active';
+    SELECT COALESCE(SUM(amount),0) INTO used_record FROM settlement_allocations
+      WHERE record_id=NEW.record_id AND tenant_id=NEW.tenant_id AND status='active';
+    IF used_settlement + NEW.amount > s.amount THEN RAISE EXCEPTION 'Settlement allocation exceeds the unmatched amount.'; END IF;
+    IF used_record + NEW.amount > COALESCE(r.amount_due, r.total_amount) THEN RAISE EXCEPTION 'Record allocation exceeds the unmatched amount.'; END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ---------------------------------------------------------------- 2. the validation result 'not_applicable'
+DO $$
+DECLARE
+    c RECORD;
+BEGIN
+    FOR c IN SELECT conname FROM pg_constraint
+             WHERE conrelid = 'validation_results'::regclass AND contype = 'c'
+               AND position('not_checked' in pg_get_constraintdef(oid)) > 0
+               AND position('not_applicable' in pg_get_constraintdef(oid)) = 0
+    LOOP
+        EXECUTE 'ALTER TABLE validation_results DROP CONSTRAINT ' || quote_ident(c.conname);
+    END LOOP;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ck_validation_results_status') THEN
+        ALTER TABLE validation_results ADD CONSTRAINT ck_validation_results_status
+            CHECK (status IN ('passed', 'failed', 'not_checked', 'warning', 'not_applicable'));
+    END IF;
+    -- A rule that does not apply never blocks approval and never needs review.
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ck_validation_not_applicable_flags') THEN
+        ALTER TABLE validation_results ADD CONSTRAINT ck_validation_not_applicable_flags
+            CHECK (status <> 'not_applicable' OR (prevents_approval = FALSE AND requires_review = FALSE));
+    END IF;
+END $$;
+
+-- ---------------------------------------------------------------- 3. details of a check
+ALTER TABLE validation_results ADD COLUMN IF NOT EXISTS details JSONB NOT NULL DEFAULT '{}'::jsonb
+    CHECK (jsonb_typeof(details) = 'object');
+
+-- ---------------------------------------------------------------- 4. per company matching settings
+ALTER TABLE validation_rules ADD COLUMN IF NOT EXISTS require_vendor_match BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE validation_rules ADD COLUMN IF NOT EXISTS require_customer_match BOOLEAN NOT NULL DEFAULT FALSE;
+
+
+-- ----------------------------------------------------------------
+-- Bank reconciliation periods 
+-- ----------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS bank_reconciliation_periods (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    bank_account_ref TEXT NOT NULL,
+    starts_on DATE NOT NULL,
+    ends_on DATE NOT NULL,
+    opening_balance NUMERIC(18,2) NOT NULL,
+    closing_balance NUMERIC(18,2) NOT NULL,
+    book_balance NUMERIC(18,2) NOT NULL,
+    statement_adjustment NUMERIC(18,2) NOT NULL DEFAULT 0,
+    book_adjustment NUMERIC(18,2) NOT NULL DEFAULT 0,
+    adjustment_evidence TEXT,
+    status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','completed')),
+    signed_off_by UUID REFERENCES users(id) ON DELETE RESTRICT,
+    signed_off_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK (starts_on <= ends_on),
+    UNIQUE (tenant_id, bank_account_ref, starts_on, ends_on)
+);
+CREATE TABLE IF NOT EXISTS bank_reconciliation_reopens (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    period_id UUID NOT NULL REFERENCES bank_reconciliation_periods(id) ON DELETE RESTRICT,
+    reason TEXT NOT NULL,
+    reopened_by UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    reopened_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 

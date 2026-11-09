@@ -12,7 +12,13 @@ import main as api
 
 
 class ReviewHistoryTests(unittest.TestCase):
-    setUp = mutations.Phase3DMutationTests.setUp
+    def setUp(self):
+        # The shared persist helper, called during setUp, needs the claim its own test class sets elsewhere.
+        from services.queue.attempts import Claim, Delivery
+        from tests.unit.accounting.test_accounting_contract import CLAIM_TOKEN, DISPATCH_TOKEN, JOB
+        self.claim = Claim(Delivery(DOCUMENT, JOB, TENANT, DISPATCH_TOKEN), CLAIM_TOKEN)
+        mutations.Phase3DMutationTests.setUp(self)
+
     persist = mutations.Phase3DMutationTests.persist
 
     def get(self):

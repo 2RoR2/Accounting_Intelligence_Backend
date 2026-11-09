@@ -21,7 +21,9 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from services.extraction.parsing.combine_extraction import ClassifiedExtractionResult
 from services.extraction.parsing.extraction_v1 import StrictModel
-from services.extraction.classification.reconcile_selective import validate_prediction, validate_requested_fields
+from services.extraction.classification.reconcile_selective import (
+    REJECTED_SOURCE_CHECKS, validate_prediction, validate_requested_fields,
+)
 from services.extraction.classification.route_extraction import decide_route
 
 
@@ -62,6 +64,14 @@ class ReconciliationSummary(StrictModel):
     fields: dict[str, dict[str, Any]]
 
 
+def recovery_scope(service):
+    """(requested fields, profile) for this run; a human_review route may carry one."""
+    scoped = service.get('selective_recovery')
+    if scoped:
+        return scoped['requested_fields'], scoped['profile']
+    return service['routing']['requested_fields'], None
+
+
 class ServiceEnvelope(BaseModel):
     """Validate the publishable service boundary; retain unrelated run metadata."""
     model_config = ConfigDict(strict=True, extra="allow")
@@ -100,7 +110,10 @@ class ServiceEnvelope(BaseModel):
                     or "selective_run" in self.artifacts):
                 raise ValueError("Skipped service status contradicts routing/AI/artifacts.")
         else:
-            if route.decision != "vlm_candidate":
+            scoped = (self.model_extra or {}).get('selective_recovery')
+            if scoped and (not self.allow_vlm_inference or scoped.get('scope') != 'profile_fields/1'):
+                raise ValueError('Scoped recovery requires explicit permission and its contract.')
+            if route.decision != "vlm_candidate" and not scoped:
                 raise ValueError("AI outcomes require an authorised vlm_candidate route.")
             if self.status == "ai_attempt_failed_needs_review":
                 if (ai.status != "failed" or ai.prediction is not None
@@ -111,7 +124,8 @@ class ServiceEnvelope(BaseModel):
                         or not ai.response_received or self.reconciliation is None
                         or not has_reconciliation or not self.artifacts.get("selective_run")):
                     raise ValueError("Reconciled status requires successful AI and reconciliation evidence.")
-                validate_prediction(ai.prediction, route.requested_fields)
+                validate_prediction(ai.prediction, scoped['requested_fields'] if scoped else route.requested_fields,
+                                    scoped['profile'] if scoped else None)
                 if self.reconciliation.status != self.status or not self.reconciliation.review_required:
                     raise ValueError("Service and reconciliation status/review requirements differ.")
         return self
@@ -119,7 +133,7 @@ class ServiceEnvelope(BaseModel):
 
 def validate_reconciled_fields(reconciliation, extraction, service):
     """Check state/evidence against the parser; never infer acceptance from status."""
-    requested = service["routing"]["requested_fields"]
+    requested, profile = recovery_scope(service)
     fields = reconciliation.get("fields")
     require(isinstance(fields, dict) and set(fields) == set(requested),
             "Reconciliation must contain exactly the requested fields.")
@@ -139,14 +153,14 @@ def validate_reconciled_fields(reconciliation, extraction, service):
         vlm = field.get("vlm")
         require(isinstance(vlm, dict), "Missing VLM candidate record.")
         candidate = vlm.get("candidate")
-        validate_prediction({name: candidate}, [name])
+        validate_prediction({name: candidate}, [name], profile)
         require("candidate" in vlm and vlm.get("requested") is True
                 and vlm.get("selective_run_id") == reconciliation.get("selective_run_id")
                 and candidate == service["ai_assistance"]["prediction"][name],
                 "Reconciliation candidate/source differs from the service prediction.")
         if original["value"] is not None:
             resolution, final_value = "parser_preserved", original["value"]
-        elif candidate is None:
+        elif candidate is None or (vlm.get('source_check') or {}).get('status') in REJECTED_SOURCE_CHECKS:
             resolution, final_value = "unresolved_missing", None
         else:
             resolution, final_value = "candidate_for_review", None
@@ -225,7 +239,11 @@ def public_field(
     if reconciliation_field is not None:
         vlm = reconciliation_field.get("vlm") or {}
 
-        ai_candidate = vlm.get("candidate")
+        check = vlm.get("source_check") or {}
+        ai_candidate = check.get("printed_value") or vlm.get("candidate")
+        # A value the source does not support stays in the private artifact only.
+        if check.get("status") in REJECTED_SOURCE_CHECKS:
+            ai_candidate = None
         resolution = reconciliation_field.get(
             "resolution"
         )
@@ -253,7 +271,16 @@ def public_field(
     else:
         resolution = "unresolved"
 
+    details = None
+    if ai_candidate is not None:
+        details = {"model": vlm.get("model"), "model_digest": (vlm.get("provenance") or {}).get("model_digest"),
+                   "attempt_id": (vlm.get("provenance") or {}).get("attempt_id"),
+                   "source_check": check.get("status"), "evidence": check.get("evidence") or [],
+                   "outcome": reconciliation_field.get("outcome"),
+                   "verification": vlm.get("verification")}
+
     return {
+        "ai_candidate_details": details,
         "raw_text": parser_field.get("raw_text"),
         "value": parser_value,
         "state": parser_state,
@@ -272,6 +299,49 @@ def public_field(
             "review_required",
             True,
         ),
+    }
+
+
+def selective_visual_input(service):
+    """The image actually sent to the model, as recorded when the request was made."""
+    try:
+        run = Path(service["artifacts"]["selective_run"]) / "run.json"
+        return json.loads(run.read_text(encoding="utf-8")).get("visual_input")
+    except (KeyError, OSError, ValueError, TypeError):
+        return None
+
+
+def processing_trace(service):
+    """What actually ran on this document: stage names, counts and outcomes, never document values."""
+    text_lines = ocr_lines = None
+    try:
+        document = json.loads(Path(service["artifacts"]["document_json"]).read_text(encoding="utf-8"))
+        lines = document.get("m2_text_lines") or []
+        text_lines, ocr_lines = len(lines), sum(1 for line in lines if line.get("from_ocr"))
+    except (KeyError, OSError, ValueError, TypeError):
+        pass
+    orchestration = service.get("orchestration") or {}
+    assistance = service.get("ai_assistance") or {}
+    reconciled = (service.get("reconciliation") or {}).get("fields") or {}
+    return {
+        "version": "processing-trace/1",
+        "parser": "docling",
+        "text_lines": text_lines,
+        "ocr_lines": ocr_lines,
+        "runner": orchestration.get("runner"),
+        "runner_reason": orchestration.get("reason"),
+        "stages": [stage.get("stage") for stage in service.get("stage_trace") or []],
+        "precheck": (service.get("validation_precheck") or {}).get("status"),
+        "final_route": service.get("final_route"),
+        "retry": (service.get("targeted_retry") or {}).get("result"),
+        "visual_input": selective_visual_input(service),
+        "qwen": {
+            "attempted": bool(assistance.get("attempted")),
+            "status": assistance.get("status"),
+            "fields": [{"field": name, "outcome": field.get("outcome"),
+                        "source_check": ((field.get("vlm") or {}).get("source_check") or {}).get("status")}
+                       for name, field in reconciled.items()],
+        },
     }
 
 
@@ -347,7 +417,9 @@ def build_public_result(
         "1.1.0-proposed extraction.",
     )
 
-    require(service["document_type"] == extraction["document_type"],
+    # Signals are optional and absent from results written before they existed; everything else must match.
+    without_signals = lambda value: {key: item for key, item in value.items() if key != "signals"}
+    require(without_signals(service["document_type"]) == without_signals(extraction["document_type"]),
             "Service classification differs from the classified extraction.")
     # The service already writes this source-bound routing artifact. Checking it
     # also binds parser-only public output to the bytes that were routed.
@@ -440,11 +512,12 @@ def build_public_result(
             "classified extraction path.",
         )
 
+        requested, profile = recovery_scope(service)
         selective = checked_path(Path(artifacts["selective_run"]), root, "Selective run")
         require(selective.name == reconciliation.get("selective_run_id"), "Selective run identity differs.")
         prediction_raw = (selective / "prediction.json").read_bytes()
         prediction = json.loads(prediction_raw)
-        validate_prediction(prediction, service["routing"]["requested_fields"])
+        validate_prediction(prediction, requested, profile)
         provenance = reconciliation.get("provenance")
         require(isinstance(provenance, dict)
                 and provenance.get("prediction_sha256") == hashlib.sha256(prediction_raw).hexdigest(),
@@ -454,9 +527,9 @@ def build_public_result(
         run = load_json(selective / "run.json")
         require(isinstance(run, dict) and run.get("status") == "response_structure_valid_needs_review"
                 and run.get("ai_request_attempted") is True and run.get("ai_response_received") is True
-                and run.get("decision") == "vlm_candidate"
+                and run.get("decision") == service["routing"]["decision"]
                 and run.get("document_id") == document_id
-                and run.get("requested_fields") == service["routing"]["requested_fields"],
+                and run.get("requested_fields") == requested,
                 "Selective run status, identity or scope contradicts the service.")
         require(run.get("source_result_sha256") == classified_extraction_sha256,
                 "Selective extraction SHA-256 does not match the public source.")
@@ -520,6 +593,7 @@ def build_public_result(
             "classifier_version": document_type.get("classifier_version"),
             "candidates": document_type.get("candidates") or [],
             "unsupported_headings": document_type.get("unsupported_headings") or [],
+            "signals": document_type.get("signals") or [],
             "value": document_type.get(
                 "value"
             ),
@@ -547,6 +621,12 @@ def build_public_result(
             "issues"
         )
         or [],
+        "assessment": service.get("assessment"),
+        "processing_trace": processing_trace(service),
+        "pretax_structure": extraction.get("provenance", {}).get("pretax_structure"),
+        "item_structure": extraction.get("provenance", {}).get("item_structure"),
+        "tax_statement": extraction.get("provenance", {}).get("tax_statement"),
+        "selective_recovery": service.get("selective_recovery"),
         "routing": {
             "decision": routing.get(
                 "decision"

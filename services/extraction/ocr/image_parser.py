@@ -1,4 +1,4 @@
-"""Opt-in JPEG/PNG execution bridge to a separate local CPU OCR Python.
+"""Opt-in JPEG/PNG execution bridge to a local CPU OCR Python.
 
 ENABLE_IMAGE_OCR=true, IMAGE_OCR_PYTHON and IMAGE_OCR_MODELS_DIR are required.
 No heavyweight imports in the application environment. No queue/DB operations.
@@ -50,8 +50,9 @@ def execute_image_extraction(document_id, file_path, project_root=None):
     try:
         if os.getenv('ENABLE_IMAGE_OCR', '').lower() != 'true':
             raise ImageExtractionError('IMAGE_OCR_DISABLED')
-        if os.name != 'posix':
-            raise ImageExtractionError('IMAGE_OCR_REQUIRES_LOCAL_POSIX_AI_ENV')
+        # Windows development uses the explicitly configured isolated child
+        # interpreter as well. Production can continue to point this at a
+        # separate POSIX AI environment.
         # image_parser.py is <backend>/services/extraction/ocr. The trusted
         # S3 snapshot lives under <backend>/.extraction-tmp, so the default
         # root must be the backend root, not <backend>/services.
@@ -59,7 +60,12 @@ def execute_image_extraction(document_id, file_path, project_root=None):
         path = Path(file_path).resolve()
         if not path.is_relative_to(root) or not path.is_file() or path.suffix.lower() not in IMAGE_SUFFIXES:
             raise ImageExtractionError('INVALID_IMAGE_SOURCE')
-        python = Path(os.getenv('IMAGE_OCR_PYTHON', sys.executable))
+        # The child is always launched with -I and a restricted environment;
+        # production may point it to a separate AI installation.
+        configured = os.getenv('IMAGE_OCR_PYTHON', '').strip()
+        python = Path(configured)
+        if not configured:
+            raise ImageExtractionError('IMAGE_OCR_ENVIRONMENT_NOT_CONFIGURED')
         if os.getenv('IMAGE_OCR_MODELS_DIR'):
             models = Path(os.environ['IMAGE_OCR_MODELS_DIR'])
         else:
@@ -119,7 +125,7 @@ def execute_image_extraction(document_id, file_path, project_root=None):
             raise ImageExtractionError(code if code in known else 'IMAGE_OCR_CHILD_FAILED')
         if (envelope.get('document_id') != document_id
                 or envelope.get('python_executable') != str(python)
-                or envelope.get('python_prefix') == sys.prefix
+                or (os.name != 'nt' and envelope.get('python_prefix') == sys.prefix)
                 or envelope.get('ocr', {}).get('image_sha256') != source_hash):
             raise ImageExtractionError('IMAGE_OCR_IDENTITY_MISMATCH')
         ocr = envelope['ocr']

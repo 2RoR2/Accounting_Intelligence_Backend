@@ -44,6 +44,30 @@ class ReliabilityTests(unittest.TestCase):
         result=field_guidance({'field_key':'tax','extraction_state':'ambiguous','candidates':[{'value':'6%','raw_text':'Tax: 6%'}]})
         self.assertIn('TAX_RATE_NOT_AMOUNT',[w['code'] for w in result['warnings']])
 
+    def status(self,**row):
+        return field_guidance({'field_key':'total',**row})['evidenceStatus']
+
+    def test_evidence_status_describes_support_not_probability(self):
+        good=[{'source_ref':'#/a','page':1,'bbox':{'l':0}}]
+        self.assertEqual(self.status(extraction_state='resolved',evidence=good),'source_backed')
+        self.assertEqual(self.status(extraction_state='resolved',evidence=[{'page':1}]),'unsupported')
+        self.assertEqual(self.status(extraction_state='missing'),'missing')
+        self.assertEqual(self.status(extraction_state='unreadable'),'unsupported')
+        self.assertEqual(self.status(extraction_state='ambiguous',candidates=[{'value':'1'},{'value':'2'}]),'conflicting')
+        self.assertEqual(self.status(extraction_state='ambiguous',candidates=[{'value':None,'raw_text':'$ 1'}]),'ambiguous_candidate')
+        self.assertEqual(self.status(extraction_state='missing',candidates=[{'value':'1'}]),'ambiguous_candidate')
+        self.assertEqual(self.status(extraction_state='missing',candidates=[{'source':'ai','value':'1'}]),'model_suggested')
+        self.assertEqual(self.status(extraction_state='missing',corrected_by='actor',corrected_at='now'),'human_corrected')
+        result=field_guidance({'field_key':'total','extraction_state':'resolved','evidence':good})
+        self.assertNotIn('confidence',result)
+
+    def test_high_ocr_score_is_reported_as_recognition_only_and_changes_nothing(self):
+        result=field_guidance({'field_key':'total','extraction_state':'ambiguous','candidates':[{'value':'1'},{'value':'2'}],
+                               'evidence':[{'ocr_score':.99},{'ocr_score':.91},{'ocr_score':None}]})
+        self.assertEqual(result['ocrEngineScore'],{'min':.91,'max':.99,'scope':'text_recognition_only'})
+        self.assertEqual(result['evidenceStatus'],'conflicting')
+        self.assertIsNone(field_guidance({'field_key':'total','extraction_state':'missing'})['ocrEngineScore'])
+
     def test_empty_rows_and_unknown_kind_are_extraction_warnings(self):
         result=extraction_guidance({'document_type':{'value':'unknown'}},[])
         self.assertEqual({w['code'] for w in result},{'NO_MAPPED_LINE_ITEMS','UNKNOWN_DOCUMENT_KIND'})

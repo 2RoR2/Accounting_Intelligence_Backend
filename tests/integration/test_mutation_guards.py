@@ -1,6 +1,7 @@
 """Phase 3D API/SQL contracts using synthetic SQLite data; not PostgreSQL lock proof."""
 from concurrent.futures import ThreadPoolExecutor
 from threading import RLock
+import sys
 import unittest
 from unittest.mock import patch, Mock
 from uuid import uuid4
@@ -24,9 +25,6 @@ class MutationDatabase(ContractDatabase):
                                  ('mime_type', "TEXT DEFAULT 'application/pdf'"), ('file_size_bytes', 'INTEGER DEFAULT 1'),
                                  ('storage_path', "TEXT DEFAULT 'synthetic/no-source-file'"), ('file_hash_sha256', "TEXT DEFAULT 'synthetic-hash'")]:
             self.db.execute('ALTER TABLE documents ADD COLUMN '+name+' '+definition)
-        for name in ('line_item_id','field_key','old_value','new_value','corrected_by'):
-            self.db.execute('ALTER TABLE line_item_corrections ADD COLUMN '+name+' TEXT')
-        self.db.execute('ALTER TABLE line_item_corrections ADD COLUMN corrected_at TEXT DEFAULT NULL')
         for name in ('id','submission_id','reviewed_by','note','reviewed_at'):
             self.db.execute('ALTER TABLE review_decisions ADD COLUMN '+name+' TEXT')
         self.db.execute('ALTER TABLE audit_logs ADD COLUMN user_id TEXT')
@@ -98,8 +96,15 @@ class Phase3DMutationTests(unittest.TestCase):
                         patch.object(api,'session_user',side_effect=lambda db,request: self.user),
                         patch.object(api,'check_schema_compatibility',side_effect=AssertionError('No startup SQL'))):
             patcher.start(); self.addCleanup(patcher.stop)
+        # Routes moved out of main.py and bind these names per module, so patching main alone never reaches them.
+        for name,module in list(sys.modules.items()):
+            if not name.startswith('services.routes.'): continue
+            for attribute,kwargs in (('connect',{'return_value':self.database}),('session_user',{'side_effect':lambda db,request: self.user})):
+                if hasattr(module,attribute):
+                    patcher=patch.object(module,attribute,**kwargs); patcher.start(); self.addCleanup(patcher.stop)
         self.client=TestClient(api.app,raise_server_exceptions=False,headers={'X-Requested-With':'AccountingIntelligence'})
         self.addCleanup(self.client.close)
+        self.claim=contract.Claim(contract.Delivery(DOCUMENT,JOB,TENANT,contract.DISPATCH_TOKEN),contract.CLAIM_TOKEN)
         self.persist()
         self.line=self.database.execute('SELECT id FROM line_items').fetchone()['id']
 

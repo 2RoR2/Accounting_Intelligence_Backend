@@ -1,5 +1,6 @@
 -- Accounting Intelligence development seed data
 --
+-- SQL dialect: PostgreSQL. This file is executed by PostgreSQL, not SQL Server.
 -- Populates the major schema areas with fictional development-only records.
 -- Run PostgreSQL Database schema.sql first, then run this file once.
 -- Demo password for all seeded users: DemoPass!2026
@@ -48,26 +49,26 @@ INSERT INTO customers (id, tenant_id, customer_name, registration_number, addres
 
 INSERT INTO documents (id, document_code, tenant_id, owner_id, original_filename, kind, category, storage_path, mime_type, file_size_bytes, file_hash_sha256, status, content_revision) VALUES
 
-('00000000-0000-4000-8000-002000000001', 'INVOICE_100001', '00000000-0000-4000-8000-000100000001', '00000000-0000-4000-8000-001000000001', 'invoice_001.pdf', 'invoice', 'accounts_receivable', 'mock/invoice_001.pdf', 'application/pdf', 102400, 'sha256-DEMO-DOC-0001', 'completed', 1),
-('00000000-0000-4000-8000-002000000002', 'BILL_100002', '00000000-0000-4000-8000-000100000001', '00000000-0000-4000-8000-001000000001', 'bill_002.pdf', 'bill', 'accounts_payable', 'mock/bill_002.pdf', 'application/pdf', 102400, 'sha256-DEMO-DOC-0002', 'exception', 1),
-('00000000-0000-4000-8000-002000000003', 'RECEIPT_100003', '00000000-0000-4000-8000-000100000001', '00000000-0000-4000-8000-001000000001', 'receipt_003.jpg', 'receipt', 'accounts_payable', 'mock/receipt_003.jpg', 'image/jpeg', 102400, 'sha256-DEMO-DOC-0003', 'completed', 1),
-('00000000-0000-4000-8000-002000000004', 'INVOICE_100004', '00000000-0000-4000-8000-000100000001', '00000000-0000-4000-8000-001000000001', 'invoice_004.pdf', 'invoice', 'accounts_receivable', 'mock/invoice_004.pdf', 'application/pdf', 102400, 'sha256-DEMO-DOC-0004', 'in_review', 1),
-('00000000-0000-4000-8000-002000000005', 'BILL_100005', '00000000-0000-4000-8000-000100000001', '00000000-0000-4000-8000-001000000001', 'bill_005.pdf', 'bill', 'accounts_payable', 'mock/bill_005.pdf', 'application/pdf', 102400, 'sha256-DEMO-DOC-0005', 'exception', 1),
-('00000000-0000-4000-8000-002000000006', 'BILL_100006', '00000000-0000-4000-8000-000100000001', '00000000-0000-4000-8000-001000000001', 'bill_006.pdf', 'bill', 'accounts_payable', 'mock/bill_006.pdf', 'application/pdf', 102400, 'sha256-DEMO-DOC-0006', 'completed', 1),
+('00000000-0000-4000-8000-002000000001', 'INVOICE_100001', '00000000-0000-4000-8000-000100000001', '00000000-0000-4000-8000-001000000001', 'INV-2026-1001.pdf', 'invoice', 'accounts_receivable', 'mock/INV-2026-1001.pdf', 'application/pdf', 102400, 'sha256-DEMO-DOC-0001', 'completed', 1),
+('00000000-0000-4000-8000-002000000002', 'BILL_100002', '00000000-0000-4000-8000-000100000001', '00000000-0000-4000-8000-001000000001', 'BOS-8421.pdf', 'bill', 'accounts_payable', 'mock/BOS-8421.pdf', 'application/pdf', 102400, 'sha256-DEMO-DOC-0002', 'exception', 1),
+('00000000-0000-4000-8000-002000000003', 'RECEIPT_100003', '00000000-0000-4000-8000-000100000001', '00000000-0000-4000-8000-001000000001', 'R-2039.jpg', 'receipt', 'accounts_payable', 'mock/R-2039.jpg', 'image/jpeg', 102400, 'sha256-DEMO-DOC-0003', 'completed', 1),
+('00000000-0000-4000-8000-002000000004', 'INVOICE_100004', '00000000-0000-4000-8000-000100000001', '00000000-0000-4000-8000-001000000001', 'INV-2026-1002.pdf', 'invoice', 'accounts_receivable', 'mock/INV-2026-1002.pdf', 'application/pdf', 102400, 'sha256-DEMO-DOC-0004', 'in_review', 1),
+('00000000-0000-4000-8000-002000000005', 'BILL_100005', '00000000-0000-4000-8000-000100000001', '00000000-0000-4000-8000-001000000001', 'STS-7781.pdf', 'bill', 'accounts_payable', 'mock/STS-7781.pdf', 'application/pdf', 102400, 'sha256-DEMO-DOC-0005', 'exception', 1),
+('00000000-0000-4000-8000-002000000006', 'BILL_100006', '00000000-0000-4000-8000-000100000001', '00000000-0000-4000-8000-001000000001', 'STS-7781__BILL_100006.pdf', 'bill', 'accounts_payable', 'mock/STS-7781__BILL_100006.pdf', 'application/pdf', 102400, 'sha256-DEMO-DOC-0006', 'completed', 1),
 ('00000000-0000-4000-8000-002000000007', 'RECEIPT_100007', '00000000-0000-4000-8000-000100000001', '00000000-0000-4000-8000-001000000001', 'receipt_007.jpg', 'receipt', 'accounts_payable', 'mock/receipt_007.jpg', 'image/jpeg', 102400, 'sha256-DEMO-DOC-0007', 'exception', 1),
 ('00000000-0000-4000-8000-002000000008', 'INVOICE_100008', '00000000-0000-4000-8000-000100000001', '00000000-0000-4000-8000-001000000001', 'invoice_008.pdf', 'invoice', 'accounts_receivable', 'mock/invoice_008.pdf', 'application/pdf', 102400, 'sha256-DEMO-DOC-0008', 'exception', 1),
 ('00000000-0000-4000-8000-002000000009', 'RECEIPT_100009', '00000000-0000-4000-8000-000100000001', '00000000-0000-4000-8000-001000000001', 'receipt_009.jpg', 'receipt', 'accounts_payable', 'mock/receipt_009.jpg', 'image/jpeg', 102400, 'sha256-DEMO-DOC-0009', 'validated', 1),
-('00000000-0000-4000-8000-002000000010', 'BILL_100010', '00000000-0000-4000-8000-000100000001', '00000000-0000-4000-8000-001000000001', 'bill_010.pdf', 'bill', 'accounts_payable', 'mock/bill_010.pdf', 'application/pdf', 102400, 'sha256-DEMO-DOC-0010', 'failed', 1),
-('00000000-0000-4000-8000-002000000011', 'BILL_100011', '00000000-0000-4000-8000-000100000001', '00000000-0000-4000-8000-001000000001', 'bill_011.pdf', 'bill', 'accounts_payable', 'mock/bill_011.pdf', 'application/pdf', 102400, 'sha256-DEMO-DOC-0011', 'exception', 1),
-('00000000-0000-4000-8000-002000000012', 'INVOICE_100012', '00000000-0000-4000-8000-000100000001', '00000000-0000-4000-8000-001000000001', 'invoice_012.pdf', 'invoice', 'accounts_receivable', 'mock/invoice_012.pdf', 'application/pdf', 102400, 'sha256-DEMO-DOC-0012', 'in_review', 1),
-('00000000-0000-4000-8000-002000000013', 'CREDIT_NOTE_100013', '00000000-0000-4000-8000-000100000001', '00000000-0000-4000-8000-001000000001', 'credit_note_013.pdf', 'credit_note', 'accounts_receivable', 'mock/credit_note_013.pdf', 'application/pdf', 102400, 'sha256-DEMO-DOC-0013', 'in_review', 1),
-('00000000-0000-4000-8000-002000000014', 'DEBIT_NOTE_100014', '00000000-0000-4000-8000-000100000001', '00000000-0000-4000-8000-001000000001', 'debit_note_014.pdf', 'debit_note', 'accounts_payable', 'mock/debit_note_014.pdf', 'application/pdf', 102400, 'sha256-DEMO-DOC-0014', 'in_review', 1),
-('00000000-0000-4000-8000-002000000015', 'RECEIPT_100015', '00000000-0000-4000-8000-000100000001', '00000000-0000-4000-8000-001000000001', 'receipt_015.jpg', 'receipt', 'accounts_payable', 'mock/receipt_015.jpg', 'image/jpeg', 102400, 'sha256-DEMO-DOC-0015', 'exception', 1),
-('00000000-0000-4000-8000-002000000016', 'BILL_100016', '00000000-0000-4000-8000-000100000001', '00000000-0000-4000-8000-001000000001', 'bill_016.pdf', 'bill', 'accounts_payable', 'mock/bill_016.pdf', 'application/pdf', 102400, 'sha256-DEMO-DOC-0016', 'processing', 1),
-('00000000-0000-4000-8000-002000000017', 'INVOICE_100017', '00000000-0000-4000-8000-000100000001', '00000000-0000-4000-8000-001000000001', 'invoice_017.pdf', 'invoice', 'accounts_receivable', 'mock/invoice_017.pdf', 'application/pdf', 102400, 'sha256-DEMO-DOC-0017', 'exception', 1),
-('00000000-0000-4000-8000-002000000018', 'RECEIPT_100018', '00000000-0000-4000-8000-000100000001', '00000000-0000-4000-8000-001000000001', 'receipt_018.jpg', 'receipt', 'accounts_payable', 'mock/receipt_018.jpg', 'image/jpeg', 102400, 'sha256-DEMO-DOC-0018', 'exception', 1),
-('00000000-0000-4000-8000-002000000019', 'BILL_100019', '00000000-0000-4000-8000-000100000001', '00000000-0000-4000-8000-001000000001', 'bill_019.pdf', 'bill', 'accounts_payable', 'mock/bill_019.pdf', 'application/pdf', 102400, 'sha256-DEMO-DOC-0019', 'in_review', 1),
-('00000000-0000-4000-8000-002000000020', 'INVOICE_100020', '00000000-0000-4000-8000-000100000001', '00000000-0000-4000-8000-001000000001', 'invoice_020.pdf', 'invoice', 'accounts_receivable', 'mock/invoice_020.pdf', 'application/pdf', 102400, 'sha256-DEMO-DOC-0020', 'completed', 1);
+('00000000-0000-4000-8000-002000000010', 'BILL_100010', '00000000-0000-4000-8000-000100000001', '00000000-0000-4000-8000-001000000001', 'EML-1112.pdf', 'bill', 'accounts_payable', 'mock/EML-1112.pdf', 'application/pdf', 102400, 'sha256-DEMO-DOC-0010', 'failed', 1),
+('00000000-0000-4000-8000-002000000011', 'BILL_100011', '00000000-0000-4000-8000-000100000001', '00000000-0000-4000-8000-001000000001', 'BOS-8422.pdf', 'bill', 'accounts_payable', 'mock/BOS-8422.pdf', 'application/pdf', 102400, 'sha256-DEMO-DOC-0011', 'exception', 1),
+('00000000-0000-4000-8000-002000000012', 'INVOICE_100012', '00000000-0000-4000-8000-000100000001', '00000000-0000-4000-8000-001000000001', 'INV-2026-1003.pdf', 'invoice', 'accounts_receivable', 'mock/INV-2026-1003.pdf', 'application/pdf', 102400, 'sha256-DEMO-DOC-0012', 'in_review', 1),
+('00000000-0000-4000-8000-002000000013', 'CREDIT_NOTE_100013', '00000000-0000-4000-8000-000100000001', '00000000-0000-4000-8000-001000000001', 'CN-2026-001.pdf', 'credit_note', 'accounts_receivable', 'mock/CN-2026-001.pdf', 'application/pdf', 102400, 'sha256-DEMO-DOC-0013', 'in_review', 1),
+('00000000-0000-4000-8000-002000000014', 'DEBIT_NOTE_100014', '00000000-0000-4000-8000-000100000001', '00000000-0000-4000-8000-001000000001', 'DN-2026-001.pdf', 'debit_note', 'accounts_payable', 'mock/DN-2026-001.pdf', 'application/pdf', 102400, 'sha256-DEMO-DOC-0014', 'in_review', 1),
+('00000000-0000-4000-8000-002000000015', 'RECEIPT_100015', '00000000-0000-4000-8000-000100000001', '00000000-0000-4000-8000-001000000001', 'R-2040.jpg', 'receipt', 'accounts_payable', 'mock/R-2040.jpg', 'image/jpeg', 102400, 'sha256-DEMO-DOC-0015', 'exception', 1),
+('00000000-0000-4000-8000-002000000016', 'BILL_100016', '00000000-0000-4000-8000-000100000001', '00000000-0000-4000-8000-001000000001', 'BOS-8423.pdf', 'bill', 'accounts_payable', 'mock/BOS-8423.pdf', 'application/pdf', 102400, 'sha256-DEMO-DOC-0016', 'processing', 1),
+('00000000-0000-4000-8000-002000000017', 'INVOICE_100017', '00000000-0000-4000-8000-000100000001', '00000000-0000-4000-8000-001000000001', 'INV-2026-1004.pdf', 'invoice', 'accounts_receivable', 'mock/INV-2026-1004.pdf', 'application/pdf', 102400, 'sha256-DEMO-DOC-0017', 'exception', 1),
+('00000000-0000-4000-8000-002000000018', 'RECEIPT_100018', '00000000-0000-4000-8000-000100000001', '00000000-0000-4000-8000-001000000001', 'R-2041.jpg', 'receipt', 'accounts_payable', 'mock/R-2041.jpg', 'image/jpeg', 102400, 'sha256-DEMO-DOC-0018', 'exception', 1),
+('00000000-0000-4000-8000-002000000019', 'BILL_100019', '00000000-0000-4000-8000-000100000001', '00000000-0000-4000-8000-001000000001', 'EML-1113.pdf', 'bill', 'accounts_payable', 'mock/EML-1113.pdf', 'application/pdf', 102400, 'sha256-DEMO-DOC-0019', 'in_review', 1),
+('00000000-0000-4000-8000-002000000020', 'INVOICE_100020', '00000000-0000-4000-8000-000100000001', '00000000-0000-4000-8000-001000000001', 'INV-2026-1005.pdf', 'invoice', 'accounts_receivable', 'mock/INV-2026-1005.pdf', 'application/pdf', 102400, 'sha256-DEMO-DOC-0020', 'completed', 1);
 
 INSERT INTO raw_extractions (id, document_id, run_number, is_current, routing_decision, raw_json) VALUES
 
@@ -571,6 +572,20 @@ FROM (VALUES
     ('00000000-0000-4000-8000-0e3000000006', 6, NULL,         'ATM WITHDRAWAL NO DATE OR CURRENCY',              'FT26286006', 200.00, NULL,    NULL,    NULL,        NULL,  'needs_review')
 ) AS v(id, source_row, posted_date, description, reference, debit, credit, signed, direction, currency, status)
 JOIN bank_imports i ON i.id = '00000000-0000-4000-8000-0e2000000001'::uuid
+ON CONFLICT DO NOTHING;
+
+-- ---------------------------------------------------------------- bank reconciliation period
+-- Matches the current period-reconciliation workflow and the synthetic bank import above.
+INSERT INTO bank_reconciliation_periods
+    (id, tenant_id, bank_account_ref, starts_on, ends_on,
+     opening_balance, closing_balance, book_balance,
+     statement_adjustment, book_adjustment, adjustment_evidence, status)
+VALUES
+    ('00000000-0000-4000-8000-0e6000000001',
+     '00000000-0000-4000-8000-000100000001',
+     'SYNTHETIC-BANK-0001', '2026-10-01', '2026-10-31',
+     10000.00, 11497.40, 11497.40,
+     0.00, 0.00, 'Synthetic development period; no timing adjustments.', 'open')
 ON CONFLICT DO NOTHING;
 
 -- ---------------------------------------------------------------- suggestions (candidates only, no decisions)

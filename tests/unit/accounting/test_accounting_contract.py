@@ -32,6 +32,8 @@ USER = {'id': 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'tenant_id': TENANT, 'role
 JOB = '11111111-1111-4111-8111-111111111113'
 DISPATCH_TOKEN = '22222222-2222-4222-8222-222222222222'
 CLAIM_TOKEN = '33333333-3333-4333-8333-333333333333'
+from services.routes.documents import routes as document_routes
+
 FIXTURE = Path(__file__).parents[2]/'extraction/data/contracts/syn001_m2.json'
 
 
@@ -59,7 +61,7 @@ class ContractDatabase:
         self.db.executescript('''
         CREATE TABLE documents (id TEXT PRIMARY KEY, tenant_id TEXT, owner_id TEXT, assigned_to TEXT,
           kind TEXT, category TEXT, status TEXT, content_revision INTEGER,
-          uploaded_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT, processing_seconds TEXT, processing_completed_at TEXT);
+          uploaded_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT, processing_started_at TEXT, processing_seconds TEXT, processing_completed_at TEXT);
         CREATE TABLE pending_jobs (id TEXT PRIMARY KEY, tenant_id TEXT, document_id TEXT, status TEXT,
           created_at TEXT DEFAULT CURRENT_TIMESTAMP, finished_at TEXT, last_error TEXT, updated_at TEXT,
           dispatch_token TEXT, claim_token TEXT, dispatch_expires_at TEXT, processing_expires_at TEXT,
@@ -74,17 +76,18 @@ class ContractDatabase:
         CREATE TABLE line_items (id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))), extraction_id TEXT,
           document_id TEXT, line_number INTEGER, description TEXT, quantity TEXT, unit_price TEXT, amount TEXT,
           field_states TEXT, evidence TEXT, candidates TEXT);
-        CREATE TABLE line_item_corrections (document_id TEXT);
-        CREATE TABLE audit_logs (tenant_id TEXT, user_name TEXT, role TEXT, action TEXT, resource TEXT, details TEXT);
-        CREATE TABLE vendors (id TEXT, tenant_id TEXT, vendor_name TEXT);
+        CREATE TABLE line_item_corrections (document_id TEXT, line_item_id TEXT,field_key TEXT,old_value TEXT,new_value TEXT,corrected_by TEXT,corrected_at TEXT);
+        CREATE TABLE audit_logs (tenant_id TEXT, user_name TEXT, role TEXT, action TEXT, resource TEXT, details TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+        CREATE TABLE vendors (id TEXT, tenant_id TEXT, vendor_name TEXT, address TEXT);
+        CREATE TABLE customers (id TEXT,tenant_id TEXT,customer_name TEXT);
         CREATE TABLE review_decisions (document_id TEXT, tenant_id TEXT, decision TEXT, approved_content_revision INTEGER);
         CREATE TABLE validation_rules (tenant_id TEXT, require_supplier BOOLEAN, require_invoice_number_for_invoice BOOLEAN,
-          require_reference_for_bill BOOLEAN, require_receipt_identifier BOOLEAN);
+          require_reference_for_bill BOOLEAN, require_receipt_identifier BOOLEAN,check_duplicate BOOLEAN DEFAULT TRUE,require_po_for_ap BOOLEAN DEFAULT FALSE);
         CREATE TABLE exceptions (document_id TEXT, tenant_id TEXT, severity TEXT, status TEXT DEFAULT 'open',
           type TEXT, message TEXT, note TEXT, resolved_at TEXT);
         CREATE TABLE validation_results (document_id TEXT, tenant_id TEXT, content_revision INTEGER,
           rule_id TEXT, rule_source TEXT, rule_version TEXT, document_type TEXT, status TEXT,
-          severity TEXT, field_key TEXT, prevents_approval BOOLEAN, requires_review BOOLEAN, message TEXT);
+          severity TEXT, field_key TEXT, prevents_approval BOOLEAN, requires_review BOOLEAN, message TEXT, actual_value TEXT, expected_value TEXT, difference TEXT);
         CREATE TABLE standardised_records (id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
           record_code TEXT DEFAULT 'REC-SYNTHETIC', document_id TEXT, tenant_id TEXT, category TEXT,
           vendor_id TEXT, vendor_match_confidence TEXT, supplier_name TEXT, invoice_number TEXT, buyer_name TEXT, reference_number TEXT, invoice_date TEXT,
@@ -119,10 +122,11 @@ class ContractDatabase:
             self.db.execute('UPDATE raw_extractions SET is_current=FALSE WHERE document_id=?', (document_id,))
             self.db.execute('UPDATE raw_extractions SET is_current=TRUE WHERE id=?', (extraction_id,))
             return Rows([])
-        sql = (sql.replace(' FOR UPDATE', '').replace('%s', '?')
+        sql = (sql.replace(' FOR UPDATE OF d SKIP LOCKED', '').replace(' FOR UPDATE', '').replace('%s', '?')
                .replace('clock_timestamp()', 'CURRENT_TIMESTAMP')
                .replace('now()', 'CURRENT_TIMESTAMP'))
         sql = re.sub(r'EXTRACT\(EPOCH FROM \(CURRENT_TIMESTAMP - uploaded_at\)\)', '0', sql)
+        sql = sql.replace('EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - COALESCE(processing_started_at,CURRENT_TIMESTAMP)))', '0')
         sql = sql.replace('::date', '').replace('::numeric', '').replace('::text', '').replace('RETURNING fp.*', 'RETURNING *')
         params = [json.dumps(p.obj) if isinstance(p, Jsonb) else str(p) if isinstance(p, (Decimal, UUID)) else p for p in params]
         cursor = self.db.execute(sql, params)
@@ -143,6 +147,10 @@ class AccountingContractTests(unittest.TestCase):
         self.claim = Claim(Delivery(DOCUMENT, JOB, TENANT, DISPATCH_TOKEN), CLAIM_TOKEN)
         self.patchers = [patch.object(persistence, 'connect', return_value=self.database),
                          patch.object(api, 'connect', return_value=self.database),
+                         # Handlers moved to route modules with their own imported names.
+                         # Without these, the test reaches the real database named in .env.
+                         patch.object(document_routes, 'connect', return_value=self.database),
+                         patch.object(document_routes, 'require_workspace_user', return_value=USER),
                          patch.object(api, 'require_workspace_user', return_value=USER),
                          patch.object(api, 'session_user', return_value=USER),
                          patch.object(api, 'apply_compatibility_migrations', side_effect=AssertionError('No startup SQL'))]
@@ -171,6 +179,10 @@ class AccountingContractTests(unittest.TestCase):
     def reviewed_fixture(self, revision=None):
         # Explicit synthetic starting state for exercising the unchanged gate SQL.
         actual = self.database.db.execute('SELECT content_revision FROM documents WHERE id=?', (DOCUMENT,)).fetchone()[0]
+        if revision is None:
+            from validation.documents.document_validation import validate_document
+            with self.database as db:
+                validate_document(db,DOCUMENT)
         self.database.db.execute("UPDATE documents SET status='validated' WHERE id=?", (DOCUMENT,))
         self.database.db.execute('INSERT INTO review_decisions VALUES (?,?,?,?)',
                                  (DOCUMENT, TENANT, 'approved', actual if revision is None else revision))
@@ -215,7 +227,7 @@ class AccountingContractTests(unittest.TestCase):
         self.assertEqual(snapshot['contentRevision'], 2)
         self.assertEqual(snapshot['lineItems'][0]['amount'], '50.00')
         self.assertTrue(snapshot['lineItems'][0]['evidence']['amount'])
-        self.assertEqual(snapshot['extraction'], original)
+        self.assertEqual(snapshot['extraction'], result)
         self.assertNotIn('paymentStatus', snapshot)
         line_write = next(params for sql, params in self.database.calls if 'INSERT INTO line_items' in sql)
         self.assertTrue(all(isinstance(value, Decimal) for value in line_write[4:7]))
@@ -412,7 +424,7 @@ class AccountingContractTests(unittest.TestCase):
         self.database.db.commit()
         result = fixture()
         result['provenance']['service_run_id'] = 'new-run-after-correction'
-        with self.assertRaisesRegex(ValueError, 'Reviewed corrections exist'):
+        with self.assertRaisesRegex(ValueError, 'STALE_ATTEMPT'):
             self.persist(result)
         self.assertEqual(self.database.execute('SELECT count(*) AS n FROM raw_extractions').fetchone()['n'], 1)
         self.assertEqual(self.database.execute("SELECT current_value FROM field_predictions WHERE field_key='invoice'").fetchone()['current_value'], 'REVIEWED')
@@ -423,7 +435,7 @@ class AccountingContractTests(unittest.TestCase):
         self.database.db.commit()
         result = fixture()
         result['provenance']['service_run_id'] = 'new-run-after-line-correction'
-        with self.assertRaisesRegex(ValueError, 'Reviewed corrections exist'):
+        with self.assertRaisesRegex(ValueError, 'STALE_ATTEMPT'):
             self.persist(result)
         self.assertEqual(self.database.execute('SELECT content_revision FROM documents').fetchone()['content_revision'], 2)
 

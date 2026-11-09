@@ -50,17 +50,32 @@ def processing_metrics(request: Request):
     scope = tenant_scope(user)
     with connect() as db:
         row = db.execute("""SELECT count(*) FILTER (WHERE j.status IN ('succeeded','failed')) AS processed,
-            coalesce(avg(d.processing_seconds),0) AS average_seconds
+            count(*) FILTER (WHERE j.status='succeeded') AS succeeded,
+            count(*) FILTER (WHERE j.status='failed') AS failed,
+            coalesce(avg(d.processing_seconds) FILTER (WHERE j.status IN ('succeeded','failed')),0) AS average_seconds
             FROM pending_jobs j LEFT JOIN documents d ON d.id=j.document_id
             WHERE (%s IS NULL OR j.tenant_id=%s)""", (scope, scope)).fetchone()
         exception_filter = " AND EXISTS (SELECT 1 FROM documents d WHERE d.id=exceptions.document_id AND (d.owner_id=%s OR d.assigned_to=%s))" if user["role"] == "accountant" else ""
         exception_params = [scope, scope]
         if user["role"] == "accountant":
             exception_params.extend([user["id"], user["id"]])
-        exceptions = db.execute(f"SELECT count(*) AS n FROM exceptions WHERE (%s IS NULL OR tenant_id=%s) AND status <> 'resolved'{exception_filter}", exception_params).fetchone()["n"]
+        exceptions = db.execute(f"SELECT count(*) AS n, count(DISTINCT document_id) AS documents FROM exceptions WHERE (%s IS NULL OR tenant_id=%s) AND status <> 'resolved'{exception_filter}", exception_params).fetchone()
     processed = int(row["processed"] or 0)
+    succeeded = int(row["succeeded"] or 0)
+    failed = int(row["failed"] or 0)
     avg_seconds = float(row["average_seconds"] or 0)
-    return [{"label": "Processed documents", "value": str(processed), "target": "", "met": True, "change": ""}, {"label": "Avg. processing time", "value": f"{avg_seconds:.1f}s", "target": "= 20 sec", "met": avg_seconds <= 20 or not avg_seconds, "change": ""}, {"label": "Open exceptions", "value": str(exceptions), "target": "", "met": exceptions == 0, "change": ""}]
+    exception_count = int(exceptions["n"] or 0)
+    exception_documents = int(exceptions["documents"] or 0)
+    success_rate = (succeeded / processed * 100) if processed else 0
+    exception_rate = (exception_documents / processed * 100) if processed else 0
+    return [
+        {"label": "Processed documents", "value": str(processed), "target": "", "met": True, "change": ""},
+        {"label": "Processing success rate", "value": f"{success_rate:.1f}%", "target": "", "met": success_rate >= 95 or not processed, "change": f"{succeeded} succeeded · {failed} failed"},
+        {"label": "Avg. processing time", "value": f"{avg_seconds:.1f}s", "target": "≤ 20 sec", "met": avg_seconds <= 20 or not avg_seconds, "change": "End-to-end queue duration"},
+        {"label": "Open exception rate", "value": f"{exception_rate:.1f}%", "target": "", "met": exception_rate < 10 or not processed, "change": f"{exception_count} open exceptions across {exception_documents} documents"},
+        {"label": "Field accuracy", "value": "Not measured", "target": "Labelled evaluation required", "met": False, "change": "Use the evaluation dataset for exact/normalised accuracy"},
+        {"label": "Manual-effort reduction", "value": "Not measured", "target": "Baseline study required", "met": False, "change": "Compare review time with and without Accord AI"},
+    ]
 
 def processing_trends(request: Request, period: str = "week"):
     user = require_workspace_user(request)

@@ -72,12 +72,58 @@ class AttemptProtocolTests(unittest.TestCase):
                       patch('services.queue.config.get_queues',return_value=(self.cpu,None)),
                       patch.object(api,'check_schema_compatibility',side_effect=AssertionError('No startup SQL'))):
             guard.start(); self.addCleanup(guard.stop)
+        # Offline dispatcher adapter: exercise real reservation/publish after
+        # commit, without discovering workers in an external Redis service.
+        def dispatch_pending():
+            with self.database as db:
+                pending=db.execute("SELECT * FROM pending_jobs WHERE status='pending'").fetchall()
+                deliveries=[attempts.reserve_dispatch(db,str(row['document_id']),str(row['tenant_id']),job_id=str(row['id'])) for row in pending]
+            for delivery in deliveries: attempts.publish(delivery)
+            return len(deliveries)
+        dispatcher=patch('services.queue.durable.dispatch_due_jobs',side_effect=dispatch_pending)
+        dispatcher.start();self.addCleanup(dispatcher.stop)
         self.client=TestClient(api.app,raise_server_exceptions=False,headers={'X-Requested-With':'AccountingIntelligence'})
         self.addCleanup(self.client.close)
 
     def reserve(self):
         with self.database as db:
             return attempts.reserve_dispatch(db,D,T,job_id=J)
+
+    def test_confirmed_dead_local_worker_retains_failed_result_and_schedules_once(self):
+        import socket
+        from fakeredis import FakeStrictRedis
+        from rq import Queue
+        from rq.executions import Execution
+        from rq.job import JobStatus
+        from rq.serializers import JSONSerializer
+        from services.queue.worker import WindowsWorker
+        from services.queue import durable
+        delivery = self.reserve()
+        self.claim(delivery)
+        redis = FakeStrictRedis()
+        queue = Queue('cpu_tasks', connection=redis, serializer=JSONSerializer)
+        rq_job = queue.enqueue('services.queue.jobs.process_document_mock', D, job_id=delivery.dispatch_token)
+        rq_job.set_status(JobStatus.STARTED)
+        worker = WindowsWorker([queue], connection=redis, serializer=JSONSerializer, name='synthetic-dead-worker')
+        worker.hostname = socket.gethostname()
+        worker.pid = 12345
+        worker.set_current_job_id(rq_job.id)
+        with redis.pipeline() as pipe:
+            worker.execution = Execution.create(rq_job, 1800, pipe, worker.name)
+            pipe.execute()
+        with patch.object(durable, 'connect', return_value=self.database), \
+             patch.object(durable, 'get_queues', return_value=(queue, None)), \
+             patch('rq.Worker.all', return_value=[worker]), \
+             patch.object(durable, 'local_process_alive', return_value=False):
+            self.assertEqual(durable.recover_lost_local_workers(), 1)
+            self.assertEqual(durable.recover_lost_local_workers(), 0)
+        old = self.job()
+        self.assertEqual((old['status'], old['last_error']), ('failed', 'WORKER_EXITED'))
+        self.assertEqual(str(old['dispatch_token']), delivery.dispatch_token)
+        self.assertEqual(old['attempt_count'], 1)
+        self.assertEqual(self.database.execute("SELECT count(*) AS n FROM pending_jobs WHERE status='pending'").fetchone()['n'], 1)
+        self.assertEqual(rq_job.get_status(refresh=True), JobStatus.FAILED)
+        self.assertIn('WORKER_EXITED', rq_job.latest_result().exc_string)
 
     def claim(self,delivery=None):
         delivery=delivery or self.reserve()
@@ -144,6 +190,46 @@ class AttemptProtocolTests(unittest.TestCase):
             self.assertEqual(self.retry().status_code,409)
         self.cpu.enqueue_call.assert_called_once()
         self.assertEqual(self.database.execute("SELECT count(*) AS n FROM pending_jobs WHERE status IN ('pending','dispatched','processing')").fetchone()['n'],1)
+
+    def test_outbox_schedule_is_idempotent_and_never_claims_processing(self):
+        self.database.db.execute("UPDATE pending_jobs SET status='cancelled',finished_at=CURRENT_TIMESTAMP WHERE id=?",(J,))
+        self.database.db.execute("UPDATE documents SET status='uploaded' WHERE id=?",(D,))
+        self.database.db.commit()
+        with self.database as db:
+            first=attempts.schedule_document(db,D,T)
+            second=attempts.schedule_document(db,D,T)
+        self.assertEqual(first['id'],second['id'])
+        self.assertEqual(first['status'],'pending')
+        self.assertEqual(self.database.execute('SELECT status FROM documents').fetchone()['status'],'queued')
+        self.cpu.enqueue_call.assert_not_called()
+
+    def test_stale_recovery_keeps_old_tokens_and_creates_one_new_pending_attempt(self):
+        from services.queue import durable
+        delivery=self.reserve()
+        self.database.db.execute('UPDATE pending_jobs SET dispatch_expires_at=? WHERE id=?',
+            (datetime.now(timezone.utc)-timedelta(seconds=1),J))
+        self.database.db.commit()
+        with patch.object(durable,'connect',return_value=self.database):
+            self.assertEqual(durable.recover_expired_jobs(),1)
+            self.assertEqual(durable.recover_expired_jobs(),0)
+        old=self.job()
+        self.assertEqual(old['status'],'failed')
+        self.assertEqual(old['dispatch_token'],delivery.dispatch_token)
+        self.assertEqual(old['last_error'],'LEASE_EXPIRED')
+        active=self.database.execute("SELECT * FROM pending_jobs WHERE status='pending'").fetchall()
+        self.assertEqual(len(active),1)
+        self.assertNotEqual(active[0]['id'],J)
+
+    def test_stale_recovery_does_not_retry_exhausted_claims(self):
+        from services.queue import durable
+        claim=self.claim();self.expire(claim)
+        self.database.db.execute('UPDATE pending_jobs SET attempt_count=3 WHERE id=?',(J,))
+        self.database.db.commit()
+        with patch.object(durable,'connect',return_value=self.database):
+            self.assertEqual(durable.recover_expired_jobs(),1)
+        self.assertEqual(self.job()['attempt_count'],3)
+        self.assertEqual(self.database.execute('SELECT status FROM documents').fetchone()['status'],'failed')
+        self.assertEqual(self.database.execute('SELECT count(*) AS n FROM pending_jobs').fetchone()['n'],1)
 
     def test_pending_legacy_queued_job_is_not_guessed_or_dispatched(self):
         before=self.database.snapshot()
@@ -218,7 +304,7 @@ class AttemptProtocolTests(unittest.TestCase):
         self.assertEqual(kwargs['args'],(D,))
         self.assertEqual(kwargs['job_id'],delivery.dispatch_token)
         self.assertNotIn('retry',kwargs)
-        self.assertEqual(kwargs['failure_ttl'],0)
+        self.assertEqual(kwargs['failure_ttl'],86400)
         self.assertEqual(response['queueJobId'],delivery.dispatch_token)
         json.dumps(kwargs['args'])
 
@@ -340,6 +426,70 @@ class AttemptProtocolTests(unittest.TestCase):
         self.assertEqual(self.job()['status'],'succeeded')
         self.assertNotIn('public_result_path',json.dumps(result))
 
+    def qwen_worker_run(self,enabled,model_value='12.00',raises=None):
+        """Worker -> real mapper/routing/reconciliation -> persistence. Only the model is faked."""
+        from functools import partial
+        from pypdf import PdfWriter
+        from services.extraction.ai import qwen_provider as qp
+        from services.extraction.ai.run_selective_qwen import run_attempt
+        from services.extraction.workflow import document_extraction_service as dis
+        from tests.extraction.test_financial_layout import layout
+        from tests.extraction.test_selective_qwen import RecoveryEndToEndTests
+        delivery=self.reserve(); root=Path(self.temp.name)/'worker-root'; (root/'runs').mkdir(parents=True)
+        source=root/'upload.pdf'; writer=PdfWriter(); writer.add_blank_page(width=600,height=900)
+        with source.open('wb') as handle: writer.write(handle)
+        document=layout('INVOICE',[('Supplier: Acme Trading',20,60,300,80),('Invoice number: X-42',20,90,300,110),
+            ('Date: 2020-01-31',20,120,300,140),('Currency: USD',20,150,300,170),('Total amount:',20,200,180,220),('10.00',200,200,300,220),
+            ('Total amount:',20,230,180,250),('12.00',200,230,300,250)])
+        provider=Mock(base=qp.BASE,model=qp.MODEL,timeout=45)
+        provider.metadata.return_value={'models':[{'name':qp.MODEL,'digest':'sha256:local'}]}
+        provider.chat.return_value=json.dumps({'done':True,'model':qp.MODEL,'message':{'content':json.dumps({'total_amount':model_value})}})
+        if raises: provider.chat.side_effect=raises
+        def render(pdf,target):
+            target.write_bytes(b'rendered page'); return [100,100]
+        parser=RecoveryEndToEndTests.parser(None,document)
+        attempt=partial(run_attempt,provider_factory=Mock(return_value=provider),renderer=render)
+        env={'ENABLE_QWEN_RECOVERY':'true','QWEN_RECOVERY_MODE':'auto'} if enabled else {'QWEN_RECOVERY_MODE':'off'}
+        with patch('rq.get_current_job',return_value=SimpleNamespace(id=delivery.dispatch_token)),\
+             patch.object(jobs,'resolve_document_from_database',return_value=source),patch.object(jobs,'BACKEND_ROOT',root),\
+             patch.object(jobs,'_TEST_PARSER',parser),patch.object(dis,'run_attempt',attempt),\
+             patch.dict('os.environ',{'ENABLE_IMAGE_OCR':'false',**env},clear=False):
+            import os
+            if not enabled: os.environ.pop('ENABLE_QWEN_RECOVERY',None)
+            result=jobs.process_document_extraction_job(D,J,T,delivery.dispatch_token)
+        row=self.database.execute("SELECT * FROM field_predictions WHERE field_key='total'").fetchone()
+        return result,row,provider
+
+    def test_worker_to_qwen_to_persistence_stores_a_candidate_never_a_value(self):
+        result,row,provider=self.qwen_worker_run(True)
+        provider.chat.assert_called_once()
+        self.assertEqual((result['status'],result['extraction_status']),('EXTRACTED','candidate_for_review'))
+        self.assertEqual(self.job()['status'],'succeeded')
+        self.assertFalse(result['accounting_approval_performed'])
+        self.assertEqual((row['extraction_state'],row['current_value'],row['normalized_value'],row['confidence']),('ambiguous',None,None,None))
+        self.assertEqual(row['resolution'],'candidate_for_review')
+        candidates=row['candidates']
+        ai=[c for c in candidates if c.get('source')=='ai']
+        self.assertEqual((len(ai),ai[0]['value'],ai[0]['auto_accepted'],ai[0]['source_check']),(1,'12.00',False,'source_role_verified'))
+        self.assertEqual({c['value'] for c in candidates if c.get('source')!='ai'},{'10.00','12.00'})
+
+    def test_worker_with_qwen_off_never_calls_the_model(self):
+        result,row,provider=self.qwen_worker_run(False)
+        provider.chat.assert_not_called();provider.metadata.assert_not_called()
+        self.assertEqual(result['extraction_status'],'human_review_required')
+        self.assertFalse([c for c in row['candidates'] if c.get('source')=='ai'])
+
+    def test_worker_model_timeout_still_persists_the_parser_result(self):
+        result,row,provider=self.qwen_worker_run(True,raises=TimeoutError('slow'))
+        self.assertEqual(result['extraction_status'],'ai_attempt_failed_needs_review')
+        self.assertEqual(self.job()['status'],'succeeded')
+        self.assertEqual((row['extraction_state'],row['current_value']),('ambiguous',None))
+
+    def test_worker_does_not_store_a_hallucinated_value(self):
+        result,row,_=self.qwen_worker_run(True,model_value='99.00')
+        self.assertEqual(result['extraction_status'],'unresolved_needs_review')
+        self.assertNotIn('99.00',json.dumps(row['candidates']))
+
     def test_worker_resolution_failure_is_persisted_for_exact_claim(self):
         delivery=self.reserve()
         with patch('rq.get_current_job',return_value=SimpleNamespace(id=delivery.dispatch_token)), patch.object(jobs,'resolve_document_from_database',return_value=None):
@@ -442,39 +592,38 @@ class AttemptProtocolTests(unittest.TestCase):
         with patch.object(self.database,'execute',side_effect=defaults), patch.object(api,'require_workspace_user',return_value=user or contract.USER), patch.dict('os.environ',{'DOCUMENT_STORAGE_PATH':self.temp.name,'S3_BUCKET':''}):
             return asyncio.run(document_routes.upload_document(None,file))
 
-    def test_upload_commits_document_job_and_reservation_before_redis(self):
+    def test_upload_commits_document_and_outbox_before_dispatch(self):
         def check_commit(*args,**kwargs):
             self.assertFalse(self.database.db.in_transaction)
-            row=self.database.execute('SELECT status,dispatch_token FROM pending_jobs WHERE dispatch_token=%s',(kwargs['job_id'],)).fetchone()
-            self.assertEqual(row['status'],'dispatched')
-            self.assertEqual(row['dispatch_token'],kwargs['job_id'])
-        self.cpu.enqueue_call.side_effect=check_commit
-        response=self.upload()
-        self.assertTrue(response['dispatchAccepted'])
+            row=self.database.execute("SELECT status,dispatch_token FROM pending_jobs WHERE id<>%s",(J,)).fetchone()
+            self.assertEqual(row['status'],'pending')
+            self.assertIsNone(row['dispatch_token'])
+            return 0
+        with patch('services.queue.durable.dispatch_due_jobs',side_effect=check_commit):
+            response=self.upload()
+        self.assertFalse(response['dispatchAccepted'])
         self.assertEqual(response['status'],'QUEUED')
-        self.assertEqual(response['jobStatus'],'DISPATCHED')
+        self.assertEqual(response['jobStatus'],'PENDING')
         self.assertNotEqual(response['jobId'],J)
-        self.assertEqual(len(list(Path(self.temp.name).glob('*synthetic.pdf'))),1)
+        self.assertEqual(len(list(Path(self.temp.name).rglob('synthetic.pdf'))),1)
 
     def test_upload_reservation_failure_rolls_back_new_document_and_removes_only_new_file(self):
         before=self.database.snapshot()
-        with patch.object(attempts,'reserve_dispatch',side_effect=RuntimeError('synthetic reservation failure')):
+        with patch.object(attempts,'schedule_document',side_effect=RuntimeError('synthetic reservation failure')):
             with self.assertRaisesRegex(RuntimeError,'reservation failure'): self.upload()
         self.assertEqual(self.database.snapshot(),before)
         self.assertEqual(list(Path(self.temp.name).glob('*synthetic.pdf')),[])
         self.cpu.enqueue_call.assert_not_called()
 
     def test_upload_dispatch_failure_keeps_document_ids_and_truthful_failure(self):
-        from fastapi import HTTPException
-        self.cpu.enqueue_call.side_effect=ConnectionError('private transport detail')
-        with self.assertRaises(HTTPException) as error: self.upload()
-        self.assertEqual(error.exception.status_code,503)
-        self.assertFalse(error.exception.detail['dispatchAccepted'])
-        doc=error.exception.detail['documentId']; job=error.exception.detail['jobId']
+        with patch('services.queue.durable.dispatch_due_jobs',side_effect=ConnectionError('private transport detail')):
+            response=self.upload()
+        self.assertFalse(response['dispatchAccepted'])
+        doc=response['id']; job=response['jobId']
         self.assertNotEqual(doc,D)
-        self.assertEqual(self.job(job)['status'],'failed')
-        self.assertEqual(self.database.execute('SELECT status FROM documents WHERE id=%s',(doc,)).fetchone()['status'],'failed')
-        self.assertEqual(len(list(Path(self.temp.name).glob('*synthetic.pdf'))),1)
+        self.assertEqual(self.job(job)['status'],'pending')
+        self.assertEqual(self.database.execute('SELECT status FROM documents WHERE id=%s',(doc,)).fetchone()['status'],'queued')
+        self.assertEqual(len(list(Path(self.temp.name).rglob('synthetic.pdf'))),1)
 
 
     def test_expiry_at_failure_cas_rejects_and_rolls_back_all_failure_writes(self):

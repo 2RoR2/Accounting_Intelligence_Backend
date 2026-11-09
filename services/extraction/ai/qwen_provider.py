@@ -7,11 +7,12 @@ import re
 from datetime import date
 from pathlib import Path
 from urllib.parse import urlsplit
-from urllib.request import Request, build_opener, ProxyHandler
+from urllib.request import HTTPRedirectHandler, Request, build_opener, ProxyHandler
 from dotenv import dotenv_values
 from services.extraction.classification.route_extraction import RECOVERY_FIELDS
+from services.extraction.layout.layout_headers import TIME_TEXT, clock_time  # noqa: F401  (also imported from here)
 
-FIELDS = {'supplier_name', 'invoice_number', 'invoice_date', 'currency',
+FIELDS ={'supplier_name', 'invoice_number', 'invoice_date', 'currency',
           'subtotal', 'tax_amount', 'total_amount'}
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 BASE = 'http://127.0.0.1:11434'
@@ -34,6 +35,8 @@ FIELD_DEFINITIONS = {
     'receipt_number': 'Printed receipt/POS transaction identifier, not an account or item code.',
     'transaction_date': 'Printed transaction date; never substitute another document date.',
     'total_amount': 'Printed final document total; not subtotal, tax, amount due, tender or change. Never calculate it.',
+    'tax_amount': 'Printed document tax amount; never a tax rate or percentage, and never calculated.',
+    'transaction_time': 'Printed transaction time as HH:MM or HH:MM:SS; null if not printed.',
 }
 
 def validate_fields(fields, profile=None):
@@ -59,24 +62,94 @@ def parse_json(raw):
     return json.loads(raw, object_pairs_hook=unique_object, parse_constant=invalid_constant)
 
 
+def _check_value(name, value):
+    if value is None:
+        return
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError('Values must be nonempty strings or null')
+    if name in {'subtotal', 'tax_amount', 'total_amount', 'amount_due'} and not re.fullmatch(r'-?\d+\.\d+', value):
+        raise ValueError('Amounts must be decimal strings without currency prefixes')
+    if name == 'currency' and not re.fullmatch(r'[A-Z]{3}', value):
+        raise ValueError('Currency must be a printed three-letter code or null')
+    if name in {'invoice_date', 'bill_date', 'due_date', 'transaction_date'}:
+        if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', value):
+            raise ValueError('Date must be YYYY-MM-DD or null')
+        date.fromisoformat(value)
+    if name == 'transaction_time':
+        match = re.fullmatch(r'(\d{2}):(\d{2})(?::(\d{2}))?', value)
+        if not match or clock_time(*match.groups()) is None:
+            raise ValueError('Time must be HH:MM or HH:MM:SS or null')
+
+
+def normalize_model_value(name, value):
+    """Rewrite the notation of a model date or time and nothing else; anything else is left to be rejected.
+
+    The model reads the printed form correctly and often returns it as printed, so a
+    correct "29/12/2023" must not be lost to its notation. A day/month pair that could
+    be read either way is never reordered here. The raw answer stays in raw_response.txt.
+    A bare "6:41:02" is only padded: morning or evening is settled later from the printed text.
+    """
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    if name == 'transaction_time':
+        match = re.fullmatch(r'(?:(?:\d{4}-\d{2}-\d{2}|\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})[T ]\s*)?' + TIME_TEXT, text)
+        return (match and clock_time(*match.groups())) or value
+    if name in {'invoice_date', 'bill_date', 'due_date', 'transaction_date'}:
+        match = re.fullmatch(r'(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})(?:[T ]\s*' + TIME_TEXT + r')?', text)
+        if match and (int(match[1]) > 12) != (int(match[2]) > 12):
+            day, month = (match[1], match[2]) if int(match[1]) > 12 else (match[2], match[1])
+            try:
+                return date(int(match[3]), int(month), int(day)).isoformat()
+            except ValueError:
+                return value
+        match = re.fullmatch(r'(\d{4}-\d{2}-\d{2})[T ].*', text)
+        return match[1] if match else value
+    return value
+
+
 def validate_prediction(prediction, fields, profile=None):
     validate_fields(fields, profile)
     if not isinstance(prediction, dict) or set(prediction) != set(fields):
         raise ValueError('Response must contain exactly the requested fields')
+    prediction = {name: normalize_model_value(name, value) for name, value in prediction.items()}
     for name, value in prediction.items():
-        if value is None:
-            continue
-        if not isinstance(value, str) or not value.strip():
-            raise ValueError('Values must be nonempty strings or null')
-        if name in {'subtotal', 'tax_amount', 'total_amount', 'amount_due'} and not re.fullmatch(r'-?\d+\.\d+', value):
-            raise ValueError('Amounts must be decimal strings without currency prefixes')
-        if name == 'currency' and not re.fullmatch(r'[A-Z]{3}', value):
-            raise ValueError('Currency must be a printed three-letter code or null')
-        if name in {'invoice_date', 'bill_date', 'due_date', 'transaction_date'}:
-            if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', value):
-                raise ValueError('Date must be YYYY-MM-DD or null')
-            date.fromisoformat(value)
+        _check_value(name, value)
     return prediction
+
+
+def validate_fields_independently(prediction, fields, profile=None):
+    """(usable, rejected): one bad field does not discard the other answers.
+
+    Nothing usable at all, with a value that was rejected, is a failed response.
+    """
+    validate_fields(fields, profile)
+    if not isinstance(prediction, dict):
+        raise ValueError('Response must be a JSON object of the requested fields')
+    if set(prediction) - set(fields):
+        raise ValueError('Response contains fields that were not requested')
+    usable, rejected = {}, {}
+    for name in fields:
+        if name not in prediction:
+            usable[name], rejected[name] = None, 'FIELD_MISSING_FROM_RESPONSE'
+            continue
+        try:
+            value = normalize_model_value(name, prediction[name])
+            _check_value(name, value)
+            usable[name] = value
+        except ValueError as error:
+            usable[name], rejected[name] = None, str(error)
+    if rejected and not any(value is not None for value in usable.values()):
+        raise ValueError(next(iter(rejected.values())))
+    return usable, rejected
+
+
+def qwen_mode():
+    """off (default), auto, manual or both. Controls when the local model may be asked."""
+    mode = os.environ.get('QWEN_RECOVERY_MODE', '').strip().lower()
+    if mode in {'off', 'auto', 'manual', 'both'}:
+        return mode
+    return 'both' if os.environ.get('ENABLE_QWEN_RECOVERY', '').strip().lower() == 'true' else 'off'
 
 
 def prepare_request(image_bytes, fields, *, model=MODEL, profile='invoice', source_context=None):
@@ -126,6 +199,39 @@ def validate_response(response, fields, *, model=None, profile=None):
         raise ValueError('Missing textual JSON response')
     return validate_prediction(parse_json(content), fields, profile)
 
+# Private accounting documents must never leave this machine.
+LOOPBACK_HOSTS = {'127.0.0.1', 'localhost', '::1'}
+
+
+class _NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+def model_digest(inventory, model):
+    """Exact model identity reported by the local server, or null if it gives none."""
+    for entry in (inventory or {}).get('models', []):
+        if isinstance(entry, dict) and model in {entry.get('name'), entry.get('model')}:
+            return entry.get('digest')
+    return None
+
+
+def validate_response_fields(response, fields, *, model=None, profile=None):
+    """Envelope checks as validate_response, then each field on its own."""
+    if not isinstance(response, dict) or response.get('done') is not True or response.get('error'):
+        raise ValueError('Model did not return a completed response')
+    if response.get('done_reason', 'stop') != 'stop':
+        raise ValueError('Model response did not finish normally')
+    if model is not None and response.get('model') != model:
+        raise ValueError('Response model differs from the requested model')
+    message = response.get('message')
+    if not isinstance(message, dict) or message.get('role', 'assistant') != 'assistant' or message.get('tool_calls'):
+        raise ValueError('Expected an assistant JSON message without tool calls')
+    if not isinstance(message.get('content'), str):
+        raise ValueError('Missing textual JSON response')
+    return validate_fields_independently(parse_json(message['content']), fields, profile)
+
+
 class OllamaQwenProvider:
     def __init__(self, opener=None, *, base=None, model=None, timeout=None):
         # Resolve only on an explicit attempt. Do not load shared .env settings
@@ -137,7 +243,7 @@ class OllamaQwenProvider:
                 and any(v is None and k not in os.environ for k, v in zip(keys, explicit))):
             values = dotenv_values(PROJECT_ROOT / '.env', interpolate=False)
         settings = [v if v is not None else os.environ.get(k, values.get(k, default))
-                    for k, v, default in zip(keys, explicit, (BASE, MODEL, 300))]
+                    for k, v, default in zip(keys, explicit, (BASE, MODEL, 120))]
         self.base, self.model, timeout = settings
         if not isinstance(self.base, str):
             raise ValueError('Invalid Ollama endpoint configuration')
@@ -150,6 +256,8 @@ class OllamaQwenProvider:
             valid = False
         if not valid:
             raise ValueError('Expected an HTTP(S) Ollama server root without credentials')
+        if url.hostname not in LOOPBACK_HOSTS:
+            raise ValueError('Selective recovery only calls a model server on this machine')
         self.base = self.base.rstrip('/')
         if not isinstance(self.model, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:/-]*', self.model):
             raise ValueError('Invalid Ollama model configuration')
@@ -159,7 +267,7 @@ class OllamaQwenProvider:
             raise ValueError('Invalid Ollama timeout configuration') from None
         if isinstance(timeout, bool) or not math.isfinite(self.timeout) or not 0 < self.timeout <= 300:
             raise ValueError('Ollama timeout must be greater than zero and at most 300 seconds')
-        self.opener = opener if opener is not None else build_opener(ProxyHandler({}))
+        self.opener = opener if opener is not None else build_opener(ProxyHandler({}), _NoRedirect())
 
     def metadata(self, path):
         if path not in ('/api/version', '/api/tags', '/api/ps'):
@@ -172,8 +280,8 @@ class OllamaQwenProvider:
             raise ValueError('Request model/stream settings differ from provider configuration')
         request = Request(self.base + '/api/chat', data=json.dumps(payload, allow_nan=False).encode('utf-8'),
                           headers={'Content-Type': 'application/json'})
-        # CPU vision inference for Qwen2.5-VL can take several minutes on a
-        # first request while the model is loaded. The RQ job timeout is 600s.
+        # Measured on the RTX 5090: about 40 s for the very first load from disk, then
+        # about 1 s per request. A CPU-only host would need OLLAMA_TIMEOUT_SECONDS raised.
         with self.opener.open(request, timeout=self.timeout) as response:
             # Caller saves this before JSON parsing or structural validation.
             return response.read().decode('utf-8')

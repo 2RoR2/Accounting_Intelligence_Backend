@@ -106,7 +106,15 @@ def _candidates(page, kind):
     reference_key = 'invoice_number' if kind == 'invoice' else 'receipt_number'
     date_key = 'invoice_date' if kind == 'invoice' else 'transaction_date'
     found.setdefault(reference_key, []).extend(_labelled(page,
-        r'(?:invoice\s+(?:no\.?|id)|bill\s+no\.?|receipt\s+(?:no\.?|reference)|CB#)', _reference))
+        r'(?:invoice\s+(?:no\.?|id|number|#)|bill\s+(?:no\.?|number|#)|receipt\s+(?:no\.?|number|reference|#)|CB#)', _reference))
+    # OCR commonly keeps an invoice hash reference on the same region
+    # (for example, ``INVOICE #123``), so it cannot be parsed by the
+    # colon-oriented labelled-value helper above.
+    inline_reference = r'\s*(?:invoice|bill|receipt)\s*#\s*([A-Za-z0-9][A-Za-z0-9./-]*)\s*'
+    for index, row in enumerate(page.rows):
+        match = re.fullmatch(inline_reference, row['text'], re.I)
+        if match:
+            found[reference_key].append(page.candidate(match[1], _reference(match[1]), [index]))
     found.setdefault('total_amount', []).extend(_labelled(page,
         r'total\s+(?:incl\.?|inclusive)\s+(?:GST|tax)(?:\s*@\s*\d+(?:\.\d+)?%)?', _money))
     found.setdefault('tax_amount', []).extend(_labelled(page,

@@ -30,6 +30,9 @@ class Result:
     def fetchone(self):
         return self.row
 
+    def fetchall(self):
+        return getattr(self, 'rows', [self.row] if self.row is not None else [])
+
 
 class OfflineDatabase:
     def __init__(self):
@@ -58,6 +61,9 @@ class OfflineDatabase:
             CREATE TABLE field_corrections (
                 old_value TEXT, new_value TEXT, corrected_by TEXT, corrected_at TEXT
             );
+            CREATE TABLE vendors (tenant_id TEXT, vendor_name TEXT, address TEXT);
+            CREATE TABLE standardised_records (tenant_id TEXT, document_id TEXT, supplier_name TEXT, currency TEXT, is_current BOOLEAN);
+            CREATE TABLE audit_logs (tenant_id TEXT, user_id TEXT, user_name TEXT, role TEXT, action TEXT, resource TEXT, details TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
             CREATE TRIGGER protect_predictions BEFORE UPDATE ON field_predictions
             WHEN NEW.raw_value IS NOT OLD.raw_value
               OR NEW.normalized_value IS NOT OLD.normalized_value
@@ -109,8 +115,10 @@ class OfflineDatabase:
         sql = query.replace('%s', '?').replace(' FOR UPDATE', '').replace('now()', 'CURRENT_TIMESTAMP')
         sql = sql.replace('RETURNING fp.*', 'RETURNING *')
         cursor = self.connection.execute(sql, params)
-        row = cursor.fetchone() if cursor.description else None
-        return Result(dict(row) if row is not None else None)
+        rows = [dict(row) for row in cursor.fetchall()] if cursor.description else []
+        result = Result(rows[0] if rows else None)
+        result.rows = rows
+        return result
 
     def snapshot(self):
         return {table: [tuple(row) for row in self.connection.execute('SELECT * FROM '+table+' ORDER BY rowid')]
@@ -265,6 +273,30 @@ class FieldCorrectionTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 200, response.text)
                 self.assertEqual(response.json()['value'], value)
 
+    def test_currency_decision_is_audited_as_a_person_not_the_source(self):
+        self.db.connection.execute("UPDATE field_predictions SET field_key='currency' WHERE id='current-a-invoice'")
+        self.db.connection.commit()
+        response = self.correct(field='currency', value='USD', revision=7)
+        self.assertEqual(response.status_code, 200, response.text)
+        row = self.db.connection.execute("SELECT action,resource,user_name,details FROM audit_logs").fetchone()
+        details = json.loads(row['details'])
+        self.assertEqual((row['action'], row['resource']), ('currency.decision', DOCUMENT))
+        self.assertEqual((details['value'], details['previous'], details['sourceVerified'], details['basis']), ('USD', 'OLD-001', False, 'accountant_decision'))
+        state = self.db.connection.execute("SELECT current_value,extraction_state FROM field_predictions WHERE id='current-a-invoice'").fetchone()
+        self.assertEqual(tuple(state), ('USD', 'resolved'))  # the stored source state is never upgraded or changed
+
+    def test_failed_currency_decision_leaves_no_audit_row(self):
+        self.db.connection.execute("UPDATE field_predictions SET field_key='currency' WHERE id='current-a-invoice'")
+        self.db.connection.commit()
+        self.db.fail_revision_update = True
+        with patch.object(document_routes, 'connect', return_value=self.db):
+            try:
+                self.correct(field='currency', value='USD', revision=7)
+            except RuntimeError:
+                pass
+        self.assertEqual(self.db.connection.execute('SELECT count(*) FROM audit_logs').fetchone()[0], 0)
+        self.assertEqual(self.db.connection.execute('SELECT count(*) FROM field_corrections').fetchone()[0], 0)
+
     def test_revision_write_failure_rolls_back_field_and_audit(self):
         before = self.db.snapshot()
         self.db.fail_revision_update = True
@@ -303,6 +335,9 @@ class PartyFieldCompatibilityTests(unittest.TestCase):
         from tests.extraction.test_multidocument import contract
         self.db=ContractDatabase()
         self.addCleanup(self.db.db.close)
+        # The currency review reads and writes the audit log, as production does.
+        self.db.db.execute('ALTER TABLE audit_logs ADD COLUMN user_id TEXT')
+        self.db.db.execute('ALTER TABLE audit_logs ADD COLUMN created_at TEXT')
         self.user=copy.deepcopy(actor)
         self.tenant=TENANT
         self.values={'supplier_address':'10 Source Street\nExample City 10000',

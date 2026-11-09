@@ -5,7 +5,7 @@ import logging
 import os
 import time
 
-from services.queue.durable import dispatch_due_jobs, recover_expired_jobs
+from services.queue.durable import dispatch_due_jobs, recover_expired_jobs, recover_lost_local_workers
 
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -16,7 +16,7 @@ def main() -> None:
     interval = max(1.0, float(os.getenv("QUEUE_SUPERVISOR_INTERVAL_SECONDS", "5")))
     while True:
         try:
-            recovered = recover_expired_jobs()
+            recovered = recover_lost_local_workers() + recover_expired_jobs()
             dispatched = dispatch_due_jobs(limit=int(os.getenv("QUEUE_DISPATCH_BATCH", "50")))
             if recovered or dispatched:
                 log.info("queue cycle: recovered=%s dispatched=%s", recovered, dispatched)

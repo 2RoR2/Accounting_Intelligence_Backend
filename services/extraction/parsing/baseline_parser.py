@@ -20,7 +20,8 @@ import os
 import time
 import threading
 from datetime import datetime, timezone
-from importlib.metadata import version
+from importlib import import_module
+from importlib.metadata import PackageNotFoundError, version as package_version
 from pathlib import Path
 from uuid import uuid4
 
@@ -30,7 +31,22 @@ os.environ["HF_HUB_OFFLINE"] = "1"
 
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+# baseline_parser.py lives at <backend>/services/extraction/parsing.  The
+# parser input and run artifacts are backend-owned, so the default root must
+# be the backend directory (parents[3]), not <backend>/services.
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+
+def version(name: str) -> str:
+    """Read package metadata without blocking extraction in embedded runtimes."""
+    try:
+        return package_version(name)
+    except Exception:
+        module_name = {"onnxruntime": "onnxruntime"}.get(name, name.replace("-", "_"))
+        try:
+            return str(getattr(import_module(module_name), "__version__", "unknown"))
+        except Exception:
+            return "unknown"
 
 
 def sha256_file(path: Path) -> str:
@@ -269,7 +285,11 @@ def parse_document(
     options.ocr_options = RapidOcrOptions(**rapidocr_options())
     options.generate_parsed_pages = True
     options.document_timeout = 180.0
-    options.do_table_structure = True
+    # The bundled offline model set does not include Docling's TableFormer
+    # weights (TableModel04_rs). Keep extraction operational and let the
+    # mapper use the document text/line evidence; table structure can be
+    # enabled later when those weights are provisioned.
+    options.do_table_structure = False
     options.enable_remote_services = False
 
     options.accelerator_options = AcceleratorOptions(

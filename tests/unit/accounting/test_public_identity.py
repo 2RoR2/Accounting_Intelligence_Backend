@@ -3,6 +3,7 @@ import unittest
 from uuid import UUID
 from unittest.mock import patch
 import main
+from services.routes.documents import routes as app
 
 
 class PublicIdentityTests(unittest.TestCase):

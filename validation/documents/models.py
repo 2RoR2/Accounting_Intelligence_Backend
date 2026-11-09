@@ -66,6 +66,8 @@ class Invoice(BaseModel):
     tax_amount: Decimal = Field(ge=0)
     total_amount: Decimal = Field(ge=0)
     discount: Optional[Decimal] = Field(default=None, ge=0)
+    # Signed sum of printed charges and rounding, which a retail total can include. Absent means none printed.
+    other_adjustments: Optional[Decimal] = None
     currency: str = Field(
         min_length=3,
         max_length=3,
@@ -91,7 +93,7 @@ class Invoice(BaseModel):
                 )
         raise ValueError("Date must be a string in YYYY-MM-DD format")
 
-    @field_validator("total_amount", "subtotal", "tax_amount", "discount", mode="before")
+    @field_validator("total_amount", "subtotal", "tax_amount", "discount", "other_adjustments", mode="before")
     @classmethod
     def coerce_to_decimal(cls, value):
         if value is None:
@@ -119,10 +121,10 @@ class Invoice(BaseModel):
 
     @model_validator(mode="after")
     def check_total_matches_subtotal_plus_tax(self) -> "Invoice":
-        expected_total = self.subtotal + self.tax_amount - (self.discount if self.discount is not None else Decimal('0'))
+        expected_total = self.subtotal + self.tax_amount - (self.discount if self.discount is not None else Decimal('0')) + (self.other_adjustments or Decimal('0'))
         if abs(expected_total - self.total_amount) > AMOUNT_TOLERANCE:
             raise ValueError(
-                f"subtotal + tax_amount - discount = {expected_total} does not match "
+                f"subtotal + tax_amount - discount{' + charges + rounding' if self.other_adjustments else ''} = {expected_total} does not match "
                 f"total_amount = {self.total_amount}"
             )
         return self

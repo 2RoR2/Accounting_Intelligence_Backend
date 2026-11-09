@@ -3,13 +3,71 @@
 from __future__ import annotations
 
 import json
+import logging
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from database.connection import connect
 from services.extraction.contracts.accounting_contract import map_m2_result
 from services.queue import attempts
+
+logger = logging.getLogger(__name__)
+
+
+def _usable_document_identifier(fields: list[dict[str, Any]], kind: str) -> str | None:
+    """Return the identifier that should become the processed filename."""
+    identifier_keys = {
+        "invoice": {"invoice", "invoice_number"},
+        "credit_note": {"invoice", "invoice_number", "reference", "reference_number"},
+        "debit_note": {"invoice", "invoice_number", "reference", "reference_number"},
+        "bill": {"reference", "reference_number", "bill_reference", "invoice", "invoice_number"},
+        "receipt": {"receipt", "receipt_number", "reference", "reference_number"},
+    }.get(kind, set())
+    placeholders = {"invoice", "invoice number", "invoice no", "reference", "receipt", "n/a", "na", "none", "null", "unknown", "-"}
+    for field in fields:
+        if field.get("field_key") not in identifier_keys:
+            continue
+        value = field.get("current_value") or field.get("normalized_value")
+        if value is None:
+            continue
+        value = str(value).strip()
+        if value and value.casefold() not in placeholders and any(ch.isalnum() for ch in value):
+            return value
+    return None
+
+
+def _rename_after_extraction(db, document, mapped_fields) -> None:
+    """Give an invoice a searchable name only when extraction found a real identifier."""
+    identifier = _usable_document_identifier(mapped_fields, document["kind"])
+    if not identifier:
+        return
+    source = str(document.get('storage_path') or '')
+    if not source or (not source.startswith('s3://') and not Path(source).is_file()):
+        return
+    from database.object_storage.object_store import document_key, relocate, safe_component
+
+    suffix = Path(document["original_filename"]).suffix.lower() or ".bin"
+    filename = f"{safe_component(identifier, 'document')}{suffix}"
+    collision = db.execute(
+        "SELECT 1 FROM documents WHERE tenant_id=%s AND original_filename=%s AND id<>%s LIMIT 1",
+        (document["tenant_id"], filename, document["id"]),
+    ).fetchone()
+    if collision:
+        filename = f"{safe_component(identifier, 'document')}__{document['document_code']}{suffix}"
+    owner = db.execute("SELECT name FROM users WHERE id=%s AND tenant_id=%s", (document["owner_id"], document["tenant_id"])).fetchone()
+    accountant_name = owner["name"] if owner else "accountant"
+    new_key = document_key(document["tenant_id"], document["owner_id"], accountant_name, document["id"], filename)
+    try:
+        # Keep the original until the SQL transaction commits. A validation or
+        # lease failure must never roll back to a deleted storage object.
+        new_storage = relocate(str(document["storage_path"]), new_key, document.get("mime_type"), delete_original=False)
+    except Exception:
+        logger.warning("Could not rename extracted document %s; retaining upload name", document["id"], exc_info=True)
+        return
+    db.execute("UPDATE documents SET original_filename=%s, storage_path=%s, updated_at=now() WHERE id=%s AND tenant_id=%s",
+               (filename, new_storage, document["id"], document["tenant_id"]))
 
 
 def persist_extraction_result(document_id: str, result: dict[str, Any], *, claim=None) -> dict[str, Any]:
@@ -105,7 +163,8 @@ def persist_extraction_result(document_id: str, result: dict[str, Any], *, claim
             )
 
         db.execute('SELECT switch_current_extraction(%s)',(extraction_id,))
-        db.execute("UPDATE documents SET status='extracted', content_revision=content_revision+1, processing_seconds=EXTRACT(EPOCH FROM (now() - uploaded_at)), processing_completed_at=now(), updated_at=now() WHERE id=%s", (document_id,))
+        _rename_after_extraction(db, document, mapped['fields'])
+        db.execute("UPDATE documents SET status='extracted', content_revision=content_revision+1, processing_seconds=EXTRACT(EPOCH FROM (clock_timestamp() - COALESCE(processing_started_at,clock_timestamp()))), processing_completed_at=clock_timestamp(), updated_at=clock_timestamp() WHERE id=%s", (document_id,))
         classification = mapped['document_kind']
         if classification.get('status') == 'classified' and classification.get('value') in {'invoice', 'bill', 'receipt', 'credit_note', 'debit_note'}:
             db.execute('UPDATE documents SET kind=%s WHERE id=%s AND tenant_id=%s',

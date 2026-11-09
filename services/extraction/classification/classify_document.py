@@ -10,9 +10,15 @@ import re
 from uuid import uuid4
 from services.extraction.layout.layout_headers import records
 
-VERSION = '0.4.2'
+VERSION = '0.4.4'
+# "-- Reprint Receipt --" says this is a copy, and that it may have been paid. It is a signal about
+# the document, and does not compete with the main heading unless there is no other heading at all.
+COPY_MARKER = re.compile(r'[-*=#\s]*(?:reprint(?:ed)?|duplicate|copy\s+of|customer\s+copy\s+of)\s+'
+                         r'(tax invoice|invoice|receipt|bill)[-*=#\s]*', re.I)
+# Printed payment words, kept apart from the document type. None of these proves settlement.
+PAYMENT_CUE = re.compile(r'(?:cash|tunai|paid(?:\s+amount)?|amount\s+paid|change|baki|tender(?:ed)?)\s*:?', re.I)
 TITLES = {
-    'invoice': 'invoice', 'tax invoice': 'invoice', 'commercial invoice': 'invoice',
+    'invoice': 'invoice', 'tax invoice': 'invoice', 'commercial invoice': 'invoice', 'paid invoice': 'invoice',
     'simplified tax invoice': 'invoice', 'taxinvoice': 'invoice',
     'bill': 'bill', 'utility bill': 'bill', 'service bill': 'bill', 'electricity bill': 'bill',
     'receipt': 'receipt', 'sales receipt': 'receipt', 'payment receipt': 'receipt', 'retail receipt': 'receipt',
@@ -96,6 +102,27 @@ def heading_titles(raw, *, leading_block, label):
     return []
 
 
+def split_fiscal_title(item, items):
+    """OCR can box "TAX" and "INVOICE" apart. Require one line, side by side."""
+    def box(entry):
+        prov = entry.get('prov') or []
+        bbox = prov[0].get('bbox') if len(prov) == 1 else None
+        if not bbox or bbox.get('coord_origin') != 'TOPLEFT':
+            return None
+        return prov[0].get('page_no'), bbox['l'], bbox['t'], bbox['r'], bbox['b']
+    here = box(item)
+    if here is None:
+        return False
+    page, left, top, _, bottom = here
+    height = bottom - top
+    for other in items:
+        there = box(other) if other.get('text', '').strip().casefold() == 'tax' else None
+        if (there and there[0] == page and abs((there[2] + there[4] - top - bottom) / 2) <= height * .5
+                and -height <= left - there[3] <= height):
+            return True
+    return False
+
+
 def classification_records(document):
     """Keep retained lines and body blocks; do not change field-recovery records."""
     result = list(records(document))
@@ -164,7 +191,8 @@ def invoice_identity_evidence(items):
             continue
         cues = {}
         patterns = {
-            'issue_date': r'^\s*(?:date of issue|issue date|invoice date)\s*(?::.*)?$',
+            # OCR can drop word gaps ("Dateof issue:"); the other cues must still corroborate.
+            'issue_date': r'^\s*(?:date\s*of\s*issue|issue\s*date|invoice\s*date)\s*(?::.*)?$',
             'date_value': r'\b(?:\d{4}-\d{2}-\d{2}|\d{1,2}[/.-]\d{1,2}[/.-]\d{4})\b',
             'seller': r'^\s*(?:seller|supplier|vendor)\s*(?::.*)?$',
             'buyer': r'^\s*(?:buyer|customer|client|bill to)\s*(?::.*)?$',
@@ -305,7 +333,8 @@ def retail_transaction_context(document):
     tender_pattern = r'cash\s*(?:tendered)?|tunai|paid\s+amount'
     for positioned in context_pages(document).values():
         headers = [x for x, _ in positioned if re.fullmatch(r'qty(?:\s+item)?|quantity|item', x.get('text', '').strip(), re.I)]
-        dates = [x for x, _ in positioned if re.search(r'\b\d{1,2}[/.-]\d{1,2}[/.-]\d{4}\b', x.get('text', ''))]
+        # OCR can drop the space between a printed date and time (18/01/201817:09:21).
+        dates = [x for x, _ in positioned if re.search(r'\b\d{1,2}[/.-]\d{1,2}[/.-]\d{4}(?:\b|(?=\d{1,2}:\d{2}))', x.get('text', ''))]
         if not headers or not dates:
             continue
         monetary = lambda value: bool(re.fullmatch(CONTEXT_MONEY, value))
@@ -475,11 +504,16 @@ def utility_bill_context(document):
 def classify_document(document):
     if document.get('schema_name') != 'DoclingDocument':
         raise ValueError('Expected a DoclingDocument export')
-    candidates, excluded = [], []
+    candidates, excluded, copy_markers = [], [], []
     leading_block = True
     items = classification_records(document)
     for index, item in enumerate(items):
         if item.get('content_layer', 'body') != 'body':
+            continue
+        marker = COPY_MARKER.fullmatch(item.get('text', '').strip())
+        if marker:
+            copy_markers.append({'value': TITLES[normalize_title(marker[1])], 'matched_title': normalize_title(marker[1]),
+                                 'evidence': source_evidence(item)})
             continue
         # Text allows Docling's unlabelled-heading cases, but requires a whole
         # text item to match. We never match an invoice number or 'Bill to'.
@@ -509,6 +543,8 @@ def classify_document(document):
             continue
         titles = ([title] if title in TITLES or title in UNSUPPORTED else
                   heading_titles(raw, leading_block=leading_block, label=item.get('label', 'text')))
+        if titles == ['invoice'] and split_fiscal_title(item, items):
+            titles = ['tax invoice']
         if (not titles and item.get('label') in {'title','section_header'}
                 and re.fullmatch(r'(?:\S+\s+){1,3}invoice', title)):
             # A damaged/unknown invoice qualifier is reviewable; do not let
@@ -621,6 +657,14 @@ def classify_document(document):
             content_reason = 'INVOICE_IDENTITY_AND_FINANCIAL_EVIDENCE'
             candidates = [{'value': 'invoice', 'matched_title': 'invoice identity + issue date + parties + financial table',
                            'evidence': invoice}]
+    if not candidates and not excluded:
+        for marker in copy_markers:  # The only heading there is, so it does name the document.
+            add_heading(candidates, deepcopy(marker))
+    signals = [{'kind': 'copy_marker', 'text': m['evidence']['text'], 'source_ref': m['evidence']['source_ref']}
+               for m in copy_markers]
+    for item in items:
+        if PAYMENT_CUE.fullmatch(item.get('text', '').strip()) and len(signals) < 8:
+            signals.append({'kind': 'payment_cue', 'text': item['text'].strip(), 'source_ref': item.get('self_ref')})
     values = sorted({c['value'] for c in candidates})
     if excluded:
         value, status, reason = 'unknown', 'unsupported', 'UNSUPPORTED_DOCUMENT_HEADING'
@@ -636,7 +680,7 @@ def classify_document(document):
         value, status, reason = 'unknown', 'unknown', 'NO_SUPPORTED_DOCUMENT_HEADING'
     return {'classifier_version': VERSION, 'method': method,
             'value': value, 'status': status, 'reason': reason,
-            'candidates': candidates, 'unsupported_headings': excluded,
+            'candidates': candidates, 'unsupported_headings': excluded, 'signals': signals,
             'review_required': True}
 
 def main():

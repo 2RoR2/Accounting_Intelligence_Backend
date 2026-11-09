@@ -12,13 +12,14 @@ from services.extraction.parsing.extraction_v1 import ExtractionResultV1, Strict
 from services.extraction.classification.classify_document import classify_document
 
 class ClassificationResult(StrictModel):
-    classifier_version: Literal['0.1.0', '0.2.0', '0.2.1', '0.3.0', '0.3.1', '0.4.0', '0.4.1', '0.4.2']
+    classifier_version: Literal['0.1.0', '0.2.0', '0.2.1', '0.3.0', '0.3.1', '0.4.0', '0.4.1', '0.4.2', '0.4.3', '0.4.4']
     method: Literal['explicit_heading_rules', 'content_evidence_rules']
     value: Literal['invoice', 'bill', 'receipt', 'credit_note', 'debit_note', 'unknown']
     status: Literal['classified', 'unknown', 'ambiguous', 'unsupported']
     reason: str
     candidates: list[dict[str, Any]]
     unsupported_headings: list[dict[str, Any]]
+    signals: list[dict[str, Any]] = []  # Copy and payment wording, kept apart from the document type.
     review_required: Literal[True]
     source_document_json: str
     source_json_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')

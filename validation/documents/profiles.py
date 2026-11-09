@@ -61,6 +61,8 @@ def validate_profile(kind, values, items, *, supporting=None):
         expected = _money(values['tendered_amount']) - _money(values['change_given'])
         if abs(expected - _money(values['total'])) > Decimal('0.01'):
             issue('RCP-005', 'change_given', f'Cash tender less change should equal {expected}.', 'medium')
+        else:
+            check('RCP-005', f"Cash tender {values['tendered_amount']} less change {values['change_given']} equals the total. Neither is sales.")
     elif kind == 'receipt':
         check('RCP-005', 'Cash tender/change not supplied.', available=False)
     if kind in {'credit_note', 'debit_note'}:

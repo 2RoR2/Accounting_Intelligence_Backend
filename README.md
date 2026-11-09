@@ -16,6 +16,8 @@ This repository contains the FastAPI backend. The companion frontend is in `../A
 - Tenant/role isolation, password hashing, email OTP for accountants, TOTP for privileged roles, and protected document APIs.
 - Stale-job reconciliation without deleting document or audit records.
 - Database-backed dispatch leases, worker claims, heartbeats, retry limits, and expired-lease recovery.
+- Object-storage uploads through the configured S3-compatible bucket for every accepted file type; local storage remains the development fallback when S3 is not configured.
+- Automatic processed-document naming from detected invoice, bill, receipt, credit-note, or debit-note identifiers while preserving the uploaded extension.
 - Credit-note and debit-note validation, including note/reference requirements, amount direction, and arithmetic checks.
 - Reproducible field-level accuracy reporting from labelled `expected`/`predicted` JSON datasets.
 - Database structures for purchase orders, goods receipts, AP matching, and tenant approval limits.
@@ -31,6 +33,84 @@ This repository contains the FastAPI backend. The companion frontend is in `../A
 
 The workflow is human-in-the-loop. AI candidates are never automatically treated as approved accounting records.
 
+## Approved FYP scope and implementation plan
+
+The approved outcome is a fully integrated document-processing proof of concept:
+
+```text
+upload → extraction → validation → exception review → human approval
+       → standardised records → export → performance evaluation
+```
+
+The six implementation areas are:
+
+1. **Reliable ingestion:** supported-file checks, content validation, tenant-scoped SHA-256 duplicate detection, immutable source storage, queued processing, retry/lease recovery, and audit events.
+2. **Evidence-backed extraction:** document fields and line items are persisted with confidence and source evidence where available; extracted candidates remain separate from approved values.
+3. **Validation:** required fields, arithmetic, dates, currencies, confidence, duplicate candidates, document-type rules, and line-item consistency route failures to exceptions.
+4. **Correction and approval:** accountants correct fields, revalidate, and submit review; authorised approval creates a revisioned standardised record with history and audit trail.
+5. **Standardised output:** the schema is documented by the standardised-record model and export routes; approved records can be exported without inventing ledger postings.
+6. **Evaluation:** operational processing time, success, exception rate, concurrency safeguards, labelled field-accuracy reporting, and manual-effort study inputs are kept distinct. Unmeasured evaluation fields are shown as “Not measured,” never inferred from workflow status.
+
+Bank matching and account coding remain supporting features for evidence matching and proposed coding only. They do not execute payments or post journals.
+
+### Explicit client requirement: Money In, Money Out, and reconciliation
+
+Accord AI must also import bank statements, classify rows as **Money In** or **Money Out**, retain reviewed account coding, and reconcile rows against approved standardised records. Matching is evidence reconciliation, not payment execution:
+
+```text
+approved standardised record + imported bank row
+        → suggested match → authorised confirmation/rejection
+        → append-only reconciliation history → export
+```
+
+The system must preserve separate document approval, coding confirmation, and reconciliation statuses. “Reverse” means undoing a reconciliation link; it does not reverse a bank payment. Imports remain tenant-scoped and duplicate-protected, and every decision retains its reviewer, reason, revision expectation, and source links.
+
+Where the client requires settlements that are not one-to-one, reconciliation must use an allocation model: one bank row to many records and many bank rows to one record, with a matched amount on every link. Remaining values must be labelled **unmatched amount**, not an inferred unpaid balance. Allocation writes must lock the affected bank row and standardised records, enforce `0 < allocation <= remaining amount`, and append an undo decision rather than editing history.
+
+### Reconciliation delivery plan
+
+- **R1 — Import and classification:** validate CSV structure, dates, currency, debit/credit exclusivity, row fingerprints, duplicate imports, and Money In/Money Out direction.
+- **R2 — Evidence matching:** suggest candidates using amount, currency, reference, counterparty, date, and approved-record status; show differences to the reviewer.
+- **R3 — Human decision:** allow authorised confirmation, rejection, and undo with tenant/role checks and optimistic revision protection.
+- **R4 — Allocated matching:** add transactional reconciliation allocations for partial and combined matches; prevent over-allocation and concurrent double confirmation.
+- **R5 — History and export:** retain append-only import, coding, match, allocation, and undo history; export bank classifications and confirmed links without claiming payment execution or journal posting.
+
+The complete acceptance demonstration is: document upload → extraction → validation → approval → standardisation → bank import → Money In/Money Out → suggested match → human confirmation → reconciliation history → export.
+
+Explicitly out of scope for this FYP: payment authorisation or disbursement, tax computation or filing, statutory reporting, production ERP integration, and audit certification. The internal PoC ledger, accounting periods, journal posting, recorded settlements, and reconciliation allocations are in scope. Existing historical records remain unchanged; no historical record is automatically posted or used to infer opening balances.
+
+## Internal PoC ledger plan
+
+The client-approved accounting boundary is an internal, workspace-isolated ledger. It records approved accounting events and settlements already made; it never initiates a payment, authorises a disbursement, or posts to an external ERP/general-ledger system.
+
+### Current-state audit
+
+The repository has chart-of-accounts/cost-centre coding structures, approved standardised records, bank imports, bank transactions, reconciliation candidates/decisions, and append-only audit guards. Migration `012_internal_ledger_foundation.sql` adds accounting periods, ledger accounts, journal headers/lines, idempotency keys, and posted-history protection. Migration `013_settlements_allocations.sql` adds recorded settlements, bank-source uniqueness, many-to-many allocation storage, transactional over-allocation checks, and an internal trial-balance view. Routes now expose journal posting/reversal, settlement recording, bank-to-settlement creation, allocation reversal, and trial-balance reads. Existing bank matching still enforces one full-amount match per bank row and per standardised record until it is wired to settlement allocations.
+
+### Phased implementation
+
+1. **Accounting foundation:** add workspace-scoped chart of accounts, accounting periods, journal headers, journal lines, posting status, source links, and role/policy checks. Do not create opening balances automatically.
+2. **Posting controls:** post only approved source events in a database transaction; enforce balanced debit/credit totals, decimal amounts, idempotency keys, period status, and append-only posted history. Corrections use controlled reversal/adjustment journals.
+3. **Supplier workflow:** map approved bills and credit/debit-note adjustments to proposed journal entries, require human approval, then post one complete supplier example with document revision and source evidence links.
+4. **Settlements:** record payments already made without initiating them; add settlement records and many-to-many allocation rows with remaining amounts, transactional row locks, over-allocation checks, and append-only allocation/reversal decisions.
+5. **Bank reconciliation:** match imported Money In/Money Out rows to existing settlement records, never post a second settlement, and keep bank-match status separate from settlement and journal status. Undoing a match only removes the reconciliation link.
+6. **Customer workflow and reporting:** extend approved customer invoices/credit notes, post customer entries, support settlement allocations, and provide a trial balance that derives only from posted internal journal lines.
+
+### Required supplier acceptance test
+
+Bill → extraction → validation → human approval → standardised record → proposed supplier journal → authorised posting → recorded settlement → partial/combined allocation → bank import → suggested match → human confirmation → reconciliation history → controlled reversal → trial balance/export. Every step must retain tenant, source document, revision, reviewer, and audit references.
+
+Unresolved policy decisions must be agreed before posting: account mapping for each document type, period close rules, posting authority, treatment of credit/debit notes, settlement date versus document date, rounding/currency policy, refunds/fees, and whether reversal creates a new period adjustment or reopens the source period.
+
+### Phased delivery
+
+- **Phase 1 — ingestion and extraction:** verify file handling, duplicate rejection, source retention, extraction runs, field evidence, and line-item persistence.
+- **Phase 2 — validation and review:** verify rule results, exception routing, corrections, revalidation, comments, revision history, and role-protected approval.
+- **Phase 3 — standardisation and export:** verify the approved-record schema, deterministic mapping, export contents, export audit events, and preservation of source IDs.
+- **Phase 4 — evaluation and hardening:** run labelled accuracy evaluation, measure processing time and manual effort with a defined baseline, calculate exception rate, and exercise concurrent upload/claim/approval guards.
+
+Acceptance is complete only when one supplier document can be traced end to end from source upload through extracted evidence, validation, correction, approval, standardised record, export, and evaluation without creating a journal or payment record.
+
 ## Architecture and request flow
 
 ```text
@@ -39,7 +119,8 @@ Browser frontend
     ▼
 FastAPI backend
     ├── validates file, tenant, role, size, MIME type, and duplicate hash
-    ├── stores original file in backend/storage
+    ├── stores the original file in the configured S3-compatible object store
+    │   (or DOCUMENT_STORAGE_PATH when object storage is unavailable)
     ├── creates PostgreSQL document + pending job + audit event
     └── enqueues an opaque document UUID in Redis/RQ
              │
@@ -71,15 +152,17 @@ The user chooses a PDF, PNG, JPG/JPEG, TIFF/TIF, XLSX, or CSV file up to 20 MB. 
 
 ### 2. Upload validation and storage
 
-`POST /api/documents` authenticates the session, checks role and tenant, validates extension/size/signature/content, calculates a SHA-256 hash, rejects same-tenant duplicates, stores the original under `DOCUMENT_STORAGE_PATH`, creates a code such as `INVOICE_100023`, creates a pending job and audit event, and enqueues only the immutable document UUID. File paths and financial data are not placed in Redis.
+`POST /api/documents` authenticates the session, checks role and tenant, validates extension/size/signature/content, calculates a SHA-256 hash, rejects same-tenant duplicates, and stores every accepted PDF, image, XLSX, or CSV in the configured object store when `S3_BUCKET` is available. It creates a code such as `INVOICE_100023`, creates a pending job and audit event, and enqueues only the immutable document UUID. File paths and financial data are not placed in Redis.
 
 ### 3. Worker resolution
 
 The worker receives the UUID, queries PostgreSQL for the stored path, and verifies that the path is inside the configured storage root. It fails closed for missing documents, invalid UUIDs, or paths outside the storage root.
 
-### 4. Image preparation
+### 4. Image preparation and OCR
 
-Docling's baseline parser expects PDF input. PNG, JPG/JPEG, and TIFF uploads are converted to a temporary RGB PDF under `.extraction-tmp`. The original image remains unchanged, and the temporary file is removed after processing.
+PDF files use the Docling/parser path. PNG and JPG/JPEG uploads can use the opt-in RapidOCR runner when `ENABLE_IMAGE_OCR=true`, `IMAGE_OCR_PYTHON`, and `IMAGE_OCR_MODELS_DIR` are configured. The runner receives a bounded trusted snapshot, uses an allowlisted environment, and returns only a validated OCR artifact. TIFF, XLSX, and CSV remain on their supported parser/import paths. The original uploaded object remains unchanged until identifier-based renaming succeeds.
+
+After extraction, the backend renames the stored object and its visible document name from the detected identifier, for example `invoice.jpg` becomes `123.jpg`. If no reliable identifier is found, the original filename is retained. Duplicate identifiers receive a document-code suffix.
 
 ### 5. Baseline parsing
 
@@ -274,7 +357,7 @@ The report contains per-field exact match, precision, recall, F1, true positives
 
 ### Queue reliability operations
 
-`services/queue/durable.py` provides the database-backed operations used by the worker lifecycle: `dispatch_due_jobs()` leases pending jobs before sending only the job UUID to Redis, `claim_document()` atomically claims a dispatched job, `heartbeat()` renews the processing lease, and `recover_expired_jobs()` returns expired dispatch/processing leases to retry or marks them failed after `max_attempts`. These are callable operations; they do not run continuously by themselves. Run `python services/queue/queue_supervisor.py` as a long-running service alongside the worker to continuously dispatch due jobs and recover expired leases. Lease durations are configurable with `DISPATCH_LEASE_SECONDS` and `PROCESSING_LEASE_SECONDS`.
+Uploads and imports commit a `pending_jobs` outbox entry with the document. Run `python scripts/run_worker.py` and `python scripts/run_queue_supervisor.py` alongside the API. The worker uses `cpu_tasks`, Redis database configured by `REDIS_URL`, and `JSONSerializer`; Windows uses a non-forking worker with timer timeouts. The supervisor dispatches according to healthy worker capacity. `dispatched` means waiting for a claim, while only `processing` means active extraction. Claim heartbeats are fenced by the attempt and delivery tokens. Expired attempts are closed with their identities intact; eligible recovery creates a new attempt row. Automatic recovery is bounded; an explicitly requested retry creates a separately audited attempt. Approval and correction protections still apply. `python scripts/extraction_status.py` reports actual queued, running, persisted and failed counts without changing data; `python scripts/audit_extraction.py` retains the full diagnostic report in `.diagnostics`.
 
 ## Roles and security
 
@@ -381,11 +464,11 @@ The separation keeps the API boundary, business workflow, validation rules, and 
 
 ## Run locally on Windows
 
-Required services are PostgreSQL (`DATABASE_URL`), Redis (`REDIS_URL`), Ollama (`OLLAMA_HOST`, normally `http://127.0.0.1:11434`) with `qwen2.5vl:7b` available for selective VLM work, the backend on port 8000, an RQ worker consuming `cpu_tasks`, and the frontend on port 3000.
+Required services are PostgreSQL (`DATABASE_URL`), Redis (`REDIS_URL`), the configured object store (`S3_BUCKET` and endpoint/credentials in deployed environments), the backend on port 8000, an RQ worker consuming `cpu_tasks`, and the frontend on port 3000. Ollama and `qwen2.5vl:7b` are optional for selective VLM work.
 
 ```powershell
 # Backend
-cd C:\Users\User\Downloads\acc\Accounting_Intelligence_Backend
+cd C:\Users\User\Downloads\www\Accounting_Intelligence_Backend
 $env:PYTHONPATH=(Get-Location).Path
 python -m uvicorn main:app --host 0.0.0.0 --port 8000
 
@@ -393,7 +476,7 @@ python -m uvicorn main:app --host 0.0.0.0 --port 8000
 .\run_worker_windows.ps1
 
 # Frontend, in a third terminal
-cd C:\Users\User\Downloads\acc\Accounting_Intelligence_Frontend
+cd C:\Users\User\Downloads\www\Accounting_Intelligence_Frontend
 npm.cmd run dev -- --port 3000
 ```
 
@@ -415,12 +498,12 @@ Development demo data is provided as SQL, not as a `seed_demo_accounts.py` scrip
 For an existing database, add the AP control tables and approval-policy columns with `database/ap_controls_migration.sql`.
 
 ```powershell
-cd C:\Users\User\Downloads\acc\Accounting_Intelligence_Backend
+cd C:\Users\User\Downloads\www\Accounting_Intelligence_Backend
 psql "$env:DATABASE_URL" -f ".\database\PostgreSQL Database schema.sql"
-psql "$env:DATABASE_URL" -f ".\database\mock_data.sql"
+psql "$env:DATABASE_URL" -f ".\database\mock.data.sql"
 ```
 
-The seed users use the fictional password `DemoPass!2026`. Use only a development database; rebuild the database before running the seed again.
+The schema file is PostgreSQL and includes the reconciliation-period tables. The seed users use the fictional password `DemoPass!2026`. Use only a development database; rebuild the database before running the seed again. `mock.data.sql` intentionally uses PostgreSQL syntax such as `::uuid`, `JSONB`, `INTERVAL`, and `ON CONFLICT`; open it with a PostgreSQL SQL language mode rather than the SQL Server (`mssql`) language service.
 
 To reconcile old jobs whose source files no longer exist, without deleting documents:
 
@@ -480,3 +563,39 @@ Live verification should confirm a real authenticated upload, PostgreSQL documen
 - Measure processing time across a representative sample, not only one 16.04-second run.
 - Measure manual-work reduction using a defined baseline and participant protocol.
 - Publish reproducible accuracy, reliability, and security reports with dataset version, model version, and test date.
+
+## v3.1+ extraction and review integration
+
+The extraction runner now shares deterministic stages between the plain runner and
+an optional LangGraph workflow. Install `requirements-langgraph.txt` in a separate
+runtime to include the tested `langgraph==1.2.19`; `requirements.txt` remains the
+plain-runner installation. Set `ENABLE_EXTRACTION_GRAPH=true` only in an approved
+runtime to select the graph. If LangGraph is unavailable, execution records its
+fallback to the plain runner. Docling/RapidOCR remain the primary extraction path;
+the separate image subprocess still requires its own `IMAGE_OCR_PYTHON` and is not
+needed for normal Docling OCR.
+
+Qwen recovery defaults to off. `QWEN_RECOVERY_MODE` accepts `off`, `manual`, `auto`
+or `both`; the legacy `ENABLE_QWEN_RECOVERY=true` selects both when no explicit
+valid mode is set. `OLLAMA_HOST`, `OLLAMA_MODEL` and `OLLAMA_TIMEOUT_SECONDS`
+configure an already installed local model. The optional `scripts/qwen_runtime.sh`
+helper manages a loopback Ollama process only when explicitly invoked. Model
+weights, uploaded documents, source-bound run artifacts and runtime configuration
+must remain outside Git. Model candidates do not replace original predictions;
+acceptance goes through the existing correction, audit and approval workflow.
+
+The frontend integration uses the existing route registry plus document AI Assist,
+validation-review and bank-import confirm/discard endpoints. Bank imports accept
+both the existing JSON body and the Money screen's multipart CSV form. Discarded
+previews use the existing database `reverted` state, while the discard API returns
+`discarded`. This integration changes no SQL schema or migration and does not
+apply migrations or modify shared databases. NOT_APPLICABLE validation results
+continue to use the existing warning/sentinel representation.
+
+Validation v3.1 policy changes require Aina's review; schema and record decisions
+remain with Aleeya, runtime integration with Rachel, and the review UI with
+Angeline. In particular, bill amount due, receipt arithmetic, tax review and
+outlier-history scope are review decisions, not established production policy.
+The paired pull request records fresh offline checks and remaining wider-suite
+failures. Offline SQLite/mocks cannot establish PostgreSQL trigger/locking
+behaviour, hosted service compatibility or fresh extraction accuracy.

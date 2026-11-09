@@ -1,9 +1,8 @@
 """Database-fenced extraction deliveries. No Redis operation runs under SQL locks.
 
 Each pending_jobs row is one processing attempt (at most one worker claim).
-Dispatch/processing deadlines use the PostgreSQL clock. Recovery is explicit:
-an authorized retry may close an expired row and create a NEW row. There is
-no background sweeper, automatic RQ retry, heartbeat extension or token reuse.
+Dispatch/processing deadlines use the PostgreSQL clock. Every retry creates a
+new row; terminal attempts and their delivery identities are retained.
 """
 from dataclasses import dataclass
 from datetime import timedelta
@@ -15,6 +14,64 @@ from database.connection import connect
 DISPATCH_SECONDS = 300
 PROCESSING_SECONDS = 1800
 OPEN = ('pending', 'dispatched', 'processing')
+
+
+def schedule_document(db, document_id, tenant_id):
+    """Transactional outbox shared by uploads and imports; safe to call twice."""
+    document = lock_document(db, document_id, tenant_id)
+    ensure_unreviewed(db, document)
+    existing = db.execute("""SELECT * FROM pending_jobs WHERE document_id=%s AND tenant_id=%s
+        AND status IN ('pending','dispatched','processing') FOR UPDATE""", (document_id, tenant_id)).fetchone()
+    if existing:
+        return existing
+    if document['status'] not in {'uploaded', 'queued'}:
+        raise AttemptRejected('DOCUMENT_NOT_SCHEDULABLE')
+    job = db.execute("""INSERT INTO pending_jobs(id,tenant_id,document_id,status,next_attempt_at,attempt_count)
+        VALUES (%s,%s,%s,'pending',now(),0) RETURNING *""", (uuid4(),tenant_id, document_id)).fetchone()
+    db.execute("UPDATE documents SET status='queued',updated_at=clock_timestamp() WHERE id=%s", (document_id,))
+    audit(db, document, job['id'], 'extraction.scheduled')
+    return job
+
+
+def retry_budget(db, document_id, maximum=3):
+    # Claims consumed before this repair still count; no resetting counters.
+    row = db.execute('SELECT COALESCE(SUM(attempt_count),0) AS used FROM pending_jobs WHERE document_id=%s',
+                     (document_id,)).fetchone()
+    return int(row['used']) < maximum
+
+
+def dispatch_scheduled(job_id):
+    """Best-effort wakeup; the committed outbox survives service outages."""
+    import logging
+    from services.queue.durable import dispatch_due_jobs
+    try:
+        dispatch_due_jobs()
+    except Exception:
+        logging.getLogger(__name__).exception('Outbox wakeup failed for %s; supervisor will retry', job_id)
+    with connect() as db:
+        row=db.execute('''SELECT j.id,j.dispatch_token,j.status AS job_status,d.status AS document_status
+            FROM pending_jobs j JOIN documents d ON d.id=j.document_id WHERE j.id=%s''',(job_id,)).fetchone()
+    return {'jobId':str(row['id']),'queueJobId':str(row['dispatch_token']) if row['dispatch_token'] else None,
+            'status':row['document_status'].upper(),'jobStatus':row['job_status'].upper(),
+            'dispatchAccepted':row['job_status'] in {'dispatched','processing','succeeded'}}
+
+
+def schedule_failed_retry(db, document_id, tenant_id):
+    """Explicit failed-only retry, retaining all prior terminal attempt rows."""
+    document=lock_document(db,document_id,tenant_id)
+    ensure_unreviewed(db,document)
+    if db.execute("""SELECT 1 FROM pending_jobs WHERE document_id=%s
+        AND status IN ('pending','dispatched','processing')""",(document_id,)).fetchone():
+        raise AttemptRejected('JOB_ALREADY_OPEN')
+    if document['status']!='failed':
+        raise AttemptRejected('DOCUMENT_NOT_RETRYABLE')
+    # This is an explicit operator/user retry. Automatic lease recovery remains
+    # bounded by retry_budget; a new authorised request adds a new attempt row.
+    job=db.execute("""INSERT INTO pending_jobs(id,tenant_id,document_id,status,next_attempt_at,attempt_count)
+        VALUES (%s,%s,%s,'pending',clock_timestamp(),0) RETURNING *""",(uuid4(),tenant_id,document_id)).fetchone()
+    db.execute("UPDATE documents SET status='queued',updated_at=clock_timestamp() WHERE id=%s",(document_id,))
+    audit(db,document,job['id'],'extraction.retry_scheduled')
+    return job
 
 
 class AttemptRejected(ValueError):
@@ -90,7 +147,7 @@ def job_for_update(db, delivery):
     return job
 
 
-def reserve_dispatch(db, document_id, tenant_id, *, job_id=None, retry=False):
+def reserve_dispatch(db, document_id, tenant_id, *, job_id=None, retry=False, defer=False):
     """Caller commits this reservation BEFORE publish(). Never guesses a worker claim."""
     document = lock_document(db,document_id,tenant_id)
     ensure_unreviewed(db,document)
@@ -128,6 +185,10 @@ def reserve_dispatch(db, document_id, tenant_id, *, job_id=None, retry=False):
             raise AttemptRejected('JOB_ALREADY_OPEN',job)
     if job['status']!='pending' or job['attempt_count']!=0 or job['next_attempt_at']>instant:
         raise AttemptRejected('JOB_NOT_DISPATCHABLE',job)
+    if defer:
+        db.execute("UPDATE documents SET status='queued',updated_at=%s WHERE id=%s",(instant,document_id))
+        audit(db,document,job['id'],'extraction.retry_scheduled')
+        return job
     token = str(uuid4())
     db.execute("""UPDATE pending_jobs SET status='dispatched',dispatch_token=%s,
         dispatched_at=%s,dispatch_expires_at=%s,dispatch_count=dispatch_count+1,
@@ -189,13 +250,23 @@ def claim_delivery(delivery, rq_job_id):
                 claimed_at=%s,heartbeat_at=%s,processing_expires_at=%s,
                 attempt_count=attempt_count+1,updated_at=%s WHERE id=%s""",
                 (token,instant,instant,instant+timedelta(seconds=PROCESSING_SECONDS),instant,job['id']))
-            db.execute("UPDATE documents SET status='processing',updated_at=%s WHERE id=%s",(instant,document['id']))
+            db.execute("UPDATE documents SET status='processing',processing_started_at=%s,updated_at=%s WHERE id=%s",(instant,instant,document['id']))
             audit(db,document,job['id'],'extraction.claimed')
             proof = Claim(delivery,token)
 
     if rejected:
         raise rejected
     return proof
+
+
+def heartbeat_claim(claim):
+    with connect() as db:
+        row = db.execute("""UPDATE pending_jobs SET heartbeat_at=clock_timestamp(),
+            processing_expires_at=clock_timestamp() + (%s * interval '1 second'),updated_at=clock_timestamp()
+            WHERE id=%s AND status='processing' AND dispatch_token=%s AND claim_token=%s
+              AND processing_expires_at>clock_timestamp() RETURNING id""",
+            (PROCESSING_SECONDS, claim.delivery.job_id, claim.delivery.dispatch_token, claim.claim_token)).fetchone()
+    return bool(row)
 
 
 def complete(db, claim, document):
@@ -223,7 +294,15 @@ def fail_claim(claim, message='EXTRACTION_FAILED'):
                 protected = True
             terminal = 'cancelled' if protected else 'failed'
             instant = now(db)
-            safe_message = str(message or 'EXTRACTION_FAILED')[:240]
+            # Persist safe codes; retain full exception chains in worker logs.
+            # Never turn arbitrary caller text into document/API data.
+            import re
+            text = str(message or '')
+            code = re.search(r'\b(?:IMAGE_OCR|OCR|SOURCE|UNSUPPORTED_EXTRACTION|INVALID_IMAGE)_[A-Z_]+\b', text)
+            safe_message = code.group(0) if code else 'EXTRACTION_FAILED'
+            if text.startswith('Extraction attempt failed: '):
+                kind = text.removeprefix('Extraction attempt failed: ')
+                if kind.isidentifier(): safe_message = 'EXTRACTION_FAILED:' + kind
             changed = db.execute("""UPDATE pending_jobs SET status=%s,finished_at=%s,
                 last_error=%s,updated_at=%s WHERE id=%s AND document_id=%s AND tenant_id=%s
                 AND status='processing' AND dispatch_token=%s AND claim_token=%s

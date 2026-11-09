@@ -3,6 +3,7 @@ import os
 import shutil
 import sys
 import tempfile
+import threading
 import uuid
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
@@ -102,11 +103,8 @@ def resolve_document_from_database(document_id: str) -> Optional[Path]:
                 logger.warning("Could not remove temporary S3 snapshot")
         return trusted
 
-    storage_root = Path(os.getenv("DOCUMENT_STORAGE_PATH", str(BACKEND_ROOT / "storage"))).expanduser()
-    if not storage_root.is_absolute():
-        storage_root = (BACKEND_ROOT / storage_root).resolve()
-    else:
-        storage_root = storage_root.resolve()
+    from database.object_storage.object_store import local_storage_root
+    storage_root = local_storage_root()
 
     candidate = Path(row["storage_path"]).expanduser()
     if not candidate.is_absolute():
@@ -183,6 +181,17 @@ def process_document_extraction_job(document_id: str, pending_job_id: str | None
     if not claim:
         raise ExtractionResolutionError("Job is not dispatched or its lease has expired.")
 
+    stopped = threading.Event()
+    def heartbeat():
+        while not stopped.wait(30):
+            try:
+                if not attempts.heartbeat_claim(claim):
+                    return
+            except Exception:
+                logger.exception('Could not renew extraction lease for %s', document_id)
+    heartbeat_thread = threading.Thread(target=heartbeat, daemon=True)
+    heartbeat_thread.start()
+
     from services.extraction.workflow.execution import execute_document_extraction
     from services.extraction.persistence.persistence import mark_extraction_job_failed, persist_extraction_result
 
@@ -192,11 +201,18 @@ def process_document_extraction_job(document_id: str, pending_job_id: str | None
         if not resolved_path or not Path(resolved_path).is_file():
             logger.error("Trusted document resolver could not locate file for: %s", document_id)
             raise ExtractionExecutionError("Extraction attempt failed.")
+        # Off unless explicitly enabled. The resolver above is what authorises
+        # showing this tenant's document to the local model; claim fencing still
+        # decides at persistence whether this attempt may store anything.
+        from services.extraction.ai.qwen_provider import qwen_mode
+        qwen_recovery = qwen_mode() in {"auto", "both"}
         result = execute_document_extraction(
             document_id=document_id,
             file_path=Path(resolved_path),
             project_root=BACKEND_ROOT,
             parser=_TEST_PARSER,
+            allow_vlm_inference=qwen_recovery,
+            source_access_authorized=qwen_recovery,
         )
 
         if result.get("execution_status") != "EXTRACTED":
@@ -217,18 +233,25 @@ def process_document_extraction_job(document_id: str, pending_job_id: str | None
                 raise
             persistence = {"skipped": "offline test document id"}
     except Exception as exc:
-        logger.error("Extraction execution failed for %s: %s", document_id, type(exc).__name__)
+        logger.exception("Extraction execution failed for %s", document_id)
         # Preserve controlled extraction codes for diagnosis; redact arbitrary
         # provider/runtime exceptions before they reach PostgreSQL or the API.
-        safe_error = exc if isinstance(exc, ExtractionExecutionError) and str(exc).startswith("Extraction execution failed:") else ExtractionExecutionError("Extraction attempt failed.")
+        safe_error = exc if isinstance(exc, ExtractionExecutionError) else ExtractionExecutionError(
+            'Extraction attempt failed: ' + type(exc).__name__)
         try:
             if not (_TEST_DOCUMENT_RESOLVER or _TEST_PARSER):
                 mark_extraction_job_failed(document_id, str(safe_error), claim=claim)
         except Exception:
             logger.exception("Could not persist failed status for extraction job %s", document_id)
         if safe_error is not exc:
-            raise safe_error from None
+            if isinstance(exc, ExtractionUnauthorizedError):
+                # Full denial traceback is logged privately above; source
+                # authorization details must not become Redis payload data.
+                raise safe_error from None
+            raise safe_error from exc
         raise
+    finally:
+        stopped.set()
 
     return {
         "status": result["execution_status"],

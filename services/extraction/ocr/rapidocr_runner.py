@@ -6,6 +6,13 @@ The parent bounds lifetime and supplies an owned input snapshot/output path.
 import argparse
 import hashlib
 import importlib.metadata
+
+
+def _package_version(name):
+    try:
+        return importlib.metadata.version(name)
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown"
 import json
 from pathlib import Path
 import socket
@@ -101,7 +108,7 @@ def run(args):
     # Empty OCR is a genuine result, never substituted from a saved fixture.
     return {'protocol': PROTOCOL, 'document_id': args.document_id,
             'python_prefix': sys.prefix, 'python_executable': sys.executable,
-            'versions': {name: importlib.metadata.version(name)
+            'versions': {name: _package_version(name)
                          for name in ('rapidocr', 'onnxruntime', 'numpy', 'pillow')},
             'weights': {key: {'name': p.name, 'sha256': hashlib.sha256(p.read_bytes()).hexdigest()}
                         for key, p in paths.items()},

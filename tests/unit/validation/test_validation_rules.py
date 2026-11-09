@@ -94,7 +94,7 @@ class M3ValidationTests(unittest.TestCase):
             self.assertEqual({e['code'] for e in self.engine(payload)['errors']}, {'EX-002'})
 
     def test_corrected_effective_value_wins_over_invalid_raw_parser_state(self):
-        raw = json.loads((Path(__file__).parent/'extraction/data/contracts/syn001_m2.json').read_text())
+        raw = json.loads((Path(__file__).parents[2]/'extraction/data/contracts/syn001_m2.json').read_text())
         raw['fields']['total_amount'].update(value=None, state='ambiguous', resolution='unresolved')
         mapped = map_m2_result(raw, raw['document_id'])
         doc = {'kind':'invoice','category':'accounts_payable'}

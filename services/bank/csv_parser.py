@@ -17,7 +17,9 @@ _CURRENCY = re.compile(r"^[A-Z]{3}$")
 
 
 def _decimal(value):
-    value = (value or "").strip()
+    # Bank exports commonly use a Unicode minus sign (−), which must behave
+    # exactly like the ASCII minus sign for signed single-amount statements.
+    value = (value or "").strip().replace("−", "-").replace("–", "-")
     if not value:
         return None
     if not _DECIMAL.fullmatch(value):
@@ -63,19 +65,22 @@ def _fingerprint(tenant_id, account_ref, row, duplicate_index):
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def parse_bank_csv(content, mapping, date_format, tenant_id, account_ref):
+def parse_bank_csv(content, mapping, date_format, tenant_id, account_ref, default_currency="MYR"):
     """Parse CSV rows into migration-007 fields. Invalid/ambiguous rows need review."""
     if date_format not in {"iso", "dmy", "mdy"}:
         raise ValueError("Choose an explicit date format: iso, dmy, or mdy.")
     if not isinstance(mapping, dict):
         raise ValueError("CSV column mapping must be an object.")
-    required = {"posted_date", "description", "debit", "credit", "currency"}
-    allowed = required | {"value_date", "reference"}
+    required = {"posted_date", "description", "debit", "credit"}
+    allowed = required | {"value_date", "reference", "currency"}
     if set(mapping) - allowed or not required.issubset(mapping):
-        raise ValueError("Map posted_date, description, debit, credit and currency columns.")
+        raise ValueError("Map posted_date, description, debit and credit columns.")
     if any(not isinstance(v, str) or not v.strip() for v in mapping.values()):
         raise ValueError("Every mapped CSV column must have a header name.")
     mapping = {key: value.strip() for key, value in mapping.items()}
+    default_currency = str(default_currency or "MYR").strip().upper()
+    if not _CURRENCY.fullmatch(default_currency):
+        raise ValueError("Default currency must be a 3-letter ISO currency code.")
 
     try:
         text = content.decode("utf-8-sig")
@@ -114,7 +119,7 @@ def parse_bank_csv(content, mapping, date_format, tenant_id, account_ref):
         if reference and len(reference) > MAX_REFERENCE_LENGTH:
             raise ValueError(f"CSV row {index} reference exceeds {MAX_REFERENCE_LENGTH} characters.")
 
-        currency = _cell(source, mapping, "currency").upper() or None
+        currency = _cell(source, mapping, "currency").upper() or str(default_currency or "MYR").strip().upper()
         if currency and not _CURRENCY.fullmatch(currency):
             currency = None
             errors.append("MISSING_OR_INVALID_CURRENCY")
@@ -122,12 +127,26 @@ def parse_bank_csv(content, mapping, date_format, tenant_id, account_ref):
             errors.append("MISSING_OR_INVALID_CURRENCY")
 
         try:
-            debit = _decimal(_cell(source, mapping, "debit"))
-            credit = _decimal(_cell(source, mapping, "credit"))
+            debit_raw = _cell(source, mapping, "debit")
+            credit_raw = _cell(source, mapping, "credit")
+            single_amount_mode = (
+                mapping.get("debit", "").strip().casefold() == mapping.get("credit", "").strip().casefold()
+                or (debit_raw and debit_raw == credit_raw)
+            )
+            if single_amount_mode:
+                signed_value = _decimal(debit_raw)
+                # A signed Amount column is mutually exclusive: positive
+                # values are credits, negative values are debits, displayed
+                # as positive absolute amounts in the debit column.
+                debit = abs(signed_value) if signed_value is not None and signed_value < 0 else None
+                credit = signed_value if signed_value is not None and signed_value > 0 else None
+            else:
+                debit = _decimal(_cell(source, mapping, "debit"))
+                credit = _decimal(_cell(source, mapping, "credit"))
         except ValueError:
             debit = credit = None
             errors.append("INVALID_AMOUNT")
-        if (debit is not None and debit < 0) or (credit is not None and credit < 0):
+        if not single_amount_mode and ((debit is not None and debit < 0) or (credit is not None and credit < 0)):
             debit = credit = None
             errors.append("NEGATIVE_DEBIT_OR_CREDIT")
 

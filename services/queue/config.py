@@ -5,7 +5,7 @@ from rq import Queue
 from rq.serializers import JSONSerializer
 from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
+load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=False)
 
 def get_redis_connection() -> Redis:
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")

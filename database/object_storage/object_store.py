@@ -2,11 +2,25 @@
 from __future__ import annotations
 
 import os
+import importlib.util
+import re
 from pathlib import Path
 
 
+BACKEND_ROOT = Path(__file__).resolve().parents[2]
+
+
 def enabled() -> bool:
-    return bool(os.getenv("S3_BUCKET"))
+    # A configured bucket alone must not make local uploads fail when the
+    # optional S3 client is not installed. In that case callers use the same
+    # local storage path used by the worker and document preview routes.
+    return bool(os.getenv("S3_BUCKET")) and importlib.util.find_spec("boto3") is not None
+
+
+def local_storage_root() -> Path:
+    """The one local document root for upload, worker and preview; relative paths anchor at the backend."""
+    root = Path(os.getenv("DOCUMENT_STORAGE_PATH", "storage")).expanduser()
+    return (root if root.is_absolute() else BACKEND_ROOT / root).resolve()
 
 
 def _client():
@@ -39,6 +53,57 @@ def put_bytes(key: str, data: bytes, content_type: str) -> str:
         Bucket=bucket, Key=key, Body=data, ContentType=content_type
     )
     return f"s3://{bucket}/{key}"
+
+
+def safe_component(value: str | None, fallback: str = "unknown") -> str:
+    """Return a readable, path-safe component without trusting user input."""
+    value = re.sub(r"[^A-Za-z0-9._-]+", "-", str(value or "").strip()).strip(".-_")
+    return value[:80] or fallback
+
+
+def document_key(tenant_id, accountant_id, accountant_name, document_id,
+                 filename: str) -> str:
+    """Build a stable, tenant-isolated key with a readable accountant segment."""
+    return (
+        f"tenants/{safe_component(str(tenant_id))}/"
+        f"accountants/{safe_component(accountant_name, 'accountant')}-"
+        f"{safe_component(str(accountant_id))}/documents/"
+        f"{safe_component(str(document_id))}/{safe_component(filename, 'document')}"
+    )
+
+
+def relocate(uri: str, new_key: str, content_type: str | None = None, *, delete_original: bool = True) -> str:
+    """Move an object, preserving the old object if the destination fails."""
+    if uri.startswith("s3://"):
+        bucket, old_key = uri[5:].split("/", 1)
+        if old_key == new_key:
+            return uri
+        client = _client()
+        client.copy_object(
+            Bucket=bucket, Key=new_key,
+            CopySource={"Bucket": bucket, "Key": old_key},
+            **({"ContentType": content_type, "MetadataDirective": "REPLACE"}
+               if content_type else {}),
+        )
+        if delete_original:
+            client.delete_object(Bucket=bucket, Key=old_key)
+        return f"s3://{bucket}/{new_key}"
+    old_path = Path(uri).resolve()
+    root = local_storage_root()
+    if not old_path.is_relative_to(root) or not old_path.is_file():
+        raise FileNotFoundError("Stored document is unavailable")
+    destination = (root / Path(new_key)).resolve()
+    if not destination.is_relative_to(root):
+        raise ValueError("Invalid storage destination")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if old_path == destination:
+        return str(old_path)
+    if delete_original:
+        old_path.replace(destination)
+    else:
+        import shutil
+        shutil.copy2(old_path, destination)
+    return str(destination)
 
 
 def download(uri: str) -> Path:

@@ -55,7 +55,7 @@ def review_account_limit_request(request_id: str, data: LimitReviewInput, reques
     return {"id": str(row["id"]), "status": row["status"].upper()}
 
 def list_users(request: Request, tenant_id: str | None = None):
-    user = require_workspace_user(request, {"super_admin", "local_admin"})
+    user = require_workspace_user(request, {"super_admin", "local_admin", "accountant"})
     scope = tenant_id if user["role"] == "super_admin" and tenant_id else tenant_scope(user)
     with connect() as db:
         rows = db.execute("SELECT * FROM users WHERE (%s IS NULL OR tenant_id=%s) ORDER BY name", (scope, scope)).fetchall()

@@ -94,6 +94,44 @@ class MalaysianLayoutTests(unittest.TestCase):
             ('VISA',30,150,90,175),('Tax inclusive:',20,170,200,195)]))
         self.assertEqual(raw['fields']['payment_method']['value'],'card')
 
+    def test_single_coded_row_with_ocr_merged_quantity_price_and_tax_code(self):
+        # Sanitized shape of a real POS slip: "Oty." header, merged "1 193.00" cell, "193.00 SR" amount.
+        _,mapped=contract(layout('RECEIPT',[
+            ('Description',20,100,120,120),('Oty.',190,100,220,120),('Price',240,100,290,120),('Amount',330,100,400,120),
+            ('000000111',20,125,120,145),('1 193.00',205,125,290,145),('193.00 SR',330,125,420,145),
+            ('SYNTHETIC SAFETY SHOES',20,150,260,170),
+            ('Qty: 1',20,185,80,205),('Total Exclude GST:',110,185,300,205),('193.00',330,185,400,205)]))
+        self.assertEqual([(r['description'],r['quantity'],r['unit_price'],r['amount']) for r in mapped['line_items']],
+                         [('SYNTHETIC SAFETY SHOES','1','193.00','193.00')])
+
+    def test_single_coded_row_without_full_grid_stays_unmapped(self):
+        _,mapped=contract(layout('RECEIPT',[
+            ('Description',20,100,120,120),('Amount',330,100,400,120),
+            ('000000111',20,125,120,145),('193.00 SR',330,125,420,145),
+            ('SYNTHETIC SAFETY SHOES',20,150,260,170),('Total:',110,185,300,205),('193.00',330,185,400,205)]))
+        self.assertFalse(any(r['description']=='SYNTHETIC SAFETY SHOES' and r['quantity'] for r in mapped['line_items']))
+
+    def test_ocr_joined_timestamp_keeps_pos_receipt_classification_and_date(self):
+        # A printed fiscal title stays evidence; complete POS payment context decides business function.
+        raw,mapped=contract(layout('TAX INVOICE',[
+            ('INV#141900016842',20,50,200,70),('ORD #90 -REG#19- 18/01/201817:09:21',20,75,380,95),
+            ('QTY ITEM',20,100,120,120),('TOTAL',400,100,460,120),
+            ('2 M Synthetic Meal',20,125,200,145),('25.40',400,125,460,145),
+            ('1 Small Cone',20,150,200,170),('1.00',400,150,460,170),
+            ('Total Rounded',20,200,160,220),('26.40',400,200,460,220),
+            ('Cash Tendered',20,225,160,245),('50.00',400,225,460,245),
+            ('Change',20,250,160,270),('23.60',400,250,460,270)]))
+        self.assertEqual(raw['document_type']['value'],'receipt')
+        self.assertEqual(next(f for f in mapped['fields'] if f['field_key']=='date')['current_value'],'2018-01-18')
+
+    def test_a_pure_date_mismatch_without_time_is_not_treated_as_a_joined_timestamp(self):
+        raw,_=contract(layout('TAX INVOICE',[
+            ('REF 18/01/20181',20,75,380,95),('QTY ITEM',20,100,120,120),('TOTAL',400,100,460,120),
+            ('Total Rounded',20,200,160,220),('26.40',400,200,460,220),
+            ('Cash Tendered',20,225,160,245),('50.00',400,225,460,245),
+            ('Change',20,250,120,270),('23.60',400,250,460,270)]))
+        self.assertEqual(raw['document_type']['value'],'invoice')
+
     def test_sku_line_above_description_keeps_first_overlapping_row(self):
         _,mapped=contract(layout('RECEIPT',[
             ('Item',20,100,100,120),('Qty',200,100,240,120),

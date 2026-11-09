@@ -104,12 +104,17 @@ class MergedMappingTests(unittest.TestCase):
             self.assertIsNone(raw['fields']['invoice_number']['value'])
             self.assertIsNone(raw['fields']['total_amount']['value'])
 
-    def test_unsupported_and_ambiguous_documents_remain_empty(self):
+    def test_unsupported_documents_remain_empty_and_ambiguous_reads_are_provisional(self):
         # Current features additionally supports credit/debit notes.
         for title in ['Quotation', 'Pro forma invoice', 'Purchase Order', 'Invoice / Receipt']:
             raw, canonical = contract(source(title, 'Supplier: Fiction Invoice Number: SYN-1 Total: 999.00'))
             self.assertEqual(raw['document_type']['value'], 'unknown')
-            self.assertEqual(canonical['fields'], [])
+            if title == 'Invoice / Receipt':
+                self.assertTrue(canonical['fields'])
+                self.assertTrue(all(f['current_value'] is None for f in canonical['fields']))
+                self.assertTrue(any(f['candidates'] for f in canonical['fields']))
+            else:
+                self.assertEqual(canonical['fields'], [])
             self.assertEqual(canonical['line_items'], [])
 
     def test_existing_bill_and_receipt_profiles_keep_exact_values(self):

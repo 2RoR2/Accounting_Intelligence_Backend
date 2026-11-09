@@ -10,7 +10,7 @@ import io
 from decimal import Decimal
 from pathlib import Path
 from datetime import date, datetime, timedelta, timezone
-from typing import Annotated
+from typing import Annotated, Literal
 from contextlib import asynccontextmanager
 from urllib.parse import quote
 
@@ -121,7 +121,7 @@ PRIVILEGED_ROLES = frozenset({"super_admin", "local_admin"})
 WORKSPACE_PERMISSIONS = {
     "admin": ("super_admin", frozenset({"dashboard", "approvals", "tenants", "users", "processing", "performance", "records", "audit", "settings", "profile"})),
     "company": ("local_admin", frozenset({"dashboard", "documents", "upload", "exceptions", "records", "users", "validation-rules", "reports", "audit", "settings", "profile"})),
-    "workspace": ("accountant", frozenset({"dashboard", "documents", "upload", "exceptions", "records", "reports", "profile"})),
+    "workspace": ("accountant", frozenset({"dashboard", "documents", "upload", "exceptions", "records", "reports", "settings", "help", "profile"})),
 }
 DETAIL_PAGES = frozenset({"tenants", "documents", "records"})
 Email = Annotated[str, StringConstraints(strip_whitespace=True, to_lower=True, max_length=254,
@@ -188,7 +188,8 @@ async def protect_requests(request: Request, call_next):
 @app.exception_handler(Exception)
 async def unexpected_error(_request: Request, exc: Exception):
     # Never return connection strings, credentials or database details to the browser.
-    log.error("Account API failure at %s: %s", _request.url.path, type(exc).__name__)
+    log.error("API failure at %s: %s", _request.url.path, type(exc).__name__,
+              exc_info=(type(exc), exc, exc.__traceback__))
     return JSONResponse({"detail": "Account service is unavailable. Check the backend configuration."}, status_code=503)
 
 
@@ -312,7 +313,7 @@ class CompanyInput(BaseModel):
 class SettingsInput(BaseModel):
     timezone: str = Field(min_length=1, max_length=80)
     notifications: str = Field(min_length=1, max_length=40)
-    sessionTimeoutMinutes: int = Field(default=30, ge=15, le=60)
+    sessionTimeoutMinutes: int = Field(default=480, ge=15, le=480)
     defaultDocumentView: str = Field(default="all", pattern="^(all|exceptions|review)$")
     emailAssignmentNotifications: bool = True
     processingStatusNotifications: bool = True
@@ -357,6 +358,16 @@ class UserStatusInput(BaseModel):
 class AdminCredentialsInput(BaseModel):
     name: Text
     password: Password = ""
+
+
+class AIAssistInput(BaseModel):
+    fields: list[Annotated[str, StringConstraints(min_length=1, max_length=64)]] | None = Field(default=None, max_length=5)
+
+
+class AIAssistDecisionInput(BaseModel):
+    field: Annotated[str, StringConstraints(min_length=1, max_length=64)]
+    decision: Literal["accepted", "rejected"]
+    attemptId: Annotated[str, StringConstraints(max_length=64)] | None = None
 
 
 class FieldCorrectionInput(BaseModel):
@@ -467,6 +478,20 @@ class BankCodingInput(BaseModel):
     decision: Annotated[str, StringConstraints(pattern=r"^(accepted|overridden|manual|cleared)$")] = "manual"
     reason: str | None = Field(default=None, max_length=2000)
     suggestionId: str | None = None
+
+class BankReconciliationPeriodInput(BaseModel):
+    bankAccountRef: str = Field(min_length=1, max_length=200)
+    startsOn: date
+    endsOn: date
+    openingBalance: Decimal
+    closingBalance: Decimal
+    bookBalance: Decimal
+    statementAdjustment: Decimal = Decimal("0")
+    bookAdjustment: Decimal = Decimal("0")
+    adjustmentEvidence: str | None = Field(default=None, max_length=4000)
+
+class BankReconciliationReopenInput(BaseModel):
+    reason: str = Field(min_length=5, max_length=2000)
 
 
 class NamedInput(BaseModel):

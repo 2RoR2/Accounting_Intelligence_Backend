@@ -24,11 +24,27 @@ def contract(doc):
            'document_id': 'SYN-PROFILE', 'document_type': classify_document(doc),
            'status': 'human_review_required', 'review_required': True, 'accounting_approval_performed': False,
            'safety': {'ai_candidate_auto_accepted': False, 'automatic_accounting_approval': False},
-           'provenance': {}, 'fields': v1['fields'], 'line_items': v1['line_items'], 'issues': v1['issues']}
+           'provenance': {}, 'fields': v1['fields'], 'line_items': v1['line_items'], 'issues': v1['issues'],
+           'pretax_structure': v1['provenance'].get('pretax_structure')}
     return raw, map_m2_result(raw, 'SYN-PROFILE')
 
 
 class MultiDocumentTests(unittest.TestCase):
+    def test_credit_note_with_empty_shared_aliases_can_be_stored(self):
+        # Every credit note used to fail its job here: three empty cells share one stored key.
+        raw, mapped = contract(source('CREDIT NOTE', 'Supplier: Synthetic', 'Credit note number: CN-1',
+                                     'Date: 2026-01-31', 'Currency: MYR', 'Total: 10.00'))
+        fields = {f['field_key']: f for f in mapped['fields']}
+        self.assertEqual(fields['reference']['current_value'], 'CN-1')
+        self.assertEqual(fields['total']['current_value'], '10.00')
+
+    def test_two_real_values_on_one_stored_key_still_fail(self):
+        raw, _ = contract(source('CREDIT NOTE', 'Credit note number: CN-1', 'Date: 2026-01-31', 'Total: 10.00'))
+        cell = dict(raw['fields']['credit_note_number'])
+        raw['fields']['reference_number'] = {**cell, 'value': 'OTHER', 'raw_text': 'OTHER'}
+        with self.assertRaisesRegex(ValueError, 'Conflicting aliases'):
+            map_m2_result(raw, 'SYN-PROFILE')
+
     def test_bill_profile_maps_without_invoice_requirements(self):
         raw, mapped = contract(source('Utility Bill', 'Issuer: Synthetic Utility', 'Amount due: 0.00',
                                      'Account number: SYN-A', 'Bill reference: SYN-B', 'Due date: 2026-10-31'))
@@ -39,15 +55,12 @@ class MultiDocumentTests(unittest.TestCase):
         self.assertIsNone(fields['currency']['current_value'])
         self.assertNotIn('invoice', fields)
         check = evaluate_document({'kind': 'bill'}, {'raw_json': raw}, mapped['fields'], [])
-        self.assertEqual(
-            {e['code'] for e in check['errors']},
-            {'BILL-REQUIRED', 'PROFILE-REQUIRED'}
-        )
-        self.assertEqual(
-            {e['field'] for e in check['errors']
-            if e['code'] == 'PROFILE-REQUIRED'},
-            {'date', 'currency'}
-        )
+        # Revised for validation-v2.1: the profile rule no longer repeats the same
+        # field finding as a second exception. It stays named, at its stricter severity.
+        self.assertEqual({e['code'] for e in check['errors']}, {'BILL-REQUIRED'})
+        merged = {e['field']: e for e in check['errors'] if e.get('relatedRules') == ['PROFILE-REQUIRED']}
+        self.assertEqual(set(merged), {'date', 'currency'})
+        self.assertTrue(all(e['severity'] == 'high' for e in merged.values()))
         self.assertFalse(check['coverage_complete'])
         self.assertTrue(any(c['rule'] == 'BILL-AMOUNT_DUE' and c['checkStatus'] == 'NOT_CHECKED' for c in check['checks']))
 
@@ -63,14 +76,37 @@ class MultiDocumentTests(unittest.TestCase):
         self.assertIsNone(mapped['category'])
         self.assertFalse(evaluate_document({'kind': 'receipt'}, {'raw_json': raw}, mapped['fields'], [])['coverage_complete'])
 
-    def test_unknown_never_maps_financial_labels_or_filename(self):
+    def test_unknown_retains_provisional_source_reads_without_trusting_filename(self):
         doc = source('Meeting agenda', 'Supplier: Fiction', 'Total amount: 999.00')
         doc['origin'] = {'filename': 'invoice.pdf'}
         raw, mapped = contract(doc)
-        self.assertEqual(mapped['fields'], [])
+        fields = {f['field_key']: f for f in mapped['fields']}
+        self.assertEqual(fields['supplier']['candidates'][0]['value'], 'Fiction')
+        self.assertEqual(fields['total']['candidates'][0]['value'], '999.00')
+        self.assertTrue(all(f['current_value'] is None and f['normalized_value'] is None for f in mapped['fields']))
+        self.assertTrue(fields['total']['evidence'][0]['source_ref'])
+        self.assertEqual(fields['total']['evidence'][0]['candidate_basis'], 'provisional_document_type')
         self.assertEqual(mapped['line_items'], [])
         self.assertEqual(raw['document_type']['value'], 'unknown')
-        self.assertTrue(evaluate_document({'kind': 'invoice'}, {'raw_json': raw}, [], [])['errors'])
+        check = evaluate_document({'kind': 'invoice'}, {'raw_json': raw}, mapped['fields'], [])
+        self.assertTrue(any(e['code'] == 'EX-002' and e['field'] == 'document_type' for e in check['errors']))
+        from services.extraction.contracts.accounting_contract import approved_snapshot
+        with self.assertRaisesRegex(ValueError, 'classification requires review'):
+            approved_snapshot({'kind': 'invoice', 'category': 'accounts_payable'}, {'raw_json': raw}, mapped['fields'], [])
+
+    def test_provisional_schema_rejects_selected_values(self):
+        from services.extraction.parsing.extraction_v1 import ExtractionResultV1
+        doc = source('Document', 'Supplier: Fiction', 'Total: 999.00')
+        before = deepcopy(doc)
+        mapped = map_document(doc)
+        mapped['run_id'] = 'synthetic-provisional'
+        parsed = adapt_result(mapped, 'SYN-PROFILE', 'mapped.json', 'a' * 64)
+        self.assertEqual(doc, before)
+        self.assertEqual(parsed.field_schema, 'unknown_provisional_fields_v1')
+        data = parsed.model_dump()
+        data['fields']['total_amount'].update(state='resolved', value='999.00')
+        with self.assertRaisesRegex(ValueError, 'unselected candidates'):
+            ExtractionResultV1.model_validate(data)
 
     def test_overlap_remains_ambiguous_with_both_sources(self):
         for doc in (source('Invoice', 'Utility Bill'), source('Bill / Invoice')):

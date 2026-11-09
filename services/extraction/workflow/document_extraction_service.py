@@ -27,16 +27,50 @@ from pathlib import Path
 from uuid import uuid4
 
 from services.extraction.parsing.baseline_parser import parse_document
-from services.extraction.parsing.map_invoice import map_document
+from services.extraction.parsing.map_invoice import map_document, with_recovery_placeholders
 from services.extraction.parsing.extraction_v1 import ExtractionResultV1, adapt_result
 from services.extraction.classification.classify_document import classify_document
 from services.extraction.parsing.combine_extraction import combine_files
-from services.extraction.classification.route_extraction import decide_route
+from services.extraction.classification.route_extraction import assess_extraction, decide_route
 from services.extraction.ai.run_selective_qwen import run_attempt
 from services.extraction.classification.reconcile_selective import reconcile
 
 
 SERVICE_SCHEMA_VERSION = "0.1.0-proposed"
+MAX_TARGETED_RETRIES = 1
+# One model call takes about 1 to 5 s once loaded, which keeps a retry inside the 20 s target.
+RETRY_LATENCY_BUDGET_SECONDS = 12.0
+RECOVERABLE_ATTEMPT_ERRORS = {"ValueError", "JSONDecodeError"}
+# Validation names a value by its stored key; the model request uses extraction field names.
+VALIDATION_TO_RECOVERY = {
+    "supplier": {"supplier_name", "issuer", "merchant"}, "supplier_address": {"supplier_address", "provider_address", "merchant_address"},
+    "date": {"invoice_date", "bill_date", "transaction_date"}, "invoice_date": {"invoice_date"}, "invoice": {"invoice_number"},
+    "reference": {"bill_reference", "receipt_number"}, "total": {"total_amount"}, "tax": {"tax_amount"}, "due": {"due_date"},
+    "amount_due": {"amount_due"}, "account_number": {"account_number"},
+}
+
+
+def usable_candidates(reconciliation) -> int:
+    fields = (reconciliation or {}).get("fields") or {}
+    return sum(field["vlm"].get("candidate") is not None for field in fields.values())
+
+
+def recoverable_fields(summary, elapsed_seconds, attempt_error=None) -> list:
+    """Fields validation still needs where the model's answer was unusable, not where it found nothing.
+
+    A model that read the page and returned null has already answered. A timeout
+    or an unreachable server would only spend the latency budget again.
+    """
+    asked = (summary.get("selective_recovery") or {}).get("requested_fields") or []
+    if not asked or elapsed_seconds > RETRY_LATENCY_BUDGET_SECONDS:
+        return []
+    needed = set()
+    for finding in summary["validation_precheck"]["findings"]:
+        needed |= {finding.get("field")} | VALIDATION_TO_RECOVERY.get(finding.get("field"), set())
+    reconciled = (summary.get("reconciliation") or {}).get("fields")
+    if reconciled is None:
+        return [name for name in asked if name in needed] if attempt_error in RECOVERABLE_ATTEMPT_ERRORS else []
+    return [name for name in asked if name in needed and (reconciled.get(name) or {}).get("field_rejection")]
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -101,7 +135,7 @@ class DocumentIntelligenceService:
 
         started = time.perf_counter()
 
-        result = map_document(document)
+        result = with_recovery_placeholders(map_document(document))
 
         result["provenance"]["mapping_seconds"] = round(
             time.perf_counter() - started,
@@ -295,6 +329,260 @@ class DocumentIntelligenceService:
 
         return result_path, decision
 
+    def _record_ai_outcome(self, summary, combined_result_path, selective_dir, selective_record,
+                           source_path, source_access_authorized):
+        """Reconcile a successful attempt. Parser values and fields are never changed."""
+        summary["artifacts"]["selective_run"] = str(selective_dir)
+        summary["ai_assistance"]["attempted"] = selective_record.get("ai_request_attempted", False)
+        summary["ai_assistance"]["response_received"] = selective_record.get("ai_response_received", False)
+        summary["ai_assistance"]["status"] = selective_record.get("status")
+        if selective_record.get("status") != "response_structure_valid_needs_review":
+            # Provider/model/response failure must not silently become an approved result.
+            summary["status"] = "ai_attempt_failed_needs_review"
+            return
+        try:
+            summary["ai_assistance"]["prediction"] = json.loads(
+                (selective_dir / "prediction.json").read_text(encoding="utf-8"))
+            reconciliation_path, result = reconcile(
+                combined_result_path, selective_dir, self.runs_dir, project_root=self.project_root,
+                source_path=source_path, source_access_authorized=source_access_authorized)
+        except Exception as error:
+            # A candidate that cannot be reconciled is dropped; the parser result stands.
+            summary["ai_assistance"].update(status="failed", prediction=None)
+            summary["status"] = "ai_attempt_failed_needs_review"
+            summary["recovery_failure"] = type(error).__name__
+            return
+        summary["artifacts"]["reconciliation_result"] = str(reconciliation_path)
+        summary["reconciliation"] = {"status": result["status"], "review_required": result["review_required"],
+                                     "fields": result["fields"]}
+        summary["status"] = result["status"]
+
+    def _record_stage(self, context, name, started, **details):
+        """Stage name, time and decision only; never source text or values."""
+        context["summary"].setdefault("stage_trace", []).append(
+            {"stage": name, "seconds": round(time.perf_counter() - started, 3), **details})
+
+    def stage_verify_source(self, context):
+        """Bind the parser input to its recorded hash and keep the derived copy private."""
+        source_metadata, summary = context["source_metadata"], context["summary"]
+        if source_metadata is None:
+            return
+        source_pdf = context["source_pdf"]
+        if sha256_bytes(source_pdf.read_bytes()) != source_metadata['parser_input']['sha256']:
+            raise ValueError('Converted parser input changed before extraction')
+        if source_metadata['conversion']['operation'] == 'pillow_image_to_pdf':
+            # Keep this derived representation once, in the existing
+            # private service run. Original images stay in their storage.
+            retained = context["service_dir"] / 'parser-input.private.pdf'
+            with retained.open('xb') as handle:
+                handle.write(source_pdf.read_bytes())
+            context["source_pdf"] = retained
+            summary['source_pdf'] = str(retained)
+
+    def stage_primary_extract(self, context):
+        """Docling with RapidOCR."""
+        parser, models_dir, summary = context["parser"], context["models_dir"], context["summary"]
+        parser_fn = parser if parser is not None else (self._parser if self._parser is not None else parse_document)
+        effective_models_dir = Path(models_dir).resolve() if models_dir is not None else self.models_dir
+        parser_kwargs = {"input_pdf": context["source_pdf"], "output_parent": self.runs_dir,
+                         "project_root": self.project_root, "verbose": context["verbose"]}
+        if effective_models_dir is not None:
+            parser_kwargs["models_dir"] = effective_models_dir
+        # If a custom/mock parser is used, only pass models_dir if supported
+        if parser is not None or self._parser is not None:
+            if effective_models_dir is not None:
+                try:
+                    sig = inspect.signature(parser_fn)
+                    if "models_dir" not in sig.parameters and not any(
+                        p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+                    ):
+                        parser_kwargs.pop("models_dir", None)
+                except (ValueError, TypeError):
+                    pass
+        parser_run_dir, _ = parser_fn(**parser_kwargs)
+        context["parser_run_dir"] = parser_run_dir
+        context["document_json_path"] = parser_run_dir / "document.json"
+        summary["artifacts"]["parser_run"] = str(parser_run_dir)
+        summary["artifacts"]["document_json"] = str(context["document_json_path"])
+
+    def stage_classify_and_map(self, context):
+        """Deterministic mapping, classification and source-bound combination."""
+        summary, document_json_path = context["summary"], context["document_json_path"]
+        mapped_result_path = self._save_mapping(document_json_path, context["parser_run_dir"])
+        summary["artifacts"]["mapped_result"] = str(mapped_result_path)
+        extraction_result_path = self._save_extraction(mapped_result_path, context["document_id"])
+        summary["artifacts"]["intermediate_extraction"] = str(extraction_result_path)
+        classification_result_path = self._save_classification(document_json_path)
+        summary["artifacts"]["classification_result"] = str(classification_result_path)
+        combined_result_path = self._save_combined(extraction_result_path, classification_result_path)
+        summary["artifacts"]["classified_extraction"] = str(combined_result_path)
+        combined_payload = json.loads(combined_result_path.read_text(encoding="utf-8"))
+        source_metadata = context["source_metadata"]
+        if source_metadata is not None:
+            from services.extraction.workflow.execution import bind_source_transformation
+            pointer = bind_source_transformation(source_metadata, combined_payload, context["service_dir"], context["service_run_id"])
+            combined_payload['provenance']['source_transformation'] = pointer
+            write_json(combined_result_path, combined_payload)
+            summary['artifacts']['image_preprocessing'] = pointer['path']
+        summary["document_type"] = combined_payload.get("document_type")
+        context["combined_result_path"] = combined_result_path
+        context["combined_payload"] = combined_payload
+
+    def stage_assess_field_evidence(self, context):
+        """The document route, plus a per-field explanation. Never calls a model."""
+        summary = context["summary"]
+        routing_path, decision = self._save_routing(context["combined_result_path"], allow_vlm_inference=context["vlm_allowed"])
+        summary["artifacts"]["routing_result"] = str(routing_path)
+        summary["routing"] = {"decision": decision["decision"], "requested_fields": decision["requested_fields"],
+                              "candidate_reasons": decision["candidate_reasons"], "blocking_reasons": decision["blocking_reasons"]}
+        context["decision"] = decision
+        try:
+            assessment = assess_extraction(
+                context["combined_payload"], self.project_root, allow_vlm_inference=context["vlm_allowed"],
+                source_access_authorized=context["source_access_authorized"], source_path=context["source_path"],
+                document=json.loads(context["document_json_path"].read_text(encoding="utf-8")))
+        except Exception as error:
+            # Parser-only output survives; recovery simply is not offered.
+            assessment = {"policy_version": "extraction-assessment/2", "decision": "HUMAN_REVIEW_REQUIRED",
+                          "reasons": ["ASSESSMENT_UNAVAILABLE:" + type(error).__name__], "fields": {},
+                          "recovery_fields": [], "review_required": True, "ai_call_performed": False}
+        summary["assessment"] = assessment
+        context["assessment"] = assessment
+
+    def stage_select_recovery(self, context):
+        """Decide the outcome of the route and whether a model attempt is allowed."""
+        summary, decision, assessment = context["summary"], context["decision"], context["assessment"]
+        vlm_allowed = context["vlm_allowed"]
+        context["recovery"] = None
+        if decision["decision"] == "parser_only":
+            summary["status"] = "parser_only_needs_review"
+            summary["ai_assistance"] = {"attempted": False, "response_received": False, "status": "skipped_parser_only",
+                                        "model": None, "route_decision": "parser_only", "prediction": None}
+        elif decision["decision"] == "human_review":
+            summary["status"] = "human_review_required"
+            summary["ai_assistance"] = {"attempted": False, "response_received": False, "status": "skipped_human_review",
+                                        "model": None, "route_decision": "human_review", "prediction": None}
+            # The document still goes to a person. A recovery attempt can only
+            # add reviewable candidates for the fields the assessment named.
+            if vlm_allowed and context["source_access_authorized"] is True and assessment["recovery_fields"]:
+                context["recovery"] = {"fields": assessment["recovery_fields"]}
+                summary["selective_recovery"] = {"scope": "profile_fields/1", "requested_fields": assessment["recovery_fields"],
+                                                 "profile": context["combined_payload"]["document_type"]["value"]}
+                summary["ai_assistance"] = {"attempted": False, "response_received": False, "status": "failed",
+                                            "prediction": None, "route_decision": "human_review"}
+        elif decision["decision"] == "vlm_candidate":
+            if vlm_allowed:
+                context["recovery"] = {"fields": None}
+            else:
+                summary["status"] = "human_review_required"
+                summary["routing"]["decision"] = "human_review"
+                summary["routing"]["requested_fields"] = []
+                blocker = {"code": "VLM_INFERENCE_DISABLED", "field": None}
+                if blocker not in summary["routing"]["blocking_reasons"]:
+                    summary["routing"]["blocking_reasons"].append(blocker)
+                summary["ai_assistance"] = {"attempted": False, "response_received": False, "status": "skipped_human_review",
+                                            "model": None, "route_decision": "human_review", "prediction": None}
+        else:
+            raise ValueError("Unsupported routing decision: " + repr(decision["decision"]))
+
+    def stage_run_qwen_recovery(self, context):
+        """One bounded local attempt. Any failure leaves the parser result in place."""
+        summary, recovery = context["summary"], context["recovery"]
+        keywords = {"inference_permission": context["vlm_allowed"], "source_access_authorized": context["source_access_authorized"],
+                    "source_path": context["source_path"], "attempts": {}}
+        if recovery["fields"] is not None:
+            keywords["selected_fields"] = recovery["fields"]
+        if context.get("previous_problems"):
+            keywords["previous_problems"] = context["previous_problems"]
+        try:
+            context["selective"] = run_attempt(context["combined_result_path"], self.project_root, **keywords)
+        except Exception as error:
+            context["selective"] = None
+            summary["ai_assistance"].update(status="failed", prediction=None)
+            summary["status"] = "ai_attempt_failed_needs_review"
+            summary["recovery_failure"] = type(error).__name__
+
+    def stage_reconcile_candidates(self, context):
+        """Check model values against the source and arbitrate. Parser values stay."""
+        summary = context["summary"]
+        if context.get("selective") is not None:
+            selective_dir, selective_record = context["selective"]
+            self._record_ai_outcome(summary, context["combined_result_path"], selective_dir, selective_record,
+                                    context["source_path"], context["source_access_authorized"])
+        before_retry = context.pop("before_retry", None)
+        if before_retry is None:
+            return
+        # A retry may only improve on the first attempt. Otherwise the first result stands.
+        if context.get("selective") is not None and (
+                usable_candidates(summary.get("reconciliation")) > usable_candidates(before_retry["reconciliation"])):
+            summary["targeted_retry"]["result"] = "retry_used"
+        else:
+            summary["targeted_retry"]["unused_run"] = (summary.get("artifacts") or {}).get("selective_run")
+            summary.update(before_retry)
+            summary["targeted_retry"]["result"] = "first_attempt_kept"
+
+    def stage_precheck_validation(self, context):
+        """Run the existing rules on a draft, without a database. The stored validation stays authoritative."""
+        summary = context["summary"]
+        context["retry_fields"] = []
+        context["precheck_count"] = context.get("precheck_count", 0) + 1
+        try:
+            # Advisory only: nothing here, imports included, may stop an extraction.
+            from services.extraction.contracts.accounting_contract import map_m2_result
+            from services.extraction.contracts.module2_public_result import build_public_result
+            from validation.documents.document_validation import evaluate_document
+            draft = context["service_dir"] / "service-draft.json"
+            write_json(draft, summary)
+            _, public = build_public_result(draft, self.project_root,
+                                            output_parent=context["service_dir"] / f"precheck-{context['precheck_count']}")
+            mapped = map_m2_result(public, context["document_id"])
+            kind = public["document_type"]["value"]
+            result = evaluate_document({"kind": kind, "category": "accounts_payable"}, {"raw_json": public},
+                                       mapped["fields"], mapped["line_items"])
+            errors = result.get("errors") or []
+            summary["validation_precheck"] = {
+                "status": "findings" if errors else "clear",
+                "findings": [{"rule": e.get("code"), "field": e.get("field"), "cause": e.get("cause")} for e in errors],
+                "coverage_complete": result.get("coverage_complete"),
+                "scope": "Rules needing the database, such as supplier and duplicate checks, run when the result is stored."}
+        except Exception as error:
+            summary["validation_precheck"] = {"status": "unavailable", "findings": [], "reason": type(error).__name__}
+            return
+        if context.get("retries_used", 0) >= MAX_TARGETED_RETRIES:
+            return
+        context["retry_fields"] = recoverable_fields(summary, time.perf_counter() - context["started"],
+                                                     (context.get("selective") or (None, {}))[1].get("error_type"))
+
+    def stage_targeted_retry(self, context):
+        """Ask once more about the same fields. Reached at most once, so it cannot loop."""
+        summary = context["summary"]
+        context["retries_used"] = context.get("retries_used", 0) + 1
+        context["before_retry"] = {key: json.loads(json.dumps(summary.get(key)))
+                                   for key in ("status", "artifacts", "ai_assistance", "reconciliation")}
+        asked = summary["selective_recovery"]["requested_fields"]
+        context["recovery"] = {"fields": list(asked)}
+        # Say what was wrong with the last answer. At temperature 0 the same request would return the same answer.
+        reconciled = (summary.get("reconciliation") or {}).get("fields") or {}
+        context["previous_problems"] = {name: reconciled[name]["field_rejection"] for name in asked
+                                        if (reconciled.get(name) or {}).get("field_rejection")} or None
+        summary["targeted_retry"] = {"needed_fields": list(context["retry_fields"]), "requested_fields": list(asked)}
+
+    def stage_final_route(self, context):
+        """Where this document goes next. Every route ends with a person; none approves anything."""
+        summary = context["summary"]
+        classification = context["combined_payload"]["document_type"]
+        candidates = [name for name, field in ((summary.get("reconciliation") or {}).get("fields") or {}).items()
+                      if field.get("resolution") == "candidate_for_review"]
+        if classification.get("status") != "classified":
+            route = "DOCUMENT_TYPE_REVIEW"
+        elif summary["validation_precheck"]["findings"]:
+            route = "ACCOUNTANT_ACTION_REQUIRED"
+        elif candidates:
+            route = "MODEL_CANDIDATES_FOR_REVIEW"
+        else:
+            route = "ACCOUNTANT_CONFIRMATION"
+        summary["final_route"] = route
+
     def process_document(
         self,
         document_id: str,
@@ -304,6 +592,8 @@ class DocumentIntelligenceService:
         allow_vlm_inference: bool | None = None,
         models_dir: Path | None = None,
         source_metadata: dict | None = None,
+        source_path: Path | None = None,
+        source_access_authorized: bool = False,
     ):
         """Process one PDF through the current Module 2 pipeline.
 
@@ -379,368 +669,16 @@ class DocumentIntelligenceService:
             / "service-result.json"
         )
 
+        context = {
+            "summary": summary, "document_id": document_id, "source_pdf": source_pdf, "service_dir": service_dir,
+            "service_run_id": service_run_id, "source_metadata": source_metadata, "parser": parser,
+            "models_dir": models_dir, "verbose": verbose, "vlm_allowed": vlm_allowed,
+            "source_path": source_path, "source_access_authorized": source_access_authorized, "started": started,
+        }
+
         try:
-            if source_metadata is not None:
-                if sha256_bytes(source_pdf.read_bytes()) != source_metadata['parser_input']['sha256']:
-                    raise ValueError('Converted parser input changed before extraction')
-                if source_metadata['conversion']['operation'] == 'pillow_image_to_pdf':
-                    # Keep this derived representation once, in the existing
-                    # private service run. Original images stay in their storage.
-                    retained = service_dir / 'parser-input.private.pdf'
-                    with retained.open('xb') as handle:
-                        handle.write(source_pdf.read_bytes())
-                    source_pdf = retained
-                    summary['source_pdf'] = str(source_pdf)
-            #
-            # 1. DOCLING PARSER
-            #
-            parser_fn = (
-                parser
-                if parser is not None
-                else (self._parser if self._parser is not None else parse_document)
-            )
-
-            effective_models_dir = (
-                Path(models_dir).resolve()
-                if models_dir is not None
-                else self.models_dir
-            )
-
-            parser_kwargs = {
-                "input_pdf": source_pdf,
-                "output_parent": self.runs_dir,
-                "project_root": self.project_root,
-                "verbose": verbose,
-            }
-            if effective_models_dir is not None:
-                parser_kwargs["models_dir"] = effective_models_dir
-
-            # If a custom/mock parser is used, only pass models_dir if supported
-            if parser is not None or self._parser is not None:
-                if effective_models_dir is not None:
-                    try:
-                        sig = inspect.signature(parser_fn)
-                        if "models_dir" not in sig.parameters and not any(
-                            p.kind == inspect.Parameter.VAR_KEYWORD
-                            for p in sig.parameters.values()
-                        ):
-                            parser_kwargs.pop("models_dir", None)
-                    except (ValueError, TypeError):
-                        pass
-
-            parser_run_dir, parser_record = parser_fn(**parser_kwargs)
-
-            document_json_path = (
-                parser_run_dir
-                / "document.json"
-            )
-
-            summary["artifacts"]["parser_run"] = (
-                str(parser_run_dir)
-            )
-
-            summary["artifacts"]["document_json"] = (
-                str(document_json_path)
-            )
-
-            #
-            # 2. DETERMINISTIC MAPPING
-            #
-            mapped_result_path = (
-                self._save_mapping(
-                    document_json_path,
-                    parser_run_dir,
-                )
-            )
-
-            summary["artifacts"]["mapped_result"] = (
-                str(mapped_result_path)
-            )
-
-            #
-            # 3. EXTRACTION V1 ADAPTER
-            #
-            extraction_result_path = (
-                self._save_extraction(
-                    mapped_result_path,
-                    document_id,
-                )
-            )
-
-            summary["artifacts"][
-                "intermediate_extraction"
-            ] = str(
-                extraction_result_path
-            )
-
-            #
-            # 4. CLASSIFICATION
-            #
-            classification_result_path = (
-                self._save_classification(
-                    document_json_path,
-                )
-            )
-
-            summary["artifacts"][
-                "classification_result"
-            ] = str(
-                classification_result_path
-            )
-
-            #
-            # 5. COMBINE + SOURCE VERIFICATION
-            #
-            combined_result_path = (
-                self._save_combined(
-                    extraction_result_path,
-                    classification_result_path,
-                )
-            )
-
-            summary["artifacts"][
-                "classified_extraction"
-            ] = str(
-                combined_result_path
-            )
-
-            combined_payload = json.loads(
-                combined_result_path.read_text(
-                    encoding="utf-8"
-                )
-            )
-
-            if source_metadata is not None:
-                from services.extraction.workflow.execution import bind_source_transformation
-                pointer = bind_source_transformation(source_metadata, combined_payload, service_dir, service_run_id)
-                combined_payload['provenance']['source_transformation'] = pointer
-                write_json(combined_result_path, combined_payload)
-                summary['artifacts']['image_preprocessing'] = pointer['path']
-
-            summary["document_type"] = (
-                combined_payload.get(
-                    "document_type"
-                )
-            )
-
-            #
-            # 6. ROUTING
-            #
-            routing_path, decision = (
-                self._save_routing(
-                    combined_result_path,
-                    allow_vlm_inference=vlm_allowed,
-                )
-            )
-
-            summary["artifacts"][
-                "routing_result"
-            ] = str(
-                routing_path
-            )
-
-            summary["routing"] = {
-                "decision": decision[
-                    "decision"
-                ],
-                "requested_fields": decision[
-                    "requested_fields"
-                ],
-                "candidate_reasons": decision[
-                    "candidate_reasons"
-                ],
-                "blocking_reasons": decision[
-                    "blocking_reasons"
-                ],
-            }
-
-            #
-            # 7A. PARSER-ONLY PATH
-            #
-            if decision["decision"] == "parser_only":
-                summary["status"] = (
-                    "parser_only_needs_review"
-                )
-
-                summary["ai_assistance"] = {
-                    "attempted": False,
-                    "response_received": False,
-                    "status": "skipped_parser_only",
-                    "model": None,
-                    "route_decision": "parser_only",
-                    "prediction": None,
-                }
-
-            #
-            # 7B. HUMAN-REVIEW BLOCKER PATH
-            #
-            elif decision["decision"] == "human_review":
-                summary["status"] = (
-                    "human_review_required"
-                )
-
-                summary["ai_assistance"] = {
-                    "attempted": False,
-                    "response_received": False,
-                    "status": (
-                        "skipped_human_review"
-                    ),
-                    "model": None,
-                    "route_decision": "human_review",
-                    "prediction": None,
-                }
-
-            #
-            # 7C. SELECTIVE VLM PATH
-            #
-            elif decision["decision"] == "vlm_candidate":
-                if not vlm_allowed:
-                    summary["status"] = (
-                        "human_review_required"
-                    )
-
-                    summary["routing"][
-                        "decision"
-                    ] = "human_review"
-                    summary["routing"][
-                        "requested_fields"
-                    ] = []
-
-                    blocker = {
-                        "code": "VLM_INFERENCE_DISABLED",
-                        "field": None,
-                    }
-                    if (
-                        blocker
-                        not in summary[
-                            "routing"
-                        ]["blocking_reasons"]
-                    ):
-                        summary["routing"][
-                            "blocking_reasons"
-                        ].append(blocker)
-
-                    summary["ai_assistance"] = {
-                        "attempted": False,
-                        "response_received": False,
-                        "status": (
-                            "skipped_human_review"
-                        ),
-                        "model": None,
-                        "route_decision": "human_review",
-                        "prediction": None,
-                    }
-
-                else:
-                    selective_dir, selective_record = (
-                        run_attempt(
-                            combined_result_path,
-                            self.project_root,
-                            inference_permission=vlm_allowed,
-                        )
-                    )
-
-                    summary["artifacts"][
-                        "selective_run"
-                    ] = str(
-                        selective_dir
-                    )
-
-                    summary["ai_assistance"][
-                        "attempted"
-                    ] = selective_record.get(
-                        "ai_request_attempted",
-                        False,
-                    )
-
-                    summary["ai_assistance"][
-                        "response_received"
-                    ] = selective_record.get(
-                        "ai_response_received",
-                        False,
-                    )
-
-                    summary["ai_assistance"][
-                        "status"
-                    ] = selective_record.get(
-                        "status"
-                    )
-
-                    if (
-                        selective_record.get(
-                            "status"
-                        )
-                        == "response_structure_valid_needs_review"
-                    ):
-                        prediction_path = (
-                            selective_dir
-                            / "prediction.json"
-                        )
-
-                        prediction = json.loads(
-                            prediction_path.read_text(
-                                encoding="utf-8"
-                            )
-                        )
-
-                        summary["ai_assistance"][
-                            "prediction"
-                        ] = prediction
-
-                        reconciliation_path, reconciliation_result = (
-                            reconcile(
-                                combined_result_path,
-                                selective_dir,
-                                self.runs_dir,
-                            )
-                        )
-
-                        summary["artifacts"][
-                            "reconciliation_result"
-                        ] = str(
-                            reconciliation_path
-                        )
-
-                        summary["reconciliation"] = {
-                            "status": (
-                                reconciliation_result[
-                                    "status"
-                                ]
-                            ),
-                            "review_required": (
-                                reconciliation_result[
-                                    "review_required"
-                                ]
-                            ),
-                            "fields": (
-                                reconciliation_result[
-                                    "fields"
-                                ]
-                            ),
-                        }
-
-                        summary["status"] = (
-                            reconciliation_result[
-                                "status"
-                            ]
-                        )
-
-                    else:
-                        #
-                        # Provider/model/response failure must not
-                        # silently become an approved result.
-                        #
-                        summary["status"] = (
-                            "ai_attempt_failed_needs_review"
-                        )
-
-            else:
-                raise ValueError(
-                    "Unsupported routing decision: "
-                    + repr(
-                        decision["decision"]
-                    )
-                )
+            from services.extraction.workflow.extraction_graph import run_stages
+            run_stages(self, context)
 
             summary["elapsed_seconds"] = round(
                 time.perf_counter()

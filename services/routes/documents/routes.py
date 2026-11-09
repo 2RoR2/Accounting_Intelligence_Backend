@@ -1,7 +1,112 @@
 from __future__ import annotations
+import json
 from main import *
+
+def _notify_tenant_users(db, tenant_id, actor_id, title, message, resource, roles=('local_admin', 'accountant')):
+    users = db.execute("SELECT id FROM users WHERE tenant_id=%s AND role=ANY(%s::text[]) AND id<>%s", (tenant_id, list(roles), actor_id)).fetchall()
+    for recipient in users:
+        db.execute("INSERT INTO notifications(tenant_id,user_id,type,title,message,resource) VALUES (%s,%s,%s,%s,%s,%s)", (tenant_id, recipient['id'], 'document_workflow', title, message, resource))
+
+def _raw_scalar(value):
+    """Unwrap the list/object shape used by XML-to-JSON extraction payloads."""
+    while isinstance(value, list):
+        value = value[0] if value else None
+    if isinstance(value, dict):
+        for key in ('_', 'value', 'text'):
+            if value.get(key) is not None:
+                return value[key]
+    return value
+
+
+def _find_raw_nodes(value, key):
+    if isinstance(value, dict):
+        for name, child in value.items():
+            if name.casefold() == key.casefold():
+                yield child
+            yield from _find_raw_nodes(child, key)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _find_raw_nodes(child, key)
+
+
+def _ubl_line_items(raw_json):
+    """Recover real line items when an older extraction saved no line_items rows."""
+    if isinstance(raw_json, str):
+        try:
+            raw_json = json.loads(raw_json)
+        except Exception:
+            return []
+    if not isinstance(raw_json, dict):
+        return []
+    line_groups = list(_find_raw_nodes(raw_json, 'InvoiceLine'))
+    lines = []
+    for group in line_groups:
+        if isinstance(group, list):
+            lines.extend(group)
+        elif isinstance(group, dict):
+            lines.append(group)
+    output = []
+    for number, line in enumerate(lines, 1):
+        if not isinstance(line, dict):
+            continue
+        item = _raw_scalar(line.get('Item')) or {}
+        price = _raw_scalar(line.get('Price')) or {}
+        quantity = _raw_scalar(line.get('InvoicedQuantity'))
+        amount = _raw_scalar(line.get('LineExtensionAmount'))
+        description = _raw_scalar(item.get('Description')) if isinstance(item, dict) else None
+        identifier = _raw_scalar(line.get('ID'))
+        unit_price = _raw_scalar(price.get('PriceAmount')) if isinstance(price, dict) else None
+        output.append({
+            'id': str(identifier or number),
+            'description': str(description) if description is not None else None,
+            'quantity': str(quantity) if quantity is not None else None,
+            'unit_price': str(unit_price) if unit_price is not None else None,
+            'amount': str(amount) if amount is not None else None,
+        })
+    return output
+
+
+def _display_filename(original_filename, detected_identifier=None):
+    """Use the detected document number in the UI while preserving the upload extension."""
+    original = Path(str(original_filename or "document")).name
+    identifier = str(detected_identifier or "").strip()
+    if not identifier or identifier.casefold() in {"invoice", "invoice number", "reference", "n/a", "na", "none", "null", "unknown", "-"}:
+        return original
+    safe = safe_component(identifier, "document")
+    suffix = Path(original).suffix.lower()
+    return f"{safe}{suffix}" if suffix else safe
+
+
 from main import _lock_upload_identity, _processing_error, _lock_workspace_document, _require_current_extraction, _authorised_document, _bank_row_values, _bank_transaction_dto, _uuid_or_422, _account_dto, _cost_centre_dto
 from validation.matching.vendor_matching import find_vendor_match
+from database.object_storage.object_store import local_storage_root, document_key, safe_component
+from validation.documents.document_validation import validation_outcome
+from validation.documents.references import accepted_reviews, REVIEW_ACTION
+from services.extraction.contracts.accounting_contract import effective_value, json_safe
+from services.extraction.contracts.currency_review import build_currency_review, decision_details
+from starlette.background import BackgroundTask
+
+# Every key the extractor persists must be correctable, under the key it is stored as.
+CORRECTABLE_MONEY_FIELDS = frozenset({
+    'subtotal', 'tax', 'discount', 'total', 'tax_amount', 'total_amount',
+    'tendered_amount', 'change_given', 'amount_paid', 'outstanding_amount',
+    'document_allowances', 'document_charges', 'prepaid_amount', 'rounding_amount',
+    'total_excluding_tax', 'total_including_tax', 'amount_due',
+    'allowances', 'charges', 'prepaid', 'rounding', 'payment_amount',
+    'previous_balance', 'arrears', 'adjustment_total', 'credit_total', 'late_fee',
+})
+CORRECTABLE_FIELDS = CORRECTABLE_MONEY_FIELDS | frozenset({
+    'supplier', 'seller', 'merchant', 'customer', 'buyer', 'invoice', 'reference', 'receipt',
+    'date', 'due', 'currency',
+    'supplier_name', 'buyer_name', 'invoice_number', 'reference_number',
+    'supplier_address', 'customer_address', 'supplier_tax_id', 'customer_tax_id',
+    'merchant_address', 'provider_address',
+    'invoice_date', 'due_date',
+    'account_number', 'billing_period', 'transaction_time', 'payment_method',
+    'payment_terms', 'received_date', 'expense_category', 'payment_reference',
+    'purchase_order_number', 'goods_receipt_reference',
+    'bill_reference', 'receipt_number',
+})
 
 def list_documents(
     request: Request,
@@ -66,11 +171,15 @@ def list_documents(
         params.extend([amount, amount])
     with connect() as db:
         rows = db.execute(f"""
-            SELECT d.*, sr.total_amount, sr.supplier_name, sr.buyer_name,
-                   COALESCE(sr.due_date::text, due_field.current_value, due_field.normalized_value, due_field.raw_value) AS due_date_value
+            SELECT d.*, sr.total_amount,
+                   -- Before a record exists, the party is the extraction's current value. A contact's related documents depend on this.
+                   COALESCE(sr.supplier_name, supplier_field.value) AS supplier_name,
+                   COALESCE(sr.buyer_name, customer_field.value) AS buyer_name,
+                   COALESCE(sr.due_date::text, due_field.current_value, due_field.normalized_value, due_field.raw_value) AS due_date_value,
+                   COALESCE(sr.invoice_number, sr.reference_number, identifier_field.value) AS detected_identifier
             FROM documents d
             LEFT JOIN LATERAL (
-                SELECT total_amount, supplier_name, buyer_name, due_date
+                SELECT total_amount, supplier_name, buyer_name, due_date, invoice_number, reference_number
                 FROM standardised_records
                 WHERE document_id=d.id
                 ORDER BY revision_number DESC
@@ -83,10 +192,26 @@ def list_documents(
                 ORDER BY created_at DESC
                 LIMIT 1
             ) due_field ON true
+            LEFT JOIN LATERAL (
+                SELECT COALESCE(current_value, normalized_value) AS value FROM field_predictions
+                WHERE document_id=d.id AND field_key='supplier' ORDER BY created_at DESC LIMIT 1
+            ) supplier_field ON true
+            LEFT JOIN LATERAL (
+                SELECT COALESCE(current_value, normalized_value) AS value FROM field_predictions
+                WHERE document_id=d.id AND field_key='customer' ORDER BY created_at DESC LIMIT 1
+            ) customer_field ON true
+            LEFT JOIN LATERAL (
+                SELECT COALESCE(current_value, normalized_value, raw_value) AS value
+                FROM field_predictions
+                WHERE document_id=d.id
+                  AND field_key IN ('invoice', 'invoice_number', 'reference', 'reference_number', 'bill_reference', 'receipt', 'receipt_number')
+                ORDER BY created_at DESC
+                LIMIT 1
+            ) identifier_field ON true
             WHERE {' AND '.join(clauses)}
             ORDER BY d.uploaded_at DESC
         """, params).fetchall()
-    return [{"id": str(r["id"]), "code": r["document_code"], "name": r["original_filename"], "tenantId": str(r["tenant_id"]), "ownerId": str(r["owner_id"]), "assignedTo": str(r["assigned_to"]) if r["assigned_to"] else None, "kind": r["kind"].upper(), "category": r["category"].upper(), "status": r["status"].upper(), "mimeType": r["mime_type"], "fileSize": r["file_size_bytes"], "seconds": float(r["processing_seconds"]) if r["processing_seconds"] is not None else 0, "totalAmount": float(r["total_amount"]) if r["total_amount"] is not None else None, "supplier": r["supplier_name"], "customer": r["buyer_name"], "dueDate": r["due_date_value"], "createdAt": str(r["uploaded_at"]), "updatedAt": str(r["updated_at"])} for r in rows]
+    return [{"id": str(r["id"]), "code": r["document_code"], "name": _display_filename(r["original_filename"], r["detected_identifier"]), "tenantId": str(r["tenant_id"]), "ownerId": str(r["owner_id"]), "assignedTo": str(r["assigned_to"]) if r["assigned_to"] else None, "kind": r["kind"].upper(), "category": r["category"].upper(), "status": r["status"].upper(), "mimeType": r["mime_type"], "fileSize": r["file_size_bytes"], "seconds": float(r["processing_seconds"]) if r["processing_seconds"] is not None else 0, "totalAmount": float(r["total_amount"]) if r["total_amount"] is not None else None, "supplier": r["supplier_name"], "customer": r["buyer_name"], "dueDate": r["due_date_value"], "createdAt": str(r["uploaded_at"]), "updatedAt": str(r["updated_at"])} for r in rows]
 
 def get_document_detail(document_id: str, request: Request):
     user = require_workspace_user(request)
@@ -111,11 +236,19 @@ def get_document_file(document_id: str, request: Request):
         row = db.execute(f"SELECT storage_path, original_filename, mime_type FROM documents WHERE id=%s AND (%s IS NULL OR tenant_id=%s){visibility}", params).fetchone()
     if not row:
         raise HTTPException(404, "Document not found.")
-    path = Path(row["storage_path"]).resolve()
-    storage_root = Path(os.getenv("DOCUMENT_STORAGE_PATH", "storage")).resolve()
-    if not path.is_file() or storage_root not in path.parents:
+    temporary = None
+    if str(row["storage_path"]).startswith("s3://"):
+        from database.object_storage.object_store import download
+        temporary = download(str(row["storage_path"]))
+        path = temporary
+    else:
+        path = Path(row["storage_path"]).resolve()
+        if local_storage_root() not in path.parents:
+            raise HTTPException(404, "The original document is unavailable.")
+    if not path.is_file():
         raise HTTPException(404, "The original document is unavailable.")
-    return FileResponse(path, media_type=row["mime_type"] or "application/octet-stream", filename=row["original_filename"], content_disposition_type="inline")
+    cleanup = BackgroundTask(temporary.unlink, missing_ok=True) if temporary else None
+    return FileResponse(path, media_type=row["mime_type"] or "application/octet-stream", filename=row["original_filename"], content_disposition_type="inline", background=cleanup)
 
 def update_document_status(document_id: str, status: str, request: Request):
     require_workspace_user(request, {"super_admin", "local_admin", "accountant"})
@@ -124,21 +257,23 @@ def update_document_status(document_id: str, status: str, request: Request):
 def retry_document_processing(document_id: str, request: Request):
     from services.queue import attempts
     user = require_workspace_user(request, {'local_admin','accountant'})
-    delivery = None
+    scheduled = None
     try:
         with connect() as db:
             _lock_workspace_document(db,document_id,user)
             db.execute("SELECT set_config('app.user_id',%s,true), set_config('app.status_reason',%s,true)",
                        (str(user['id']),'Explicit extraction retry'))
-            delivery = attempts.reserve_dispatch(db,document_id,str(user['tenant_id']),retry=True)
+            scheduled = attempts.reserve_dispatch(db,document_id,str(user['tenant_id']),retry=True,defer=True)
             db.execute('''INSERT INTO audit_logs(tenant_id,user_id,user_name,role,action,resource,details)
                 VALUES (%s,%s,%s,%s,'extraction.retry_requested',%s,%s)''',
                 (user['tenant_id'],user['id'],user.get('name','Workspace user'),user['role'],
-                 str(document_id),delivery.job_id))
+                 str(document_id),str(scheduled['id'])))
         # No SQL lock or uncommitted outbox reservation crosses the Redis call.
-        queued = attempts.publish(delivery)
+        queued = attempts.dispatch_scheduled(str(scheduled['id']))
+        if queued['jobStatus']=='FAILED':
+            raise attempts.AttemptRejected('DISPATCH_UNCONFIRMED')
     except attempts.AttemptRejected as exc:
-        _processing_error(exc,document_id,delivery.job_id if delivery else None)
+        _processing_error(exc,document_id,str(scheduled['id']) if scheduled else None)
     return {'id':str(document_id),**queued}
 
 def delete_document(document_id: str, request: Request):
@@ -173,7 +308,36 @@ def list_records(request: Request):
     scope = tenant_scope(user)
     with connect() as db:
         rows = db.execute("SELECT * FROM standardised_records WHERE (%s IS NULL OR tenant_id=%s) ORDER BY created_at DESC", (scope, scope)).fetchall()
-    return [{"id": str(r["id"]), "code": r["record_code"], "documentId": str(r["document_id"]), "tenantId": str(r["tenant_id"]), "category": r["category"].upper(), "validation": r["validation_status"].upper(), "status": "COMPLETED", "snapshot": r["snapshot"], "createdAt": str(r["created_at"])} for r in rows]
+        output = []
+        for r in rows:
+            fields = db.execute("""SELECT fp.* FROM field_predictions fp
+                JOIN raw_extractions re ON re.id=fp.extraction_id AND re.is_current=true
+                WHERE fp.document_id=%s ORDER BY fp.field_key""", (r["document_id"],)).fetchall()
+            items = db.execute("""SELECT li.* FROM line_items li
+                JOIN raw_extractions re ON re.id=li.extraction_id AND re.is_current=true
+                WHERE li.document_id=%s ORDER BY li.line_number""", (r["document_id"],)).fetchall()
+            raw_extraction = db.execute("SELECT raw_json FROM raw_extractions WHERE document_id=%s AND is_current=true", (r["document_id"],)).fetchone()
+            snapshot = r["snapshot"] or {}
+            if isinstance(snapshot, str):
+                try:
+                    snapshot = json.loads(snapshot)
+                except Exception:
+                    snapshot = {}
+            snapshot_items = snapshot.get("lineItems") or snapshot.get("line_items") or [] if isinstance(snapshot, dict) else []
+            line_item_rows = [line_dto(item) for item in items] if items else (snapshot_items or _ubl_line_items(raw_extraction['raw_json'] if raw_extraction else {}))
+            output.append({"id": str(r["id"]), "code": r["record_code"], "documentId": str(r["document_id"]), "tenantId": str(r["tenant_id"]), "category": r["category"].upper(), "validation": r["validation_status"].upper(), "status": "COMPLETED", "snapshot": snapshot,
+                "supplier": r["supplier_name"], "customer": r["buyer_name"], "invoiceNumber": r["invoice_number"], "referenceNumber": r["reference_number"], "invoiceDate": str(r["invoice_date"]) if r["invoice_date"] else None, "dueDate": str(r["due_date"]) if r["due_date"] else None, "totalAmount": decimal_text(r["total_amount"]), "currency": r["currency"],
+                # Keep the approved record columns in the list response. They are
+                # the authoritative standardised values even when an older
+                # extraction snapshot contains placeholders.
+                "supplier": r["supplier_name"], "customer": r["buyer_name"],
+                "invoiceNumber": r["invoice_number"], "referenceNumber": r["reference_number"],
+                "invoiceDate": str(r["invoice_date"]) if r["invoice_date"] else None,
+                "dueDate": str(r["due_date"]) if r["due_date"] else None,
+                "totalAmount": decimal_text(r["total_amount"]), "currency": r["currency"],
+                "extraction": {"documentId": str(r["document_id"]), "contentRevision": snapshot.get("contentRevision") if isinstance(snapshot, dict) else None,
+                    "fields": [prediction_dto(field) for field in fields], "lineItems": line_item_rows, "raw": snapshot.get("extraction", {}) if isinstance(snapshot, dict) else {}}, "createdAt": str(r["created_at"])})
+    return output
 
 def record_metadata(request: Request, tenant_id: str | None = None):
     require_workspace_user(request, {"super_admin"})
@@ -223,21 +387,23 @@ async def upload_document(request: Request, file: UploadFile = File(...), kind: 
     file_hash = hashlib.sha256(data).hexdigest()
     # Never allow a client filename to create directories or escape private storage.
     original_filename = Path(file.filename or "document").name
-    object_key = f"documents/{tenant_id}/{uuid.uuid4()}_{original_filename}"
-    use_object_storage = bool(os.getenv("S3_BUCKET"))
+    upload_id = uuid.uuid4()
+    object_key = document_key(tenant_id, user["id"], user.get("name"), upload_id, original_filename)
+    from database.object_storage.object_store import enabled as object_storage_enabled
+    use_object_storage = object_storage_enabled()
     storage_path = None
+    storage_uri = None
     if use_object_storage:
         from database.object_storage.object_store import put_bytes
         storage_uri = put_bytes(object_key, data, file.content_type or "application/octet-stream")
         storage_value = storage_uri
     else:
-        storage_dir = Path(os.getenv("DOCUMENT_STORAGE_PATH", "storage"))
-        if not storage_dir.is_absolute():
-            storage_dir = (Path(__file__).resolve().parent / storage_dir).resolve()
-        else:
-            storage_dir = storage_dir.resolve()
+        storage_dir = local_storage_root()
         storage_dir.mkdir(parents=True, exist_ok=True)
-        storage_path = storage_dir / f"{uuid.uuid4()}_{original_filename}"
+        storage_path = (storage_dir / Path(object_key)).resolve()
+        if not storage_path.is_relative_to(storage_dir.resolve()):
+            raise HTTPException(422, "Invalid storage destination.")
+        storage_path.parent.mkdir(parents=True, exist_ok=True)
         storage_path.write_bytes(data)
         storage_value = str(storage_path)
     from services.queue import attempts
@@ -247,19 +413,24 @@ async def upload_document(request: Request, file: UploadFile = File(...), kind: 
             duplicate = db.execute("SELECT id,document_code,original_filename FROM documents WHERE tenant_id=%s AND file_hash_sha256=%s ORDER BY uploaded_at,id LIMIT 1", (tenant_id, file_hash)).fetchone()
             if duplicate:
                 raise HTTPException(409, {"message": "This document is already uploaded.", "existingDocumentId": str(duplicate["id"]), "existingDocumentCode": duplicate["document_code"], "existingFilename": duplicate["original_filename"]})
-            row = db.execute("""INSERT INTO documents(tenant_id,owner_id,original_filename,kind,category,storage_path,mime_type,file_size_bytes,file_hash_sha256,status)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,'queued') RETURNING *""",
-                (tenant_id, user["id"], original_filename, kind, category, storage_value, file.content_type or "application/octet-stream", len(data), file_hash)).fetchone()
-            job = db.execute("INSERT INTO pending_jobs(tenant_id,document_id) VALUES (%s,%s) RETURNING id", (tenant_id, row["id"])).fetchone()
-            # Document, job and lease commit together. A crash before Redis is
-            # recoverable by the exact expired reservation, never a guessed job.
-            delivery = attempts.reserve_dispatch(db,str(row['id']),str(tenant_id),job_id=str(job['id']))
+            row = db.execute("""INSERT INTO documents(id,tenant_id,owner_id,original_filename,kind,category,storage_path,mime_type,file_size_bytes,file_hash_sha256,status)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'queued') RETURNING *""",
+                (upload_id, tenant_id, user["id"], original_filename, kind, category, storage_value, file.content_type or "application/octet-stream", len(data), file_hash)).fetchone()
+            # Upload and durable scheduling commit together. Dispatch only when
+            # worker capacity is available; waiting is not active extraction.
+            job = attempts.schedule_document(db,str(row['id']),str(tenant_id))
     except Exception:
         if storage_path is not None:
             storage_path.unlink(missing_ok=True)
+        if storage_uri:
+            try:
+                from database.object_storage.object_store import delete
+                delete(storage_uri)
+            except Exception:
+                pass
         raise
     try:
-        queued = attempts.publish(delivery)
+        queued = attempts.dispatch_scheduled(str(job['id']))
     except attempts.AttemptRejected as exc:
         # The document and durable job remain stored. Include their IDs so the
         # caller can refresh/retry; do not encourage a duplicate upload.
@@ -304,6 +475,7 @@ def standardise_document(document_id: str, request: Request):
             snapshot = approved_snapshot(doc, extraction, fields, items)
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
+        snapshot['validationReviews'] = json_safe(list(accepted_reviews(db, doc).values()))
         if doc['kind'] == 'bill' and values.get('reference') is None:
             values['reference'] = values.get('bill_number') or values.get('bill_reference') or values.get('account_number')
         elif doc['kind'] == 'receipt' and values.get('reference') is None:
@@ -378,16 +550,21 @@ def get_document_extraction(document_id: str, request: Request):
         items = db.execute("SELECT * FROM line_items WHERE document_id=%s AND extraction_id=%s ORDER BY line_number", (document_id, extraction["id"] if extraction else None)).fetchall() if extraction else []
         line_corrections = db.execute("""SELECT line_item_id,field_key,old_value,new_value,corrected_by,corrected_at
             FROM line_item_corrections WHERE document_id=%s ORDER BY corrected_at DESC""", (document_id,)).fetchall()
+        currency_review = _currency_review(db, user['tenant_id'], document_id, fields)
     return {
         "documentId": document_id,
         "contentRevision": doc['content_revision'],
-        "classification": (extraction['raw_json'].get('document_type') or {}) if extraction else {},
+        "classification": ((extraction['raw_json'].get('document_type') or
+            ({'value': extraction['raw_json']['predicted_document_type'], 'status': 'classified',
+              'reason': 'STRUCTURED_SOURCE_TYPE_CODE', 'evidence': []}
+             if extraction['raw_json'].get('predicted_document_type') in {'credit_note','debit_note'} else {})) if extraction else {}),
         "raw": extraction["raw_json"] if extraction else {},
         "warnings": extraction_guidance(extraction["raw_json"] if extraction else {}, items),
         "fields": [prediction_dto(row) for row in fields],
         "lineItems": [line_dto(row, corrections=line_corrections) for row in items],
         "lineCorrections": [{key: str(value) if value is not None else None for key, value in row.items()}
                             for row in line_corrections],
+        "currencyReview": currency_review,
     }
 
 def get_document_reviews(document_id: str, request: Request):
@@ -407,8 +584,11 @@ def get_document_validation(document_id: str, request: Request):
             FROM validation_results WHERE document_id=%s AND tenant_id=%s AND content_revision=%s
             ORDER BY created_at, rule_id""", (document_id, user["tenant_id"], doc["content_revision"])).fetchall()
         exceptions = db.execute("SELECT id,type,severity,status,message,note,created_at,resolved_at FROM exceptions WHERE document_id=%s AND tenant_id=%s ORDER BY created_at", (document_id, user["tenant_id"])).fetchall()
-    results = [{**e, 'rule': e['rule_id'], 'ruleSource': e['rule_source'], 'ruleVersion': e['rule_version'],
-                'documentType': e['document_type'], 'result': e['status'].upper(), 'checkStatus': e['status'].upper(),
+    from validation.documents.document_validation import CAUSE_LABELS, exception_cause, read_status
+    results = [{**e, 'cause': exception_cause(e['rule_id'], e['field_key'], e['message']) if e['status'] == 'failed' else None,
+                'causeLabel': CAUSE_LABELS.get(exception_cause(e['rule_id'], e['field_key'], e['message'])) if e['status'] == 'failed' else None,
+                'rule': e['rule_id'], 'ruleSource': e['rule_source'], 'ruleVersion': e['rule_version'],
+                'documentType': e['document_type'], 'result': read_status(e), 'checkStatus': read_status(e),
                 'field': e['field_key'], 'actualValue': e['actual_value'], 'expectedValue': e['expected_value'],
                 'difference': e['difference'], 'preventsApproval': e['prevents_approval'],
                 'requiresReview': e['requires_review'], 'message': e['message'], 'createdAt': str(e['created_at'])}
@@ -419,10 +599,12 @@ def get_document_validation(document_id: str, request: Request):
         results.extend(validation['checks'])
     external = [r for r in exceptions if not r['type'].startswith('VALIDATION:') and r['status'] != 'resolved']
     results.extend({'id': str(r['id']), 'rule': r['type'], 'result': 'FAIL' if r['severity'] == 'high' else 'WARNING', 'message': r['message']} for r in external)
-    blocking = any(r.get('result') in {'FAIL', 'FAILED'} or r.get('preventsApproval') is True for r in results)
+    validation_status, blocking = validation_outcome(results, validation['errors'], external, validation['coverage_complete'])
     return {'documentId': document_id, 'contentRevision': doc['content_revision'], 'status': doc['status'].upper(),
-            'validationStatus': 'REVIEW_REQUIRED' if validation['errors'] or external or blocking or not validation['coverage_complete'] else 'PASS', 'reviewRequired': True,
+            'validationStatus': validation_status, 'reviewRequired': True,
             'coverageComplete': validation['coverage_complete'],
+            'validationPassed': validation.get('validation_passed', not validation['errors']),
+            'notApplicable': sum(r['result'] == 'NOT_APPLICABLE' for r in results),
             'accountingApprovalPerformed': False, 'passed': int(not validation['errors'] and validation['coverage_complete']),
             'warnings': sum(r['result'] in {'WARNING', 'NOT_CHECKED'} for r in results), 'failed': sum(r['result'] in {'FAIL', 'FAILED'} for r in results),
             'blocking': blocking, 'results': results, 'vendorMatch': validation.get('vendor_match')}
@@ -434,30 +616,46 @@ def get_processing_history(document_id: str, request: Request):
         history = db.execute("SELECT old_status,new_status,changed_by,reason,created_at FROM document_status_history WHERE document_id=%s AND tenant_id=%s ORDER BY created_at DESC", (document_id, user["tenant_id"])).fetchall()
     return {"jobs": [{"id": str(r["id"]), "status": r["status"].upper(), "attempts": r["attempt_count"], "maxAttempts": r["max_attempts"], "error": r["last_error"], "createdAt": str(r["created_at"]), "finishedAt": str(r["finished_at"]) if r["finished_at"] else None} for r in jobs], "statusHistory": [{"from": r["old_status"], "to": r["new_status"], "changedBy": str(r["changed_by"]) if r["changed_by"] else None, "reason": r["reason"], "createdAt": str(r["created_at"])} for r in history]}
 
+CURRENCY_DECISION = 'currency.decision'
+
+
+def _currency_review(db, tenant_id, document_id, fields):
+    """Advice for the reviewer. Only a supplier already in this tenant's contacts counts as verified."""
+    from validation.matching.vendor_matching import normalize_vendor_name
+    if not any(row['field_key'] == 'currency' for row in fields):
+        return None
+    supplier = next((row for row in fields if row['field_key'] == 'supplier'), None)
+    name = effective_value(supplier) if supplier else None
+    wanted = normalize_vendor_name(name) if name else None
+    supplier_record = None
+    if wanted:
+        vendors = db.execute("SELECT vendor_name,address FROM vendors WHERE tenant_id=%s", (tenant_id,)).fetchall()
+        vendor = next((v for v in vendors if normalize_vendor_name(v['vendor_name']) == wanted), None)
+        if vendor:
+            approved = db.execute("""SELECT supplier_name,currency FROM standardised_records
+                WHERE tenant_id=%s AND is_current AND document_id<>%s""", (tenant_id, document_id)).fetchall()
+            counts = {}
+            for record in approved:
+                if record['supplier_name'] and normalize_vendor_name(record['supplier_name']) == wanted:
+                    counts[record['currency']] = counts.get(record['currency'], 0) + 1
+            supplier_record = {'name': vendor['vendor_name'], 'address': vendor['address'],
+                               'records': [{'currency': code, 'count': count} for code, count in sorted(counts.items())]}
+    review = build_currency_review(fields, supplier_record=supplier_record)
+    row = db.execute("""SELECT details,created_at,user_name FROM audit_logs WHERE tenant_id=%s AND resource=%s AND action=%s
+        ORDER BY created_at DESC LIMIT 1""", (tenant_id, str(document_id), CURRENCY_DECISION)).fetchone()
+    if row:
+        details = json.loads(row['details'])
+        review['decision'] = {**details, 'by': row['user_name'], 'at': row['created_at'].isoformat()}
+    return review
+
+
 def correct_extracted_field(document_id: str, field_key: str, data: FieldCorrectionInput, request: Request):
     user = require_workspace_user(request, {"local_admin", "accountant"})
     # Accept existing API and M2 keys as stored; key translation belongs to the
     # extraction adapter. Never allow arbitrary prediction metadata to be edited.
-    allowed_fields = {
-        'supplier', 'seller', 'merchant', 'customer', 'buyer', 'invoice', 'reference', 'receipt',
-        'date', 'due', 'currency', 'subtotal', 'tax', 'discount', 'total',
-        'supplier_name', 'buyer_name', 'invoice_number', 'reference_number',
-        'supplier_address', 'customer_address', 'supplier_tax_id', 'customer_tax_id',
-        'merchant_address',
-        'invoice_date', 'due_date', 'tax_amount', 'total_amount',
-        'account_number', 'billing_period', 'transaction_time', 'payment_method',
-        'payment_terms', 'received_date', 'expense_category', 'payment_reference',
-        'tendered_amount', 'change_given', 'amount_paid', 'outstanding_amount',
-        'document_allowances', 'document_charges', 'prepaid_amount', 'rounding_amount',
-        'total_excluding_tax', 'total_including_tax', 'amount_due', 'purchase_order_number',
-        'goods_receipt_reference',
-    }
-    if field_key not in allowed_fields:
+    if field_key not in CORRECTABLE_FIELDS:
         raise HTTPException(422, "Unsupported extraction field.")
-    if field_key in {'subtotal', 'tax', 'discount', 'total', 'tax_amount', 'total_amount',
-                     'tendered_amount', 'change_given', 'amount_paid', 'outstanding_amount',
-                     'document_allowances', 'document_charges', 'prepaid_amount', 'rounding_amount',
-                     'total_excluding_tax', 'total_including_tax', 'amount_due'}:
+    if field_key in CORRECTABLE_MONEY_FIELDS:
         if not re.fullmatch(r'-?[0-9]+(?:\.[0-9]+)?', data.value):
             raise HTTPException(422, "Amounts must be finite decimal strings without currency prefixes.")
     elif field_key in {'date', 'due', 'invoice_date', 'due_date'}:
@@ -487,6 +685,13 @@ def correct_extracted_field(document_id: str, field_key: str, data: FieldCorrect
             raise HTTPException(409, "The document changed. Refresh it before correcting this field.")
         if document['status'] in {'completed', 'standardised'}:
             raise HTTPException(409, "Standardised documents require an amendment.")
+        decision = None
+        if field_key == 'currency':
+            # Saved in this transaction, so the value cannot change without its audit row.
+            stored = db.execute("""SELECT fp.* FROM field_predictions fp JOIN raw_extractions re ON re.id=fp.extraction_id AND re.is_current=true
+                WHERE fp.document_id=%s""", (document_id,)).fetchall()
+            current = next((item for item in stored if item['field_key'] == 'currency'), None)
+            decision = decision_details(_currency_review(db, user['tenant_id'], document_id, stored), data.value, current.get('current_value') if current else None)
         db.execute("SELECT set_config('app.user_id',%s,true), set_config('app.status_reason',%s,true)",
                    (str(user['id']), 'Extracted field corrected'))
         # Repeat tenant, visibility and revision guards in the write itself.
@@ -509,8 +714,109 @@ def correct_extracted_field(document_id: str, field_key: str, data: FieldCorrect
             [document_id, user['tenant_id'], data.expectedContentRevision, *owner_params]).fetchone()
         if not revision:
             raise HTTPException(409, "The document changed. Refresh it before correcting this field.")
+        if decision:
+            db.execute("""INSERT INTO audit_logs(tenant_id,user_id,user_name,role,action,resource,details)
+                VALUES (%s,%s,%s,%s,%s,%s,%s)""", (user['tenant_id'], user['id'], user.get('name', 'Workspace user'), user['role'],
+                CURRENCY_DECISION, str(document_id), json.dumps(decision, default=str)))
+        _notify_tenant_users(db, user['tenant_id'], user['id'], 'Document field corrected',
+                             f"{document.get('document_code', 'A document')} was corrected and needs review.", f"documents/{document_id}")
     return {"key": row["field_key"], "value": row["current_value"], "correctedBy": str(row["corrected_by"]),
             "contentRevision": revision['content_revision']}
+
+AI_ASSIST_ACTION = 'ai_assist.result'
+AI_ASSIST_DECISION = 'ai_assist.decision'
+AI_ASSIST_LIMIT_PER_10_MIN = 6
+
+
+def _assist_document(db, document_id, user):
+    ownership = " AND (d.owner_id=%s OR d.assigned_to=%s)" if user['role'] == 'accountant' else ""
+    params = [document_id, user['tenant_id'], *([user['id'], user['id']] if ownership else [])]
+    document = db.execute(f"SELECT d.id,d.status,d.kind,d.content_revision,d.tenant_id FROM documents d WHERE d.id=%s AND d.tenant_id=%s{ownership}", params).fetchone()
+    if not document:
+        raise HTTPException(404, "Document not found.")
+    return document
+
+
+def request_ai_assist(document_id: str, data: AIAssistInput, request: Request):
+    """Local-model second pass. Advice only: applying a value uses the normal correction route."""
+    from services.extraction.ai.ai_assist import AssistUnavailable, run_ai_assist
+    from services.extraction.ai.qwen_provider import qwen_mode
+    from services.queue.jobs import BACKEND_ROOT, resolve_document_from_database
+    user = require_workspace_user(request, {"local_admin", "accountant"})
+    if qwen_mode() not in {'manual', 'both'}:
+        raise HTTPException(409, "AI Assist is turned off on this installation. Continue reviewing manually.")
+    with connect() as db:
+        document = _assist_document(db, document_id, user)
+        if document['status'] in {'completed', 'standardised', 'queued', 'processing'}:
+            raise HTTPException(409, "AI Assist is available only while a document is in review.")
+        recent = db.execute("""SELECT count(*) AS n FROM audit_logs WHERE tenant_id=%s AND resource=%s AND action=%s
+            AND created_at > now() - interval '10 minutes'""", (user['tenant_id'], str(document_id), AI_ASSIST_ACTION)).fetchone()['n']
+        if recent >= AI_ASSIST_LIMIT_PER_10_MIN:
+            raise HTTPException(429, "AI Assist was used several times on this document just now. Try again in a few minutes.")
+        extraction = db.execute("SELECT service_run_id FROM raw_extractions WHERE document_id=%s AND is_current=true", (document_id,)).fetchone()
+        if not extraction or not extraction['service_run_id']:
+            raise HTTPException(409, "This document has no current extraction to examine.")
+        saved = db.execute("""SELECT fp.field_key,fp.current_value FROM field_predictions fp JOIN raw_extractions re ON re.id=fp.extraction_id
+            WHERE fp.document_id=%s AND re.is_current=true AND fp.corrected_at IS NOT NULL""", (document_id,)).fetchall()
+    corrected = {row['field_key']: row['current_value'] for row in saved}
+    # Advice is computed with no database transaction held open during inference.
+    try:
+        source = resolve_document_from_database(document_id)
+        if not source or not Path(source).is_file():
+            raise AssistUnavailable('SOURCE_UNAVAILABLE', 'The original file is not available on this machine.')
+        result = run_ai_assist(extraction['service_run_id'], source, data.fields, root=BACKEND_ROOT, current_values=_corrected_by_source_key(corrected))
+    except AssistUnavailable as unavailable:
+        result = {'version': 'ai-assist/1', 'status': unavailable.code, 'fields': [], 'message': unavailable.message}
+    stored = {**result, 'content_revision': document['content_revision'], 'requested_fields': data.fields or []}
+    with connect() as db:
+        db.execute("""INSERT INTO audit_logs(tenant_id,user_id,user_name,role,action,resource,details)
+            VALUES (%s,%s,%s,%s,%s,%s,%s)""", (user['tenant_id'], user['id'], user.get('name', 'Workspace user'), user['role'],
+            AI_ASSIST_ACTION, str(document_id), json.dumps(stored, default=str)))
+    return stored
+
+
+def _corrected_by_source_key(corrected):
+    from services.extraction.classification.route_extraction import RECOVERY_FIELDS
+    from services.extraction.contracts.accounting_contract import FIELD_KEYS
+    return {name: corrected[FIELD_KEYS.get(name, name)] for names in RECOVERY_FIELDS.values() for name in names
+            if FIELD_KEYS.get(name, name) in corrected}
+
+
+def get_ai_assist(document_id: str, request: Request):
+    from services.extraction.ai.qwen_provider import qwen_mode
+    user = require_workspace_user(request, {"local_admin", "accountant"})
+    with connect() as db:
+        kind = _assist_document(db, document_id, user)['kind']
+        row = db.execute("""SELECT details,created_at,user_name FROM audit_logs WHERE tenant_id=%s AND resource=%s AND action=%s
+            ORDER BY created_at DESC LIMIT 1""", (user['tenant_id'], str(document_id), AI_ASSIST_ACTION)).fetchone()
+        decisions = db.execute("""SELECT details,created_at,user_name FROM audit_logs WHERE tenant_id=%s AND resource=%s AND action=%s
+            ORDER BY created_at""", (user['tenant_id'], str(document_id), AI_ASSIST_DECISION)).fetchall()
+    from services.extraction.classification.route_extraction import RECOVERY_FIELDS
+    from services.extraction.contracts.accounting_contract import FIELD_KEYS
+    return {'available': qwen_mode() in {'manual', 'both'},
+            'supportedFields': [{'field': name, 'storedKey': FIELD_KEYS.get(name, name)} for name in RECOVERY_FIELDS.get(kind, ())],
+            'latest': (_assist_result(row, FIELD_KEYS) if row else None),
+            'decisions': [{**json.loads(item['details']), 'by': item['user_name'], 'at': item['created_at'].isoformat()} for item in decisions]}
+
+
+def _assist_result(row, field_keys):
+    """Audit rows are permanent, so a result stored by an older version must still read."""
+    result = json.loads(row['details'])
+    for item in result.get('fields') or []:
+        item.setdefault('stored_key', field_keys.get(item.get('field'), item.get('field')))
+    return {**result, 'requestedBy': row['user_name'], 'requestedAt': row['created_at'].isoformat()}
+
+
+def decide_ai_assist(document_id: str, data: AIAssistDecisionInput, request: Request):
+    """Record the reviewer's decision for audit. A value changes only through the correction route."""
+    user = require_workspace_user(request, {"local_admin", "accountant"})
+    with connect() as db:
+        _assist_document(db, document_id, user)
+        db.execute("""INSERT INTO audit_logs(tenant_id,user_id,user_name,role,action,resource,details)
+            VALUES (%s,%s,%s,%s,%s,%s,%s)""", (user['tenant_id'], user['id'], user.get('name', 'Workspace user'), user['role'],
+            AI_ASSIST_DECISION, str(document_id), json.dumps({'field': data.field, 'decision': data.decision, 'attempt_id': data.attemptId})))
+    return {'recorded': True}
+
 
 def correct_line_item(document_id: str, line_item_id: str, field_key: str, data: LineItemCorrectionInput, request: Request):
     user = require_workspace_user(request, {'local_admin', 'accountant'})
@@ -554,6 +860,8 @@ def correct_line_item(document_id: str, line_item_id: str, field_key: str, data:
         db.execute("""INSERT INTO line_item_corrections(line_item_id,document_id,field_key,old_value,new_value,corrected_by)
             VALUES (%s,%s,%s,%s,%s,%s)""", (line_item_id, document_id, field_key,
                 str(old_value) if old_value is not None else None, value, user['id']))
+        _notify_tenant_users(db, user['tenant_id'], user['id'], 'Line item corrected',
+                             f"{document.get('document_code', 'A document')} has a corrected line item and needs review.", f"documents/{document_id}")
     return {'lineItemId': line_item_id, 'fieldKey': field_key, 'value': value,
             'correctedBy': str(user['id']), 'contentRevision': revision['content_revision']}
 
@@ -566,6 +874,46 @@ def request_record_amendment(record_id: str, data: RecordAmendmentInput, request
     if not row:
         raise HTTPException(404, "Standardised record not found.")
     return {"id": str(row["id"]), "recordId": record_id, "status": row["status"], "createdAt": str(row["created_at"])}
+
+class ValidationReviewInput(BaseModel):
+    rule: str = Field(max_length=32)
+    note: str = Field(max_length=4000)
+    expectedContentRevision: int = Field(ge=1)
+
+
+def accept_validation_review(document_id: str, data: ValidationReviewInput, request: Request):
+    """An accountant settles a finding that only a person can settle, with a reason on the audit log.
+
+    It applies to this exact revision. A later correction starts a new revision, so the finding returns.
+    Local-admin approval is still required afterwards, and nothing here approves or standardises.
+    """
+    from validation.documents.document_validation import REVIEWABLE_RULES, evaluate_document, load_current
+    user = require_workspace_user(request, {"local_admin", "accountant"})
+    note = data.note.strip()
+    if data.rule not in REVIEWABLE_RULES:
+        raise HTTPException(422, "This finding cannot be settled by review.")
+    if len(note) < 10:
+        raise HTTPException(422, "Say why this is acceptable, in at least 10 characters.")
+    with connect() as db:
+        document = _lock_workspace_document(db, document_id, user)
+        if document['status'] not in {'extracted', 'corrected', 'exception'}:
+            raise HTTPException(409, "Only a document that has not been submitted can be reviewed here.")
+        if data.expectedContentRevision != document['content_revision']:
+            raise HTTPException(409, "The document changed. Refresh it before reviewing this finding.")
+        doc, extraction, fields, items = load_current(db, document_id, user)
+        live = evaluate_document(doc, extraction, fields, items, db)
+        error = next((e for e in live['errors'] if e.get('code') == data.rule), None)
+        open_check = next((c for c in live['checks'] if c.get('rule') == data.rule and c.get('checkStatus') == 'NOT_CHECKED' and c.get('required', True)), None)
+        if not error and not open_check:
+            raise HTTPException(409, "There is no open finding for this rule at this revision.")
+        anomaly = (error or {}).get('transaction_anomaly') or {}
+        details = {'rule': data.rule, 'note': note, 'content_revision': document['content_revision'],
+                   **({key: anomaly.get(key) for key in ('amount', 'currency', 'upper_bound', 'baseline_median', 'baseline_count')} if anomaly else {})}
+        db.execute("""INSERT INTO audit_logs(tenant_id,user_id,user_name,role,action,resource,details)
+            VALUES (%s,%s,%s,%s,%s,%s,%s)""", (user['tenant_id'], user['id'], user.get('name', 'Workspace user'), user['role'],
+            REVIEW_ACTION, str(document_id), json.dumps(details, default=str)))
+        return validate_document(db, document_id, user)
+
 
 def revalidate_document(document_id: str, request: Request):
     user = require_workspace_user(request, {"local_admin", "accountant"})
@@ -593,6 +941,8 @@ def submit_document_review(document_id: str, data: ReviewInput, request: Request
         if data.decision != "submitted":
             raise HTTPException(422, "Accountants submit documents for approval; only local administrators can decide them.")
         db.execute("INSERT INTO review_submissions(document_id,tenant_id,submitted_by,decision,note,content_revision) VALUES (%s,%s,%s,%s,%s,(SELECT content_revision FROM documents WHERE id=%s))", (document_id, user["tenant_id"], user["id"], data.decision, data.note, document_id))
+        _notify_tenant_users(db, user['tenant_id'], user['id'], 'Document submitted for approval',
+                             f"{document.get('document_code', 'A document')} is ready for approval.", f"documents/{document_id}", roles=('local_admin',))
         next_status = "in_review"
         db.execute("UPDATE documents SET status=%s,updated_at=now() WHERE id=%s", (next_status, document_id))
     return {"documentId": document_id, "decision": data.decision, "status": next_status.upper()}
@@ -606,7 +956,7 @@ def decide_document_review(document_id: str, data: ReviewDecisionInput, request:
             raise HTTPException(409, "Only documents currently in review can be approved or returned.")
         if data.expectedContentRevision is not None and data.expectedContentRevision != document["content_revision"]:
             raise HTTPException(409, "The document changed. Refresh it before deciding this review.")
-        submission = db.execute("""SELECT id FROM review_submissions
+        submission = db.execute("""SELECT id,submitted_by FROM review_submissions
             WHERE document_id=%s AND tenant_id=%s AND decision='submitted' AND content_revision=%s AND submitted_by<>%s
             ORDER BY created_at DESC LIMIT 1""", (document_id, user["tenant_id"], document["content_revision"], user["id"])).fetchone()
         if not submission:
@@ -615,6 +965,9 @@ def decide_document_review(document_id: str, data: ReviewDecisionInput, request:
             SELECT %s,%s,%s,%s,%s,%s,content_revision FROM documents WHERE id=%s AND tenant_id=%s""", (submission["id"], document_id, user["tenant_id"], user["id"], data.decision, data.note, document_id, user["tenant_id"]))
         next_status = "validated" if data.decision == "approved" else ("exception" if data.decision == "rejected" else "in_review")
         db.execute("UPDATE documents SET status=%s,updated_at=now() WHERE id=%s", (next_status, document_id))
+        title = 'Document approved' if data.decision == 'approved' else 'Document review updated'
+        message = f"{document.get('document_code', 'A document')} was approved." if data.decision == 'approved' else f"{document.get('document_code', 'A document')} review status is {next_status}."
+        db.execute("INSERT INTO notifications(tenant_id,user_id,type,title,message,resource) VALUES (%s,%s,%s,%s,%s,%s)", (user['tenant_id'], submission['submitted_by'], 'document_workflow', title, message, f"documents/{document_id}"))
     return {"documentId": document_id, "decision": data.decision, "reviewedBy": str(user["id"]), "status": next_status.upper()}
 
 def list_document_comments(document_id: str, request: Request):
@@ -700,8 +1053,7 @@ def create_document_version(document_id: str, data: VersionInput, request: Reque
         source = db.execute("SELECT storage_path,file_hash_sha256,file_size_bytes FROM documents WHERE id=%s AND tenant_id=%s", (document_id, user["tenant_id"])).fetchone()
         if not source: raise HTTPException(404, "Document not found.")
         supplied = Path(data.storagePath).resolve()
-        storage_root = Path(os.getenv("DOCUMENT_STORAGE_PATH", "storage")).resolve()
-        if storage_root not in supplied.parents or not supplied.is_file():
+        if local_storage_root() not in supplied.parents or not supplied.is_file():
             raise HTTPException(422, "The version file must be an existing private stored file.")
         actual_hash = hashlib.sha256(supplied.read_bytes()).hexdigest()
         if actual_hash.lower() != data.fileHashSha256.lower() or supplied.stat().st_size != data.fileSizeBytes:
@@ -724,11 +1076,19 @@ def download_document_version(document_id: str, version_id: str, request: Reques
         row = db.execute("SELECT storage_path FROM document_versions WHERE id=%s AND document_id=%s AND tenant_id=%s", (version_id, document_id, user["tenant_id"])).fetchone()
     if not row:
         raise HTTPException(404, "Document version not found.")
-    path = Path(row["storage_path"]).resolve()
-    storage_root = Path(os.getenv("DOCUMENT_STORAGE_PATH", "storage")).resolve()
-    if storage_root not in path.parents or not path.is_file():
+    temporary = None
+    if str(row["storage_path"]).startswith("s3://"):
+        from database.object_storage.object_store import download
+        temporary = download(str(row["storage_path"]))
+        path = temporary
+    else:
+        path = Path(row["storage_path"]).resolve()
+        if local_storage_root() not in path.parents or not path.is_file():
+            raise HTTPException(404, "Version file is unavailable.")
+    if not path.is_file():
         raise HTTPException(404, "Version file is unavailable.")
-    return FileResponse(path, filename=path.name)
+    cleanup = BackgroundTask(temporary.unlink, missing_ok=True) if temporary else None
+    return FileResponse(path, filename=path.name, background=cleanup)
 
 def document_kind_workflow(document_id: str, request: Request):
     user = require_workspace_user(request)
@@ -786,10 +1146,14 @@ def register(router, handlers):
     router.add_api_route('/api/documents/{document_id}/reviews', get_document_reviews, methods=['GET'])
     router.add_api_route('/api/documents/{document_id}/validation', get_document_validation, methods=['GET'])
     router.add_api_route('/api/documents/{document_id}/processing-history', get_processing_history, methods=['GET'])
+    router.add_api_route('/api/documents/{document_id}/ai-assist', get_ai_assist, methods=['GET'])
+    router.add_api_route('/api/documents/{document_id}/ai-assist', request_ai_assist, methods=['POST'])
+    router.add_api_route('/api/documents/{document_id}/ai-assist/decision', decide_ai_assist, methods=['POST'])
     router.add_api_route('/api/documents/{document_id}/extraction/{field_key}', correct_extracted_field, methods=['PATCH'])
     router.add_api_route('/api/documents/{document_id}/line-items/{line_item_id}/{field_key}', correct_line_item, methods=['PATCH'])
     router.add_api_route('/api/records/{record_id}/amendments', request_record_amendment, methods=['POST'], status_code=201)
     router.add_api_route('/api/documents/{document_id}/revalidate', revalidate_document, methods=['POST'])
+    router.add_api_route('/api/documents/{document_id}/validation-review', accept_validation_review, methods=['POST'])
     router.add_api_route('/api/documents/{document_id}/draft', save_document_draft, methods=['POST'])
     router.add_api_route('/api/documents/{document_id}/review', submit_document_review, methods=['POST'])
     router.add_api_route('/api/documents/{document_id}/review/decision', decide_document_review, methods=['POST'])
