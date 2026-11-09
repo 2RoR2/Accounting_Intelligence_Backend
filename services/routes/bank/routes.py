@@ -1,4 +1,5 @@
 from __future__ import annotations
+from decimal import Decimal
 from main import *
 from main import _lock_upload_identity, _processing_error, _lock_workspace_document, _require_current_extraction, _authorised_document, _bank_row_values, _bank_transaction_dto, _uuid_or_422, _account_dto, _cost_centre_dto
 import hashlib
@@ -9,6 +10,7 @@ from psycopg.errors import RaiseException, UniqueViolation
 from pydantic import ValidationError
 from services.bank.statement_parser import inspect_statement, parse_bank_statement
 from validation.matching.bank_reconciliation import find_bank_match_candidates, direction_matches
+from validation.transactions.transaction_anomaly import detect_transaction_anomalies
 
 def _ensure_reconciliation_period_tables(db):
     """Compatibility bootstrap for existing PoC databases before migrations are installed."""
@@ -92,6 +94,78 @@ def reopen_reconciliation_period(period_id: str, data: BankReconciliationReopenI
         db.execute("UPDATE bank_reconciliation_periods SET status='open',signed_off_by=NULL,signed_off_at=NULL,updated_at=now() WHERE id=%s", (period_id,))
         return {'id': str(period_id), 'status':'open', 'reopenedBy': str(user['id']), 'reason': data.reason.strip()}
 
+def _bank_transaction_anomaly(db, row, bank_account_ref):
+    """Return the anomaly result for one bank row using earlier rows as its baseline.
+
+    Matching and anomaly detection answer different questions. Matching asks whether
+    this row can be linked to an accounting record; anomaly detection asks whether
+    its amount is unusual compared with the tenant's earlier rows for the same bank
+    account, direction, and currency.
+    """
+    amount = row['signed_amount_decimal']
+    direction = row['direction']
+    currency = str(row['currency'] or '').strip().upper()
+    posted_date = row['posted_date']
+
+    if amount is None or not direction or not currency or not posted_date or not bank_account_ref:
+        return None
+
+    references = db.execute("""
+        SELECT b.id, abs(b.signed_amount_decimal) AS amount, b.currency
+        FROM bank_transactions b
+        JOIN bank_imports i ON i.id=b.import_id AND i.tenant_id=b.tenant_id
+        WHERE b.tenant_id=%s
+          AND b.id<>%s
+          AND i.status='confirmed'
+          AND b.status<>'ignored'
+          AND b.direction=%s
+          AND b.currency=%s
+          AND i.source_bank_account_ref=%s
+          AND b.posted_date IS NOT NULL
+          AND (b.posted_date < %s OR (b.posted_date=%s AND b.source_row<%s))
+        ORDER BY b.posted_date, b.source_row
+    """, (row['tenant_id'], row['id'], direction, currency, bank_account_ref,
+           posted_date, posted_date, row['source_row'])).fetchall()
+
+    result = detect_transaction_anomalies(
+        [{
+            'transaction_id': str(row['id']),
+            'amount': abs(amount),
+            'currency': currency,
+        }],
+        reference_transactions=[{
+            'transaction_id': str(reference['id']),
+            'amount': reference['amount'],
+            'currency': reference['currency'],
+        } for reference in references],
+    )[0]
+
+    direction_label = 'Money In' if direction == 'money_in' else 'Money Out'
+    formatted_amount = f"{currency} {Decimal(str(abs(amount))):,.2f}"
+    if result['status'] == 'anomaly':
+        label = 'Unusually high amount'
+        reason = f"{formatted_amount} is above the usual range for {direction_label} transactions."
+    elif result['status'] == 'normal':
+        label = 'No unusual amount detected'
+        reason = f"{formatted_amount} is within the usual range for {direction_label} transactions."
+    else:
+        label = 'Insufficient history'
+        reason = f"There are not enough prior {direction_label} transactions to establish a reliable range."
+
+    return {
+        'status': result['status'],
+        'isAnomaly': result['is_anomaly'],
+        'label': label,
+        'reason': reason,
+        'amount': result['amount'],
+        'currency': result['currency'],
+        'baselineMedian': result['baseline_median'],
+        'upperBound': result['upper_bound'],
+        'baselineCount': result['baseline_count'],
+        'anomalyScore': result['anomaly_score'],
+    }
+
+
 def _bank_transaction_response(db, row):
     result = _bank_transaction_dto(row)
     coding = db.execute("""SELECT c.account_id, c.cost_centre_id, c.decision, c.reason
@@ -122,6 +196,7 @@ def _bank_transaction_response(db, row):
     import_row = db.execute("SELECT source_bank_account_ref FROM bank_imports WHERE id=%s AND tenant_id=%s",
                             (row['import_id'], row['tenant_id'])).fetchone()
     result.update({"matchStatus": {"matched": "matched", "proposed": "proposed", "ignored": "ignored"}.get(row['status'], "unmatched"),
+        "anomaly": _bank_transaction_anomaly(db, row, import_row['source_bank_account_ref'] if import_row else None),
         "accountId": str(coding['account_id']) if coding and coding['account_id'] else None,
         "costCentreId": str(coding['cost_centre_id']) if coding and coding['cost_centre_id'] else None,
         "codingDecision": coding['decision'] if coding else None,
