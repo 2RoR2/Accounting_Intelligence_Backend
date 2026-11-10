@@ -3283,3 +3283,99 @@ ALTER TABLE bank_imports
     ADD CONSTRAINT bank_imports_input_format_check
     CHECK (input_format IN ('csv', 'xlsx', 'pdf'));
 
+-- ============================================================================
+-- Consolidated migration: 018_bank_formats_and_reconciliation_rules.sql
+-- ============================================================================
+
+-- 018_bank_formats_and_reconciliation_rules.sql
+-- Owner: Aleeya (Module 4). Run AFTER 017. Safe to run twice. No BEGIN or COMMIT: open the file on Neon and press Alt+X.
+--
+-- Two things, both found by comparing the team's `features` branch with the live database:
+--   1. Bank statements can now be CSV, Excel (.xlsx) or PDF, and the backend saves the file type in bank_imports.input_format.
+--      The database rule only allowed 'csv' until the schema file's "Moved from 008_bank_statement_formats" block was applied.
+--   2. Rachel's three tables (bank_reconciliation_periods, bank_reconciliation_reopens, bank_transaction_anomalies) are created
+--      by the backend code itself. They work, but the database does not yet enforce what the backend assumes. This adds the rules.
+--
+-- The new rules on Rachel's tables use NOT VALID, which means they apply to every new or changed row and do NOT re-check old rows,
+-- so existing data can never make this migration fail.
+
+-- ---------------------------------------------------------------- 1. bank statement formats
+DO $$
+DECLARE
+    c RECORD;
+BEGIN
+    FOR c IN SELECT conname FROM pg_constraint
+             WHERE conrelid = 'bank_imports'::regclass AND contype = 'c'
+               AND position('input_format' in pg_get_constraintdef(oid)) > 0
+               AND position('xlsx' in pg_get_constraintdef(oid)) = 0
+    LOOP
+        EXECUTE 'ALTER TABLE bank_imports DROP CONSTRAINT ' || quote_ident(c.conname);
+    END LOOP;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                   WHERE conrelid = 'bank_imports'::regclass AND contype = 'c'
+                     AND position('input_format' in pg_get_constraintdef(oid)) > 0
+                     AND position('xlsx' in pg_get_constraintdef(oid)) > 0) THEN
+        ALTER TABLE bank_imports ADD CONSTRAINT bank_imports_input_format_check CHECK (input_format IN ('csv', 'xlsx', 'pdf'));
+    END IF;
+END $$;
+
+-- ---------------------------------------------------------------- 2. reconciliation periods and their reopen history
+-- A period's id together with its company, so other rows can prove they belong to the same company.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_bank_recon_periods_id_tenant') THEN
+        ALTER TABLE bank_reconciliation_periods ADD CONSTRAINT uq_bank_recon_periods_id_tenant UNIQUE (id, tenant_id);
+    END IF;
+    -- the person who signs a period off must belong to the same company
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_bank_recon_period_signoff_tenant') THEN
+        ALTER TABLE bank_reconciliation_periods ADD CONSTRAINT fk_bank_recon_period_signoff_tenant
+            FOREIGN KEY (signed_off_by, tenant_id) REFERENCES users (id, tenant_id) NOT VALID;
+    END IF;
+    -- completed means signed off (who and when), and open means not signed off
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ck_bank_recon_period_signoff') THEN
+        ALTER TABLE bank_reconciliation_periods ADD CONSTRAINT ck_bank_recon_period_signoff
+            CHECK ((status = 'completed') = (signed_off_by IS NOT NULL AND signed_off_at IS NOT NULL)) NOT VALID;
+    END IF;
+    -- a reopen belongs to a period of the same company, and is made by a user of that company
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_bank_recon_reopen_period_tenant') THEN
+        ALTER TABLE bank_reconciliation_reopens ADD CONSTRAINT fk_bank_recon_reopen_period_tenant
+            FOREIGN KEY (period_id, tenant_id) REFERENCES bank_reconciliation_periods (id, tenant_id) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_bank_recon_reopen_user_tenant') THEN
+        ALTER TABLE bank_reconciliation_reopens ADD CONSTRAINT fk_bank_recon_reopen_user_tenant
+            FOREIGN KEY (reopened_by, tenant_id) REFERENCES users (id, tenant_id) NOT VALID;
+    END IF;
+    -- a reopen always has a reason
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ck_bank_recon_reopen_reason') THEN
+        ALTER TABLE bank_reconciliation_reopens ADD CONSTRAINT ck_bank_recon_reopen_reason CHECK (btrim(reason) <> '') NOT VALID;
+    END IF;
+END $$;
+
+-- A completed period cannot be edited, and it can only leave the completed state when a reopen with a reason was recorded
+-- in the same transaction. The backend already does it in that order: it saves the reopen, then sets the period open.
+CREATE OR REPLACE FUNCTION bank_recon_period_guard() RETURNS trigger AS $$
+BEGIN
+    IF OLD.status = 'completed' THEN
+        IF NEW.status = 'completed' THEN
+            IF (to_jsonb(NEW) - 'updated_at') <> (to_jsonb(OLD) - 'updated_at') THEN
+                RAISE EXCEPTION 'A completed reconciliation period cannot be edited. Reopen it first.';
+            END IF;
+        ELSIF NOT EXISTS (SELECT 1 FROM bank_reconciliation_reopens r
+                          WHERE r.period_id = OLD.id AND r.tenant_id = OLD.tenant_id AND r.reopened_at = now()) THEN
+            RAISE EXCEPTION 'A completed reconciliation period can only be reopened with a recorded reason.';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_bank_recon_period_guard ON bank_reconciliation_periods;
+CREATE TRIGGER trg_bank_recon_period_guard
+    BEFORE UPDATE ON bank_reconciliation_periods
+    FOR EACH ROW EXECUTE FUNCTION bank_recon_period_guard();
+
+-- The reopen history is never edited or deleted.
+DROP TRIGGER IF EXISTS trg_bank_recon_reopens_append_only ON bank_reconciliation_reopens;
+CREATE TRIGGER trg_bank_recon_reopens_append_only
+    BEFORE UPDATE OR DELETE ON bank_reconciliation_reopens
+    FOR EACH ROW EXECUTE FUNCTION p1_append_only();
