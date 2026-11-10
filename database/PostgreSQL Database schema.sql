@@ -3379,3 +3379,149 @@ DROP TRIGGER IF EXISTS trg_bank_recon_reopens_append_only ON bank_reconciliation
 CREATE TRIGGER trg_bank_recon_reopens_append_only
     BEFORE UPDATE OR DELETE ON bank_reconciliation_reopens
     FOR EACH ROW EXECUTE FUNCTION p1_append_only();
+
+-- ============================================================================
+-- Consolidated migration: 019_lock_completed_reconciliation_periods.sql
+-- ============================================================================
+
+-- 019_lock_completed_reconciliation_periods.sql
+-- Owner: Aleeya (Module 4). Run AFTER 018. Safe to run twice. No BEGIN or COMMIT: open the file on Neon and press Alt+X.
+--
+-- Rachel asked for a lock. Today a reconciliation period can be signed off (completed), but nothing stops anyone changing its bank
+-- rows afterwards, so the signed-off numbers could silently stop being true. This migration makes "completed" mean locked:
+--   * A bank row dated inside a completed period (same bank account) cannot be added, changed or deleted.
+--   * The classification of such a row cannot be changed, and an import that contains such rows cannot be discarded or reverted.
+--   * The period has to be reopened first. Reopening already needs a recorded reason (migration 018), and the period is locked again
+--     when it is signed off again.
+--   * Every sign-off is saved automatically, with the figures that were signed off, in a new history table. It is never edited.
+-- A bank row belongs to a period the same way the backend decides it: the import's bank account reference matches and the row's
+-- date is between the period's start and end. If a period is not completed, nothing changes for it.
+-- No backend change is needed: the database does all of it.
+
+-- ---------------------------------------------------------------- 1. is this bank row inside a completed period?
+CREATE OR REPLACE FUNCTION bank_period_completed(p_tenant UUID, p_import UUID, p_date DATE) RETURNS BOOLEAN AS $$
+    SELECT EXISTS (
+        SELECT 1
+        FROM bank_reconciliation_periods p
+        JOIN bank_imports i ON i.id = p_import AND i.tenant_id = p_tenant
+        WHERE p.tenant_id = p_tenant
+          AND p.status = 'completed'
+          AND p.bank_account_ref = i.source_bank_account_ref
+          AND p_date BETWEEN p.starts_on AND p.ends_on
+    );
+$$ LANGUAGE sql STABLE;
+
+-- ---------------------------------------------------------------- 2. bank rows in a completed period are locked
+CREATE OR REPLACE FUNCTION bank_transaction_period_lock() RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        IF bank_period_completed(NEW.tenant_id, NEW.import_id, NEW.posted_date) THEN
+            RAISE EXCEPTION 'This bank account period is completed. Reopen it before adding bank rows to it.';
+        END IF;
+        RETURN NEW;
+    END IF;
+    IF bank_period_completed(OLD.tenant_id, OLD.import_id, OLD.posted_date) THEN
+        RAISE EXCEPTION 'This bank row belongs to a completed reconciliation period. Reopen the period before changing it.';
+    END IF;
+    RETURN COALESCE(NEW, OLD);
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_bank_transaction_period_lock ON bank_transactions;
+CREATE TRIGGER trg_bank_transaction_period_lock
+    BEFORE INSERT OR UPDATE OR DELETE ON bank_transactions
+    FOR EACH ROW EXECUTE FUNCTION bank_transaction_period_lock();
+
+-- ---------------------------------------------------------------- 3. their classification is locked too
+CREATE OR REPLACE FUNCTION bank_coding_period_lock() RETURNS trigger AS $$
+DECLARE
+    tx RECORD;
+BEGIN
+    SELECT import_id, posted_date INTO tx FROM bank_transactions WHERE id = NEW.bank_transaction_id AND tenant_id = NEW.tenant_id;
+    IF FOUND AND bank_period_completed(NEW.tenant_id, tx.import_id, tx.posted_date) THEN
+        RAISE EXCEPTION 'This bank row belongs to a completed reconciliation period. Reopen the period before classifying it.';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_bank_coding_period_lock ON bank_coding_decisions;
+CREATE TRIGGER trg_bank_coding_period_lock
+    BEFORE INSERT ON bank_coding_decisions
+    FOR EACH ROW EXECUTE FUNCTION bank_coding_period_lock();
+
+-- ---------------------------------------------------------------- 4. an import with rows in a completed period cannot be undone
+CREATE OR REPLACE FUNCTION bank_import_period_lock() RETURNS trigger AS $$
+BEGIN
+    IF NEW.status IN ('discarded', 'reverted') AND OLD.status IS DISTINCT FROM NEW.status THEN
+        IF EXISTS (SELECT 1 FROM bank_transactions t
+                   WHERE t.import_id = NEW.id AND t.tenant_id = NEW.tenant_id
+                     AND bank_period_completed(t.tenant_id, t.import_id, t.posted_date)) THEN
+            RAISE EXCEPTION 'This import has rows in a completed reconciliation period. Reopen the period before discarding or reverting it.';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_bank_import_period_lock ON bank_imports;
+CREATE TRIGGER trg_bank_import_period_lock
+    BEFORE UPDATE OF status ON bank_imports
+    FOR EACH ROW EXECUTE FUNCTION bank_import_period_lock();
+
+-- ---------------------------------------------------------------- 5. a history of every sign-off, with the figures signed off
+CREATE TABLE IF NOT EXISTS bank_reconciliation_signoffs (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id     UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    period_id     UUID NOT NULL,
+    signed_off_by UUID NOT NULL,
+    signed_off_at TIMESTAMPTZ NOT NULL,
+    snapshot      JSONB NOT NULL CHECK (jsonb_typeof(snapshot) = 'object'),
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    FOREIGN KEY (period_id, tenant_id) REFERENCES bank_reconciliation_periods (id, tenant_id) ON DELETE RESTRICT,
+    FOREIGN KEY (signed_off_by, tenant_id) REFERENCES users (id, tenant_id) ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS idx_bank_recon_signoffs_period ON bank_reconciliation_signoffs (period_id, signed_off_at);
+
+DROP TRIGGER IF EXISTS trg_bank_recon_signoffs_append_only ON bank_reconciliation_signoffs;
+CREATE TRIGGER trg_bank_recon_signoffs_append_only
+    BEFORE UPDATE OR DELETE ON bank_reconciliation_signoffs
+    FOR EACH ROW EXECUTE FUNCTION p1_append_only();
+
+CREATE OR REPLACE FUNCTION bank_recon_signoff_record() RETURNS trigger AS $$
+DECLARE
+    s RECORD;
+    coded INTEGER;
+BEGIN
+    IF OLD.status IS DISTINCT FROM 'completed' AND NEW.status = 'completed' THEN
+        SELECT count(*) AS lines_total,
+               count(*) FILTER (WHERE t.status = 'ignored') AS lines_ignored,
+               count(*) FILTER (WHERE t.status = 'matched') AS lines_matched,
+               COALESCE(sum(t.credit_decimal), 0) AS money_in,
+               COALESCE(sum(t.debit_decimal), 0) AS money_out
+        INTO s
+        FROM bank_transactions t JOIN bank_imports i ON i.id = t.import_id AND i.tenant_id = t.tenant_id
+        WHERE t.tenant_id = NEW.tenant_id AND i.status = 'confirmed'
+          AND i.source_bank_account_ref = NEW.bank_account_ref AND t.posted_date BETWEEN NEW.starts_on AND NEW.ends_on;
+        SELECT count(*) INTO coded
+        FROM bank_transactions t JOIN bank_imports i ON i.id = t.import_id AND i.tenant_id = t.tenant_id
+        WHERE t.tenant_id = NEW.tenant_id AND i.status = 'confirmed'
+          AND i.source_bank_account_ref = NEW.bank_account_ref AND t.posted_date BETWEEN NEW.starts_on AND NEW.ends_on
+          AND EXISTS (SELECT 1 FROM bank_coding_decisions cd WHERE cd.bank_transaction_id = t.id AND cd.decision <> 'cleared');
+        INSERT INTO bank_reconciliation_signoffs (tenant_id, period_id, signed_off_by, signed_off_at, snapshot)
+        VALUES (NEW.tenant_id, NEW.id, NEW.signed_off_by, NEW.signed_off_at,
+                jsonb_build_object('bank_account_ref', NEW.bank_account_ref, 'starts_on', NEW.starts_on, 'ends_on', NEW.ends_on,
+                                   'lines_total', s.lines_total, 'lines_matched', s.lines_matched, 'lines_ignored', s.lines_ignored, 'lines_coded', coded,
+                                   'money_in', s.money_in, 'money_out', s.money_out,
+                                   'opening_balance', NEW.opening_balance, 'closing_balance', NEW.closing_balance, 'book_balance', NEW.book_balance,
+                                   'statement_adjustment', NEW.statement_adjustment, 'book_adjustment', NEW.book_adjustment,
+                                   'adjustment_evidence', NEW.adjustment_evidence));
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_bank_recon_signoff_record ON bank_reconciliation_periods;
+CREATE TRIGGER trg_bank_recon_signoff_record
+    AFTER UPDATE ON bank_reconciliation_periods
+    FOR EACH ROW EXECUTE FUNCTION bank_recon_signoff_record();
