@@ -25,7 +25,14 @@ def list_audit(request: Request):
     user = require_workspace_user(request)
     scope = tenant_scope(user)
     with connect() as db:
-        rows = db.execute("SELECT * FROM audit_logs WHERE (%s IS NULL OR tenant_id=%s) ORDER BY created_at DESC LIMIT 500", (scope, scope)).fetchall()
+        # Optional: entries for named resources only (a document's id, name or record id). Without
+        # it the newest 500 tenant entries are returned, which hides an older document's history.
+        resources = [value for value in request.query_params.getlist("resource") if value][:5]
+        if resources:
+            rows = db.execute("SELECT * FROM audit_logs WHERE (%s IS NULL OR tenant_id=%s) AND resource = ANY(%s) ORDER BY created_at DESC LIMIT 500",
+                              (scope, scope, resources)).fetchall()
+        else:
+            rows = db.execute("SELECT * FROM audit_logs WHERE (%s IS NULL OR tenant_id=%s) ORDER BY created_at DESC LIMIT 500", (scope, scope)).fetchall()
     return [{"id": str(r["id"]), "tenantId": str(r["tenant_id"]) if r["tenant_id"] else None, "user": r["user_name"], "role": r["role"].upper(), "action": r["action"], "resource": r["resource"], "details": r["details"], "timestamp": str(r["created_at"])} for r in rows]
 
 def get_workspace_settings(request: Request):

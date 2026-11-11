@@ -38,6 +38,25 @@ from services.extraction.classification.reconcile_selective import reconcile
 
 SERVICE_SCHEMA_VERSION = "0.1.0-proposed"
 MAX_TARGETED_RETRIES = 1
+# The 20 s per-document target. A model call may use only what is left of it after
+# extraction, minus time kept back for reconciliation and the validation precheck.
+# With too little left, the document goes to review without a model candidate.
+RECOVERY_DEADLINE_SECONDS = 20.0
+RECOVERY_POST_CALL_RESERVE_SECONDS = 1.0
+RECOVERY_MIN_CALL_SECONDS = 4.0  # The measured cloud call takes about 3 s.
+
+
+def recovery_seconds_left(elapsed_seconds) -> float:
+    """Seconds a model call may take now. QWEN_RECOVERY_DEADLINE_SECONDS may raise or lower the deadline."""
+    import math
+    import os
+    try:
+        deadline = float(os.environ.get("QWEN_RECOVERY_DEADLINE_SECONDS", RECOVERY_DEADLINE_SECONDS))
+    except ValueError:
+        deadline = RECOVERY_DEADLINE_SECONDS
+    if not math.isfinite(deadline) or not 5 <= deadline <= 300:
+        deadline = RECOVERY_DEADLINE_SECONDS
+    return deadline - elapsed_seconds - RECOVERY_POST_CALL_RESERVE_SECONDS
 # One model call takes about 1 to 5 s once loaded, which keeps a retry inside the 20 s target.
 RETRY_LATENCY_BUDGET_SECONDS = 12.0
 RECOVERABLE_ATTEMPT_ERRORS = {"ValueError", "JSONDecodeError"}
@@ -494,6 +513,15 @@ class DocumentIntelligenceService:
             keywords["selected_fields"] = recovery["fields"]
         if context.get("previous_problems"):
             keywords["previous_problems"] = context["previous_problems"]
+        left = recovery_seconds_left(time.perf_counter() - context["started"])
+        if left < RECOVERY_MIN_CALL_SECONDS:
+            # Nothing is sent. The parser result stands and a person reviews the fields.
+            context["selective"] = None
+            summary["ai_assistance"].update(status="failed", prediction=None)
+            summary["status"] = "ai_attempt_failed_needs_review"
+            summary["recovery_failure"] = "LATENCY_BUDGET_EXHAUSTED"
+            return
+        keywords["max_timeout_seconds"] = left
         try:
             context["selective"] = run_attempt(context["combined_result_path"], self.project_root, **keywords)
         except Exception as error:

@@ -653,7 +653,7 @@ class RunnerEquivalenceTests(unittest.TestCase):
         result.pop('provenance')
         def strip(value):
             if isinstance(value,dict):
-                return {k:strip(v) for k,v in value.items() if k not in {'attempt_id','model_digest','runner'}}
+                return {k:strip(v) for k,v in value.items() if k not in {'attempt_id','model_digest','runner','stage_seconds','elapsed_seconds'}}  # Measurements differ run to run.
             if isinstance(value,list):
                 return [strip(v) for v in value]
             return value
@@ -747,6 +747,60 @@ class RunnerEquivalenceTests(unittest.TestCase):
         graph,_=self.run_mode(True,side_effect=TimeoutError('slow'))
         self.assertEqual(plain['status'],'ai_attempt_failed_needs_review')
         self.assertEqual(self.comparable(plain),self.comparable(graph))
+
+
+class RecoveryLatencyBudgetTests(unittest.TestCase):
+    """A model call may only use what is left of the 20 s per-document target."""
+    def harness(self):
+        harness=RecoveryEndToEndTests('test_off_by_default_no_model_is_called');harness.setUp()
+        self.addCleanup(harness.doCleanups);harness.reply('12.00')
+        return harness
+
+    def summary(self,harness):
+        return json.loads(next((harness.root/'runs').glob('document-intelligence-*/service-result.json')).read_text())
+
+    def test_seconds_left_uses_the_deadline_and_rejects_bad_settings(self):
+        from services.extraction.workflow import document_extraction_service as dis
+        with patch.dict(os.environ,{},clear=False):
+            os.environ.pop('QWEN_RECOVERY_DEADLINE_SECONDS',None)
+            self.assertEqual(dis.recovery_seconds_left(9.0),20.0-9.0-dis.RECOVERY_POST_CALL_RESERVE_SECONDS)
+        for bad in ('abc','nan','inf','1','1000'):
+            with self.subTest(bad=bad),patch.dict(os.environ,{'QWEN_RECOVERY_DEADLINE_SECONDS':bad}):
+                self.assertEqual(dis.recovery_seconds_left(0.0),20.0-dis.RECOVERY_POST_CALL_RESERVE_SECONDS)
+        with patch.dict(os.environ,{'QWEN_RECOVERY_DEADLINE_SECONDS':'30'}):
+            self.assertEqual(dis.recovery_seconds_left(0.0),30.0-dis.RECOVERY_POST_CALL_RESERVE_SECONDS)
+
+    def test_exhausted_budget_sends_nothing_and_keeps_the_parser_result(self):
+        from services.extraction.workflow import document_extraction_service as dis
+        harness=self.harness()
+        with patch.object(dis,'recovery_seconds_left',return_value=dis.RECOVERY_MIN_CALL_SECONDS-0.1):
+            public=harness.execute(**harness.enabled)
+        harness.provider.chat.assert_not_called()
+        summary=self.summary(harness)
+        self.assertEqual(summary['recovery_failure'],'LATENCY_BUDGET_EXHAUSTED')
+        self.assertEqual(summary['status'],'ai_attempt_failed_needs_review')
+        self.assertEqual(public['status'],'ai_attempt_failed_needs_review')
+        self.assertIsNone(public['fields']['total_amount']['value'])
+        self.assertNotIn('selective_run',summary['artifacts'])
+        self.assertEqual(list((harness.root/'runs').rglob('selective-*')),[])
+        self.assertTrue(public['review_required']);self.assertFalse(public['accounting_approval_performed'])
+
+    def test_call_timeout_is_capped_by_the_seconds_left(self):
+        from services.extraction.workflow import document_extraction_service as dis
+        harness=self.harness();self.assertEqual(harness.provider.timeout,45)
+        with patch.object(dis,'recovery_seconds_left',return_value=6.5):
+            harness.execute(**harness.enabled)
+        harness.provider.chat.assert_called_once()
+        self.assertEqual(harness.provider.timeout,6.5)
+        run=json.loads(next((harness.root/'runs').rglob('selective-*/run.json')).read_text())
+        self.assertEqual(run['timeout_seconds'],6.5)
+
+    def test_cap_never_raises_a_shorter_configured_timeout(self):
+        from services.extraction.workflow import document_extraction_service as dis
+        harness=self.harness();harness.provider.timeout=3
+        with patch.object(dis,'recovery_seconds_left',return_value=15.0):
+            harness.execute(**harness.enabled)
+        self.assertEqual(harness.provider.timeout,3)
 
 
 class AIAssistRouteTests(unittest.TestCase):
@@ -1208,6 +1262,12 @@ class AssessmentTests(unittest.TestCase):
 
 class WorkerFlagTests(unittest.TestCase):
     """The worker call-site only; claim fencing is covered by the queue tests."""
+    def setUp(self):
+        # A developer .env (loaded by database.connection) may set QWEN_RECOVERY_MODE, which
+        # takes precedence over ENABLE_QWEN_RECOVERY; isolate both so these tests see only their own flag.
+        saved={k:os.environ.pop(k) for k in ('QWEN_RECOVERY_MODE','ENABLE_QWEN_RECOVERY') if k in os.environ}
+        self.addCleanup(os.environ.update,saved)
+
     def run_job(self,env):
         from services.queue import jobs
         from services.queue import attempts

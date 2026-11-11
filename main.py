@@ -120,8 +120,8 @@ RESET = "ai_reset"
 PRIVILEGED_ROLES = frozenset({"super_admin", "local_admin"})
 WORKSPACE_PERMISSIONS = {
     "admin": ("super_admin", frozenset({"dashboard", "approvals", "tenants", "users", "processing", "performance", "records", "audit", "settings", "profile"})),
-    "company": ("local_admin", frozenset({"dashboard", "documents", "upload", "exceptions", "records", "users", "validation-rules", "reports", "audit", "settings", "profile"})),
-    "workspace": ("accountant", frozenset({"dashboard", "documents", "upload", "exceptions", "records", "reports", "settings", "help", "profile"})),
+    "company": ("local_admin", frozenset({"dashboard", "documents", "upload", "exceptions", "approvals", "evaluation", "records", "users", "validation-rules", "reports", "audit", "settings", "profile"})),
+    "workspace": ("accountant", frozenset({"dashboard", "evaluation", "documents", "upload", "exceptions", "records", "reports", "settings", "help", "profile"})),
 }
 DETAIL_PAGES = frozenset({"tenants", "documents", "records"})
 Email = Annotated[str, StringConstraints(strip_whitespace=True, to_lower=True, max_length=254,

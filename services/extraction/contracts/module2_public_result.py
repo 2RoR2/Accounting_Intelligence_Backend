@@ -331,6 +331,13 @@ def processing_trace(service):
         "runner": orchestration.get("runner"),
         "runner_reason": orchestration.get("reason"),
         "stages": [stage.get("stage") for stage in service.get("stage_trace") or []],
+        # Measured wall-clock seconds per stage and in total, as recorded while the job ran.
+        "stage_seconds": [{"stage": stage.get("stage"), "seconds": stage.get("seconds")}
+                          for stage in service.get("stage_trace") or []
+                          if isinstance(stage.get("seconds"), (int, float)) and not isinstance(stage.get("seconds"), bool)],
+        "elapsed_seconds": service.get("elapsed_seconds") if isinstance(service.get("elapsed_seconds"), (int, float)) else None,
+        "assessment": {"decision": (service.get("assessment") or {}).get("decision"),
+                       "recovery_fields": list((service.get("assessment") or {}).get("recovery_fields") or [])},
         "precheck": (service.get("validation_precheck") or {}).get("status"),
         "final_route": service.get("final_route"),
         "retry": (service.get("targeted_retry") or {}).get("result"),
@@ -338,6 +345,8 @@ def processing_trace(service):
         "qwen": {
             "attempted": bool(assistance.get("attempted")),
             "status": assistance.get("status"),
+            "model": next((((field.get("vlm") or {}).get("model")) for field in reconciled.values()
+                           if isinstance((field.get("vlm") or {}).get("model"), str)), None),
             "fields": [{"field": name, "outcome": field.get("outcome"),
                         "source_check": ((field.get("vlm") or {}).get("source_check") or {}).get("status")}
                        for name, field in reconciled.items()],

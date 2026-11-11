@@ -182,3 +182,90 @@ def test_public_result_adapter_uses_dictionary_aliases_by_kind(kind, source_key,
 
     assert adapted.fields[0].field_key == gold_key
     assert evaluate_document_fields(reference, adapted).field_outcomes[0].outcome == 'CORRECT'
+
+
+@pytest.mark.parametrize(('raw_text', 'expected_key'), [
+    ('INVOICE NO.\nINV-2024-0042', 'bill_number'),
+    ('Bill No: INV-2024-0042', 'bill_number'),
+    ('No. Bil\nINV-2024-0042', 'bill_number'),
+    ('Reference: INV-2024-0042', 'bill_reference'),
+    ('Account No.\nINV-2024-0042', 'bill_reference'),
+    ('INV-2024-0042', 'bill_reference'),
+    (None, 'bill_reference'),
+])
+def test_bill_reference_scores_as_bill_number_only_with_a_printed_primary_number_label(raw_text, expected_key):
+    from ai.evaluation.field_accuracy import ORIGINAL_ROLE_POLICY
+    reference = NS(sample_id='B-2', document_type='bill', source=NS(sha256=HASH),
+                   fields=[gold('bill_number', value='INV-2024-0042')])
+    raw_result = {'fields': {'bill_reference': {'state': 'resolved', 'value': 'INV-2024-0042',
+                                                'raw_text': raw_text, 'evidence': []}}}
+    corrected = prediction_view_from_public_result(reference, raw_result)
+    original = prediction_view_from_public_result(reference, raw_result, role_policy=ORIGINAL_ROLE_POLICY)
+
+    assert corrected.fields[0].field_key == expected_key
+    assert original.fields[0].field_key == 'bill_reference'  # The original scoring stays reproducible.
+    assert evaluate_document_fields(reference, original).field_outcomes[0].outcome == 'MISSING'
+    expected = 'CORRECT' if expected_key == 'bill_number' else 'MISSING'
+    assert evaluate_document_fields(reference, corrected).field_outcomes[0].outcome == expected
+    assert raw_result['fields']['bill_reference']['value'] == 'INV-2024-0042'  # The prediction is not rewritten.
+
+
+def test_separate_bill_number_cell_is_never_shadowed_by_a_promoted_reference():
+    reference = NS(sample_id='B-3', document_type='bill', source=NS(sha256=HASH),
+                   fields=[gold('bill_number', value='B-1')])
+    raw_result = {'fields': {
+        'bill_number': {'state': 'resolved', 'value': 'B-1', 'evidence': []},
+        'bill_reference': {'state': 'resolved', 'value': 'R-9', 'raw_text': 'Bill No: R-9', 'evidence': []}}}
+    adapted = prediction_view_from_public_result(reference, raw_result)
+    assert sorted(c.field_key for c in adapted.fields) == ['bill_number', 'bill_reference']
+
+
+def test_unknown_role_policy_is_rejected():
+    reference = NS(sample_id='B-4', document_type='bill', source=NS(sha256=HASH), fields=[])
+    with pytest.raises(ValueError):
+        prediction_view_from_public_result(reference, {'fields': {}}, role_policy='guess')
+
+
+def test_address_separators_are_reported_separately_from_strict_exact_match():
+    reference = sample(
+        gold('supplier_address', value='Plot 14, MIDC Industrial Area, Andheri East, Mumbai - 400093'),
+        gold('customer_address', value='15 Connaught Place, New Delhi'),
+        gold('supplier_name', value='TechVision Distributors Pvt Ltd'),
+    )
+    extracted = prediction(
+        cell('supplier_address', 'Plot 14, MIDC Industrial Area, Andheri East\nMumbai - 400093'),
+        cell('customer_address', '16 Connaught Place\nNew Delhi'),
+        cell('supplier_name', 'TechVision Distributors Pvt Ltd'),
+    )
+
+    result = evaluate_document_fields(reference, extracted)
+
+    # Strict exact match is unchanged; the stored prediction keeps its printed line break.
+    assert [o.outcome for o in result.field_outcomes] == ['INCORRECT', 'INCORRECT', 'CORRECT']
+    assert extracted.fields[0].value.count('\n') == 1
+    assert result.accuracy == '0.3333'
+    # Separator-only equivalence; different content (16 vs 15) stays incorrect.
+    assert result.address_normalized_fields == ('supplier_address',)
+    assert result.address_normalized_accuracy == '0.6667'
+    assert result.address_normalized_denominators.eligible_present == result.denominators.eligible_present
+    summary = summarize_collection([result, result])
+    assert (summary.accuracy, summary.address_normalized_accuracy) == ('0.3333', '0.6667')
+
+
+@pytest.mark.parametrize('expected, actual, same', [
+    ('1,200 Jalan Ampang, KL', '1,200 Jalan Ampang\nKL', True),
+    ('1,200 Jalan Ampang', '1 200 Jalan Ampang', False),       # numeric comma is content
+    ('Lot 5, Jalan Besar', 'Lot 5 Jalan-Besar', False),         # other punctuation still matters
+    ('Lot 5, Jalan Besar', 'Jalan Besar, Lot 5', False),        # component order still matters
+    ('Lot 5, Jalan Besar', 'LOT 5,\n  JALAN   BESAR', True),     # original case/whitespace rules
+])
+def test_shared_address_policy_is_separator_only(expected, actual, same):
+    from ai.evaluation.address_policy import same_address
+    assert same_address(expected, actual) is same
+
+
+def test_non_address_fields_never_use_address_normalization():
+    reference = sample(gold('supplier_name', value='Acme, Ltd'))
+    result = evaluate_document_fields(reference, prediction(cell('supplier_name', 'Acme\nLtd')))
+    assert result.address_normalized_fields == ()
+    assert result.address_normalized_accuracy == result.accuracy == '0.0000'

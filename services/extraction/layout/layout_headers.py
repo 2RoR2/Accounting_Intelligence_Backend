@@ -30,13 +30,17 @@ ALIASES = {
                 'grand total': 'total_amount', 'jumlah': 'total_amount',
                 'sub total': 'subtotal', 'sst': 'tax_amount', 'pajak': 'tax_amount', 'tax inclusive': 'tax_amount',
                 'doc no': 'receipt_number', 'doc no.': 'receipt_number', 'total sales': 'total_amount',
-                'receipt total': 'total_amount', 'vat': 'tax_amount', 'gst': 'tax_amount',
+                'receipt total': 'total_amount', 'net total': 'total_amount', 'nett total': 'total_amount',
+                'invoice#': 'receipt_number', 'invoice #': 'receipt_number', 'vat': 'tax_amount', 'gst': 'tax_amount',
                 'sub-total (ex)': 'subtotal', 'sub total (ex)': 'subtotal', 'total tax': 'tax_amount',
                 'document no': 'receipt_number', 'document no.': 'receipt_number', 'rounded total': 'total_amount',
                 'rounding adjustment': 'rounding_amount', 'rounding adj': 'rounding_amount', 'rounding': 'rounding_amount',
                 'service charge': 'document_charges', 'service chg': 'document_charges', 'svc charge': 'document_charges',
                 'paid amount': 'tendered_amount', 'cash tendered': 'tendered_amount', 'change': 'change_given'},
     'bill': {'bill no': 'bill_reference', 'no bil': 'bill_reference',
+             'no. akaun': 'account_number', 'no. invois': 'bill_reference', 'no invois': 'bill_reference',
+             'jumlah bil anda': 'amount_due', 'caj semasa': 'document_charges',
+             'sila bayar sebelum': 'due_date',
              'no akaun': 'account_number', 'tarikh bil': 'bill_date',
              'tarikh akhir': 'due_date', 'jumlah perlu dibayar': 'amount_due',
              'total a pagar': 'amount_due', 'valor total': 'total_amount', 'total': 'total_amount',
@@ -48,6 +52,9 @@ ALIASES = {
 # A printed timestamp's clock part, as POS systems print it: "10:22:56 AM", "4:40:40 PM", "17:09".
 TIME_SUFFIX = r'(?:\s+\d{1,2}:\d{2}(?::\d{2})?(?:\s*[AaPp]\.?\s*[Mm]\.?)?)?'
 TIME_TEXT = r'(\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s*([AaPp])\.?\s*[Mm]\.?)?'
+MONTH_NAMES = ('january', 'february', 'march', 'april', 'may', 'june', 'july', 'august',
+               'september', 'october', 'november', 'december')
+NAMED_DATE_TEXT = r'\d{1,2}\s+(?:' + '|'.join(sorted({m for m in MONTH_NAMES} | {m[:3] for m in MONTH_NAMES}, key=len, reverse=True)) + r')\s+\d{4}'
 
 
 def clock_time(hour, minute, second=None, meridiem=None):
@@ -81,6 +88,13 @@ def normalized_date(raw):
     value = raw.strip()
     if re.fullmatch(r'\d{4}-\d{2}-\d{2}', value):
         return date.fromisoformat(value).isoformat()
+    named = re.fullmatch(r'(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})', value)
+    if named:
+        token = named[2].lower()
+        months = [i + 1 for i, month in enumerate(MONTH_NAMES) if token in {month, month[:3]}]
+        if len(months) != 1:
+            raise ValueError('Unrecognised month')
+        return date(int(named[3]), months[0], int(named[1])).isoformat()
     # "20-11-17": 20 cannot be a month, so this reads day-month-year, in this century. A pair that could be swapped stays unresolved.
     short = re.fullmatch(r'(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2})' + TIME_SUFFIX, value)
     if short:
@@ -207,7 +221,7 @@ def recover_headers(document, kind, labels, found, location):
                 or re.search(r'(?im)^\s*(?:\d|tel\b|fax\b|phone\b|tax\s*id\b|gstin\b|iban\b|address\b)', value)):
             return False
         if key in {'invoice_date','bill_date','transaction_date','due_date'}:
-            return bool(re.fullmatch(r'(?:\d{4}-\d{2}-\d{2}|\d{1,2}[/.-]\d{1,2}[/.-]\d{4})' + TIME_SUFFIX, value.strip().lstrip(':：').strip()))
+            return bool(re.fullmatch(r'(?:\d{4}-\d{2}-\d{2}|\d{1,2}[/.-]\d{1,2}[/.-]\d{4}|' + NAMED_DATE_TEXT + r')' + TIME_SUFFIX, value.strip().lstrip(':：').strip(), re.I))
         if key == 'transaction_time':
             return bool(re.fullmatch(r'\d{2}:\d{2}(?::\d{2})?',value.strip()))
         if key in {'buyer_name', 'customer_name'} and re.fullmatch(r'(?:none|nil|n\s*/?\s*a|-+)', value.strip(), re.I):
@@ -500,9 +514,11 @@ def recover_headers(document, kind, labels, found, location):
                 center_delta = abs((b['t'] + b['b'] - box['t'] - box['b']) / 2)
                 on_right = (center_delta <= min(height, other_height) * .65
                             and b['l'] >= box['r'] - height*.5 and b['r']>box['r'] and b['l']<right_limit)
-                below = (-height*.2 <= b['t'] - box['b'] <= height * 1.4
+                below = (-height*.2 <= b['t'] - box['b'] <= (max(height, other_height) if key in money_keys or key in {'invoice_date','bill_date','transaction_date','due_date'} else height) * 1.4
                          and min(b['r'],box['r']) > max(b['l'],box['l'])
-                         and (abs(b['l']-box['l']) <= height or abs(b['r']-box['r']) <= height))
+                         and (abs(b['l']-box['l']) <= height or abs(b['r']-box['r']) <= height
+                              or key in money_keys | {'invoice_date','bill_date','transaction_date','due_date'}
+                              and abs((b['l']+b['r']-box['l']-box['r'])/2) <= height))
                 if key in party_keys:
                     # A party label names a column, not the other party across the page.
                     on_right = on_right and 0 <= b['l'] - box['r'] <= height * 4
@@ -790,6 +806,7 @@ def recover_headers(document, kind, labels, found, location):
         for item,ev in positioned_receipt:
             text=item.get('text','').strip()
             match=re.fullmatch(r'(?:(?:transaction date|date|tarikh)\s*:?\s*|:\s*)?(\d{1,2}[/.-]\d{1,2}[/.-]\d{2}(?:\d{2})?)(?:\s+\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM)?)?',text,re.I)
+            match = match or re.fullmatch(r'(?:(?:transaction date|date|tarikh)\s*:?\s*)?(' + NAMED_DATE_TEXT + r')(?:\s+\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM)?)?', text, re.I)
             # A POS line can end in a four-digit-year timestamp whose space OCR dropped.
             match=match or re.search(r'(?:^|\s)(\d{1,2}[/.-]\d{1,2}[/.-]\d{4})\s*\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM)?$',text,re.I)
             if match:

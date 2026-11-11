@@ -6,11 +6,13 @@ uploads without matching gold labels receive validation results, not accuracy.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import Iterable
 
+from ai.evaluation.address_policy import ADDRESS_FIELDS, same_address
 from ai.evaluation.artifact_contracts import Denominators, FieldOutcome, FrozenPrediction
 from ai.evaluation.dataset_contract import GoldLabel, Sample
 from ai.evaluation.field_dictionary import ALIASES, FIELDS, allowed_keys
@@ -23,6 +25,9 @@ class FieldAccuracyResult:
     sample_id: str
     field_outcomes: tuple[FieldOutcome, ...]
     denominators: Denominators
+    # Same fields and denominator; only address separators are compared under ADDRESS_POLICY.
+    address_normalized_denominators: Denominators | None = None
+    address_normalized_fields: tuple[str, ...] = ()
 
     @property
     def accuracy(self) -> str | None:
@@ -30,6 +35,11 @@ class FieldAccuracyResult:
         if not self.denominators.eligible_present:
             return None
         return _ratio(self.denominators.correct, self.denominators.eligible_present)
+
+    @property
+    def address_normalized_accuracy(self) -> str | None:
+        counts = self.address_normalized_denominators
+        return _ratio(counts.correct, counts.eligible_present) if counts and counts.eligible_present else None
 
     @property
     def extraction_coverage(self) -> str | None:
@@ -46,11 +56,17 @@ class FieldAccuracySummary:
     """Aggregate field counts and ratios for a collection of evaluated samples."""
 
     denominators: Denominators
+    address_normalized_denominators: Denominators | None = None
 
     @property
     def accuracy(self) -> str | None:
         eligible = self.denominators.eligible_present
         return _ratio(self.denominators.correct, eligible) if eligible else None
+
+    @property
+    def address_normalized_accuracy(self) -> str | None:
+        counts = self.address_normalized_denominators
+        return _ratio(counts.correct, counts.eligible_present) if counts and counts.eligible_present else None
 
     @property
     def extraction_coverage(self) -> str | None:
@@ -73,10 +89,15 @@ def evaluate_document_fields(sample: Sample, prediction: FrozenPrediction | None
 
     predicted = {cell.field_key: cell for cell in prediction.fields} if prediction else {}
     outcomes: list[FieldOutcome] = []
+    address_matches: list[str] = []
 
     for label in sample.fields:
         cell = predicted.pop(label.field_key, None)
-        outcomes.append(_compare(sample.sample_id, label, cell))
+        outcome = _compare(sample.sample_id, label, cell)
+        outcomes.append(outcome)
+        if (outcome.outcome == 'INCORRECT' and label.field_key in ADDRESS_FIELDS and label.value_type == 'text'
+                and same_address(label.normalized_value if label.normalized_value is not None else label.value, cell.value)):
+            address_matches.append(label.field_key)
 
     # The annotation may cover only a subset of dictionary fields. A prediction
     # without a corresponding gold label has no truth value and is not penalized.
@@ -117,27 +138,58 @@ def evaluate_document_fields(sample: Sample, prediction: FrozenPrediction | None
         if cell is not None and cell.evidence:
             counts['evidence_available'] += 1
 
+    shifted = len(address_matches)
+    normalized_counts = {**counts, 'correct': counts['correct'] + shifted, 'incorrect': counts['incorrect'] - shifted}
     return FieldAccuracyResult(
         sample_id=sample.sample_id,
         field_outcomes=tuple(outcomes),
         denominators=Denominators(**counts),
+        address_normalized_denominators=Denominators(**normalized_counts),
+        address_normalized_fields=tuple(address_matches),
     )
 
 
-def prediction_view_from_public_result(sample: Sample, public_result: dict) -> SimpleNamespace:
+ROLE_POLICY = 'printed-role-confirmed/1'
+ORIGINAL_ROLE_POLICY = 'alias-only/0'
+# The bill mapper stores any printed bill identifier as bill_reference. The field
+# dictionary allows scoring it as bill_number only when the printed label confirms
+# that role; a generic "Reference" never qualifies. Labels are never changed.
+_PRIMARY_BILL_NUMBER_LABEL = re.compile(
+    r'(?:tax\s+)?(?:bill|invoice|invois|bil)\s*(?:no\.?|number|num\.?|#)|no\.?\s*(?:bil|invois)', re.I)
+
+
+def _printed_primary_number_label(raw_cell: dict) -> bool:
+    raw, value = raw_cell.get('raw_text'), raw_cell.get('value')
+    if not isinstance(raw, str) or not isinstance(value, str) or not value or value not in raw:
+        return False
+    label = raw.replace(value, '', 1).strip().rstrip(':').strip()
+    return '\n' not in label and bool(_PRIMARY_BILL_NUMBER_LABEL.fullmatch(label))
+
+
+def prediction_view_from_public_result(sample: Sample, public_result: dict, *,
+                                       role_policy: str = ROLE_POLICY) -> SimpleNamespace:
     """Adapt an immutable M2 public result to dataset keys for benchmark scoring.
 
     The database field_predictions table uses legacy short keys. The evaluator
     reads raw_extractions.raw_json instead, so reviewer corrections in
-    current_value can never change benchmark scores.
+    current_value can never change benchmark scores. role_policy=ORIGINAL_ROLE_POLICY
+    reproduces scoring from before printed-role confirmation, for side-by-side reports.
     """
     if not isinstance(public_result, dict) or not isinstance(public_result.get('fields'), dict):
         raise ValueError('Extraction result has no field map')
+    if role_policy not in {ROLE_POLICY, ORIGINAL_ROLE_POLICY}:
+        raise ValueError('Unknown role policy')
     allowed = allowed_keys(sample.document_type, 'document')
     cells = []
     seen = set()
+    role_confirmed = []
     for source_key, raw_cell in public_result['fields'].items():
         field_key = _canonical_field_key(source_key, sample.document_type)
+        if (role_policy == ROLE_POLICY and field_key == 'bill_reference' and 'bill_number' in allowed
+                and 'bill_number' not in public_result['fields'] and isinstance(raw_cell, dict)
+                and _printed_primary_number_label(raw_cell)):
+            field_key = 'bill_number'
+            role_confirmed.append(source_key)
         if field_key not in allowed or not isinstance(raw_cell, dict):
             continue
         if field_key in seen:
@@ -170,6 +222,8 @@ def prediction_view_from_public_result(sample: Sample, public_result: dict) -> S
         source_sha256=sample.source.sha256,
         extraction_run_id=provenance.get('service_run_id'),
         fields=cells,
+        role_policy=role_policy,
+        role_confirmed_fields=tuple(role_confirmed),
     )
 
 
@@ -204,7 +258,13 @@ def summarize_collection(results: Iterable[FieldAccuracyResult]) -> FieldAccurac
         field: sum(getattr(result.denominators, field) for result in result_list)
         for field in count_fields
     }
-    return FieldAccuracySummary(denominators=Denominators(**totals))
+    normalized = None
+    if result_list and all(result.address_normalized_denominators is not None for result in result_list):
+        normalized = Denominators(**{
+            field: sum(getattr(result.address_normalized_denominators, field) for result in result_list)
+            for field in count_fields
+        })
+    return FieldAccuracySummary(denominators=Denominators(**totals), address_normalized_denominators=normalized)
 
 
 def _compare(sample_id: str, label: GoldLabel, cell) -> FieldOutcome:

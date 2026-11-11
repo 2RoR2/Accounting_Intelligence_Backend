@@ -208,7 +208,7 @@ def authorize_workspace(path: str, request: Request):
     allowed_role = WORKSPACE_PERMISSIONS.get(area)
     if not allowed_role or page not in allowed_role[1]:
         raise HTTPException(403, "This workspace route is not available.")
-    if len(segments) == 3 and page not in DETAIL_PAGES:
+    if len(segments) == 3 and page not in DETAIL_PAGES and not (page == 'evaluation' and segments[2] == 'effort-study'):
         raise HTTPException(403, "This workspace route is not available.")
     with connect() as db:
         user = session_user(db, request)

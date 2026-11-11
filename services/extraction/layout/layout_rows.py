@@ -363,7 +363,7 @@ def recover_rows(document, kind, currency, location, field, issue):
 
 
 RECEIPT_MONEY = re.compile(r'^\(?(?:RM)?\s*(\d[\d,]*\.\d{2})\s*\*?\s*(?:[A-Za-z]{1,2})?$')
-RECEIPT_END = re.compile(r'(?i)\b(?:total|sub-?\s*total|rounding|cash|tender|change|gst\s*summary)\b')
+RECEIPT_END = re.compile(r'(?i)\b(?:total|sub-?\s*total|rounding|cash|tender|change|gst\s*summary)\b|^discount\b')
 RECEIPT_HEAD = re.compile(r'(?i)\b(?:[qo]ty\.?|item|description|u/p|price|disc%?|amoun\w*|tax)\b')
 AT_PRICE = re.compile(r'@\s*(\d+(?:[. ]\d{2,4})?)\s*$')
 
@@ -468,7 +468,9 @@ def recover_receipt_rows(document, currency, location, field, issue):
     # The item heading comes before the first amount. A later one belongs to the GST summary.
     first_money = next((i for i, g in enumerate(groups) if any(RECEIPT_MONEY.match(x['text']) for x in g)), len(groups))
     head = next((i for i, g in enumerate(groups[:first_money]) if len(RECEIPT_HEAD.findall(' '.join(x['text'] for x in g))) >= 2), None)
-    first = head + 1 if head is not None else next((i for i, g in enumerate(groups) if RECEIPT_MONEY.match(g[-1]['text'])), None)
+    # Tilted receipts can put QTY/ITEM, PRICE/TOTAL and currency qualifiers
+    # on successive baselines. TOTAL is a column heading here, not a footer.
+    first = first_money if head is not None else next((i for i, g in enumerate(groups) if RECEIPT_MONEY.match(g[-1]['text'])), None)
     if first is None:
         return []
     end = next((i for i in range(first, len(groups)) if RECEIPT_END.search(' '.join(x['text'] for x in groups[i]))), None)
@@ -479,7 +481,7 @@ def recover_receipt_rows(document, currency, location, field, issue):
     width = right - min(x['box']['l'] for g in region for x in g)
     columns = {}
     if head is not None:
-        for x in groups[head]:
+        for x in [x for group in groups[head:first] for x in group]:
             word = x['text'].casefold()
             if re.fullmatch(r'[qo]ty\.?', word):
                 columns['quantity'] = x['box']
@@ -516,7 +518,14 @@ def recover_receipt_rows(document, currency, location, field, issue):
         total += amount
         picked = {key: next((x for x in row['left'] if in_column(x, box) and re.fullmatch(r'\d+(?:\.\d+)?', x['text'])), None)
                   for key, box in columns.items()}
+        # A merged "QTY ITEM" heading does not give a separate quantity box.
+        # Till slips also print a standalone "1x" before the description.
+        quantity_token = next((x for x in row['left'] if leading_quantity
+                               and re.fullmatch(r'\d+(?:\.\d+)?\s*[xX\u00d7]', x['text'])), None)
+        discount_notes = [x for x in row['more'] if re.fullmatch(
+            r'\(?\s*(?:disc|diso|discount)\s*:\s*\d+\.\d{2,4}\s*\)?', x['text'], re.I)]
         words = [x for x in row['left'] + row['more'] if x not in picked.values()
+                 and x is not quantity_token and x not in discount_notes
                  and sum(c.isalnum() for c in x['text']) >= 3 and re.search(r'[A-Za-z]', x['text'])]
         if not words and not any(re.search(r'@', x['text']) for x in row['more']):
             return []
@@ -526,7 +535,8 @@ def recover_receipt_rows(document, currency, location, field, issue):
         if not price and at:
             price = at[1].replace(' ', '.')
         lead = re.match(r'^(\d{1,3})\s*(?=[A-Za-z])', words[0]['text']) if words and leading_quantity and 'quantity' not in columns else None
-        quantity = picked['quantity']['text'] if picked.get('quantity') else (lead[1] if lead else None)
+        quantity = picked['quantity']['text'] if picked.get('quantity') else (
+            re.match(r'\d+(?:\.\d+)?', quantity_token['text'])[0] if quantity_token else (lead[1] if lead else None))
         names = [re.sub(r'\s*@.*$', '', re.sub(r'^-\s*', '', x['text'])) for x in words]
         if lead:
             names[0] = names[0][lead.end():]
@@ -536,7 +546,8 @@ def recover_receipt_rows(document, currency, location, field, issue):
         description = field(' '.join(x['text'] for x in words), name, [x['ev'] for x in words], 'mapped',
                             [{'raw_text': ' '.join(x['text'] for x in words), 'value': name, 'evidence': [x['ev'] for x in words]}])
         cell = lambda raw, value, ev: field(raw, value, ev, 'mapped', [{'raw_text': raw, 'value': value, 'evidence': ev}])
-        sources = [picked['quantity']['ev']] if picked.get('quantity') else [x['ev'] for x in words[:1]]
+        sources = [picked['quantity']['ev']] if picked.get('quantity') else (
+            [quantity_token['ev']] if quantity_token else [x['ev'] for x in words[:1]])
         quantity_cell, price_cell = field(), field()
         try:
             if quantity:
@@ -546,13 +557,36 @@ def recover_receipt_rows(document, currency, location, field, issue):
                 if abs(Decimal(quantity) * Decimal(value) - amount) <= Decimal('0.01'):
                     evidence = [picked['unit_price']['ev']] if picked.get('unit_price') else [x['ev'] for x in row['left'] + row['more'] if '@' in x['text'] or AT_PRICE.search(x['text']) or x['text'] == price][:2] or sources
                     price_cell = cell(price, value, evidence)
+                else:
+                    # The contract has no line-discount column. Preserve the printed
+                    # price and discount as evidence, leaving the effective price null
+                    # rather than using a net amount as a fabricated unit price.
+                    evidence = ([picked['unit_price']['ev']] if picked.get('unit_price') else []) + [x['ev'] for x in discount_notes]
+                    discounts = [Decimal(re.search(r'\d+\.\d{2,4}', x['text'])[0]) for x in discount_notes]
+                    explained = len(discounts) == 1 and Decimal(quantity) * Decimal(value) - discounts[0] == amount
+                    price_cell = field(price, None, evidence, 'missing' if explained else 'ambiguous',
+                                       [] if explained else [{'raw_text': price, 'value': value, 'evidence': evidence}])
         except (ValueError, ArithmeticError):
             # An unreadable number leaves its cell empty; the printed amount and description still stand.
             pass
         rows.append({'description': description, 'line_total': cell(row['amount']['text'], str(amount), [row['amount']['ev']]),
                      'quantity': quantity_cell, 'unit_price': price_cell})
-    printed = {Decimal(token.replace(',', '')) for x in [x for g in groups[end:] for x in g] + spare
-               for token in re.findall(r'\d[\d,]*\.\d{2}\b', x['text'])}
+    # Corroboration must be an accounting total, not a tender, discount or tax
+    # amount that happens to equal the selected items.
+    printed = {Decimal(token.replace(',', '')) for group in groups[end:]
+               if re.search(r'\b(?:total|sub-?\s*total)\b', ' '.join(x['text'] for x in group), re.I)
+               for x in group for token in re.findall(r'\d[\d,]*\.\d{2}\b', x['text'])}
+    # On a tilted scan a right-hand total can sit on the baseline immediately
+    # above its label. Require horizontal position and vertical overlap with
+    # that printed label, rather than accepting any later monetary token.
+    footer = [x for group in groups[end - 1:] for x in group]
+    labels = [x for x in footer if re.search(r'\b(?:total|sub-?\s*total)\b', x['text'], re.I)]
+    for label in labels:
+        for item in footer:
+            match = RECEIPT_MONEY.fullmatch(item['text'])
+            height = max(label['box']['b'] - label['box']['t'], item['box']['b'] - item['box']['t'])
+            if match and item['box']['l'] >= label['box']['r'] - 12 and abs(item['mid'] - label['mid']) <= height * .85:
+                printed.add(Decimal(match[1].replace(',', '')))
     if not rows or not any(abs(total - value) <= Decimal('0.01') for value in printed):
         return []
     issue('LAYOUT_LINE_RECOVERY', 'Receipt rows recovered from source line geometry and checked against a printed total; missing cells were not inferred')
@@ -581,4 +615,23 @@ def item_structure(document, rows):
         joined = ' '.join(texts)
         if len(set(word.casefold() for word in _ITEM_HEADER_WORD.findall(joined))) >= 2:
             return {'status': 'unmapped_rows', 'reason': 'An item heading is printed, and no rows were read beneath it.'}
+    # Headerless retail rows still exist when arithmetic recovery fails. Do not
+    # call the source non-itemized merely because the OCR sum did not reconcile.
+    positioned = []
+    for item in records(document):
+        prov = item.get('prov') or []
+        box = prov[0].get('bbox') if len(prov) == 1 else None
+        if box and all(k in box for k in ('l', 'r', 't', 'b')):
+            positioned.append((prov[0].get('page_no'), item.get('text', '').strip(), box))
+    pairs = set()
+    for page, text, box in positioned:
+        if not re.search(r'[A-Za-z]{3}', text) or RECEIPT_END.search(text) or SUMMARY.fullmatch(text):
+            continue
+        for other_page, money, other in positioned:
+            height = max(abs(box['b'] - box['t']), abs(other['b'] - other['t']))
+            if (other_page == page and RECEIPT_MONEY.fullmatch(money) and other['l'] > box['r']
+                    and abs((box['b'] + box['t'] - other['b'] - other['t']) / 2) <= height * .85):
+                pairs.add((page, text, box['t']))
+    if len(pairs) >= 2:
+        return {'status': 'unmapped_rows', 'reason': 'Repeated descriptions and monetary cells are printed, but their rows could not be safely reconciled.'}
     return {'status': 'not_itemized'}

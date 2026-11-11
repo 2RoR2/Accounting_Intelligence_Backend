@@ -12,7 +12,7 @@ from services.extraction.parsing.extraction_v1 import ExtractionResultV1, Strict
 from services.extraction.classification.classify_document import classify_document
 
 class ClassificationResult(StrictModel):
-    classifier_version: Literal['0.1.0', '0.2.0', '0.2.1', '0.3.0', '0.3.1', '0.4.0', '0.4.1', '0.4.2', '0.4.3', '0.4.4']
+    classifier_version: Literal['0.1.0', '0.2.0', '0.2.1', '0.3.0', '0.3.1', '0.4.0', '0.4.1', '0.4.2', '0.4.3', '0.4.4', '0.4.5']
     method: Literal['explicit_heading_rules', 'content_evidence_rules']
     value: Literal['invoice', 'bill', 'receipt', 'credit_note', 'debit_note', 'unknown']
     status: Literal['classified', 'unknown', 'ambiguous', 'unsupported']

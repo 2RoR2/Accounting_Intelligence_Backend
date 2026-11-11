@@ -13,7 +13,8 @@ from services.extraction.ai.qwen_provider import (
     OllamaQwenProvider, prepare_request, validate_response, validate_response_fields, parse_json, validate_fields,
     REQUEST_OPTIONS, model_digest,
 )
-from services.extraction.classification.route_extraction import decide_route, plan_field_recovery, reserve_recovery_attempt
+from services.extraction.ai.providers import provider_label, select_qwen_provider
+from services.extraction.classification.route_extraction import budget_allows, decide_route, plan_field_recovery, reserve_recovery_attempt
 
 def sha256(data):
     return hashlib.sha256(data).hexdigest()
@@ -93,11 +94,13 @@ def recovery_context(extraction, plan, fields, root, previous_problems=None):
     doc = parse_json(checked_path(extraction['provenance']['source_document_json'], root).read_bytes())
     positioned = context_pages(doc).get(1, [])
     items = [x for x, _ in sorted(positioned, key=lambda pair: (pair[1][1], pair[1][0]))]
-    anchors = {ref for field in fields for ref in plan['fields'][field]['source_refs']}
+    # A second opinion is a blind reading: showing the parser's value or its OCR line would invite agreement.
+    shown = [field for field in fields if not plan['fields'][field].get('second_opinion')]
+    anchors = {ref for field in shown for ref in plan['fields'][field]['source_refs']}
     indexes = {j for i, x in enumerate(items) if x.get('self_ref') in anchors
                for j in range(max(0, i - 2), min(len(items), i + 3))}
     context = {'page': 1, 'fields': {name: {k: extraction['fields'][name][k]
-                for k in ('state', 'raw_text', 'value', 'candidates')} for name in fields},
+                for k in ('state', 'raw_text', 'value', 'candidates')} for name in shown},
                'nearby_text': [{'source_ref': items[i].get('self_ref'), 'text': items[i].get('text', '')}
                                for i in sorted(indexes)]}
     if previous_problems:
@@ -108,9 +111,10 @@ def recovery_context(extraction, plan, fields, root, previous_problems=None):
         return {'page': 1, 'fields': {}, 'nearby_text': [], 'omitted': 'CONTEXT_EXCEEDS_BOUND'}
     return context
 
-def run_attempt(source, root, provider_factory=OllamaQwenProvider, renderer=render_single_page,
+def run_attempt(source, root, provider_factory=select_qwen_provider, renderer=render_single_page,
                 *, source_path=None, source_access_authorized=False, selected_fields=None,
-                inference_permission=False, attempts=None, output_parent=None, previous_problems=None):
+                inference_permission=False, attempts=None, output_parent=None, previous_problems=None,
+                max_timeout_seconds=None):
     source = checked_path(source, root)
     parent = checked_path(output_parent if output_parent is not None else Path(root) / 'runs', root)
     out = parent / ('selective-' + uuid4().hex)
@@ -157,7 +161,11 @@ def run_attempt(source, root, provider_factory=OllamaQwenProvider, renderer=rend
                           requested_fields=fields, previous_problems=previous_problems,
                           visual_input={'kind': 'full_page', 'page': 1, 'width': dimensions[0], 'height': dimensions[1]})
             provider = provider_factory()
-            record.update(endpoint=provider.base, model=provider.model, timeout_seconds=provider.timeout)
+            if max_timeout_seconds is not None:
+                # The caller's latency budget; a slow answer becomes a recorded timeout, never a wait.
+                provider.timeout = min(float(provider.timeout), float(max_timeout_seconds))
+            record.update(endpoint=provider.base, model=provider.model, timeout_seconds=provider.timeout,
+                          provider=provider_label(provider))
             context = None
             if scoped:
                 configuration = {'model': provider.model, 'options': dict(REQUEST_OPTIONS), 'render_policy': RENDER_POLICY,
@@ -167,7 +175,7 @@ def run_attempt(source, root, provider_factory=OllamaQwenProvider, renderer=rend
                 if (not plan['source_verified'] or plan['blocking_reasons']
                         or any(not plan['fields'].get(name, {}).get('eligible') for name in fields)):
                     raise ValueError('Selected fields are not source-verified recovery eligible')
-                if (len(attempts) + len(fields) > plan['max_attempts_per_execution']
+                if (not budget_allows(plan, fields, attempts)
                         or any(plan['fields'][name]['issue_id'] in attempts for name in fields)):
                     raise ValueError('Recovery attempt already reserved or execution budget exhausted')
                 context = recovery_context(extraction, plan, fields, root, previous_problems)

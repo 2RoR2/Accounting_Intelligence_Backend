@@ -174,6 +174,44 @@ def _get_converter(options, converter_type, format_type, pdf_option_type):
     return _converter_cache.converter, reused
 
 
+def resolve_models_dir(root: Path, models_dir: Path | None = None) -> Path:
+    """The Docling model folder a parse under this project root would use."""
+    if models_dir is not None:
+        return Path(models_dir).expanduser().resolve()
+    if os.getenv("DOCLING_MODELS_DIR"):
+        return Path(os.environ["DOCLING_MODELS_DIR"]).expanduser().resolve()
+    candidates = (
+        (root / "models" / "docling").resolve(),
+        (root / "ai" / "models" / "docling").resolve(),
+        (root.parent / "ai" / "models" / "docling").resolve(),
+    )
+    return next((candidate for candidate in candidates if candidate.is_dir()), candidates[0])
+
+
+def warm_converter(project_root: Path = PROJECT_ROOT) -> float:
+    """Initialise Docling layout, OCR and table models before the first real document.
+
+    Converts one blank page generated in a temporary folder, in the calling thread, so
+    the thread-local converter cache is ready for the worker's jobs. No source document,
+    database, network or model download is involved, and the artefacts are discarded.
+    """
+    import tempfile
+    import pypdfium2 as pdfium
+    models = resolve_models_dir(Path(project_root).resolve())
+    started = time.perf_counter()
+    with tempfile.TemporaryDirectory(prefix="accordai-warm-", ignore_cleanup_errors=True) as folder:
+        root = Path(folder)
+        source = root / "warm.pdf"
+        pdf = pdfium.PdfDocument.new()
+        try:
+            pdf.new_page(595, 842)
+            pdf.save(str(source))
+        finally:
+            pdf.close()
+        parse_document(source, root / "runs", project_root=root, models_dir=models)
+    return round(time.perf_counter() - started, 3)
+
+
 def parse_document(
     input_pdf: Path,
     output_parent: Path,
@@ -211,17 +249,7 @@ def parse_document(
         "Output",
     )
 
-    if models_dir is not None:
-        models = Path(models_dir).expanduser().resolve()
-    elif os.getenv("DOCLING_MODELS_DIR"):
-        models = Path(os.environ["DOCLING_MODELS_DIR"]).expanduser().resolve()
-    else:
-        candidates = (
-            (root / "models" / "docling").resolve(),
-            (root / "ai" / "models" / "docling").resolve(),
-            (root.parent / "ai" / "models" / "docling").resolve(),
-        )
-        models = next((candidate for candidate in candidates if candidate.is_dir()), candidates[0])
+    models = resolve_models_dir(root, models_dir)
 
     if not source.is_file():
         raise ValueError(f"PDF not found: {source}")
@@ -281,7 +309,9 @@ def parse_document(
     from docling.datamodel.pipeline_options import RapidOcrOptions
     from services.extraction.workflow.runtime import rapidocr_options
 
-    options.do_ocr = True
+    from services.extraction.parsing.native_pdf_policy import native_utility_fast_path
+    native_bill = os.getenv('DOCLING_NATIVE_UTILITY_FAST_PATH', 'true').lower() == 'true' and native_utility_fast_path(source)
+    options.do_ocr = not native_bill
     options.ocr_options = RapidOcrOptions(**rapidocr_options())
     options.generate_parsed_pages = True
     options.document_timeout = 180.0
@@ -289,7 +319,7 @@ def parse_document(
     # weights (TableModel04_rs). Keep extraction operational and let the
     # mapper use the document text/line evidence; table structure can be
     # enabled later when those weights are provisioned.
-    options.do_table_structure = False
+    options.do_table_structure = not native_bill and os.getenv("DOCLING_TABLE_STRUCTURE", "false").lower() == "true"
     options.enable_remote_services = False
 
     options.accelerator_options = AcceleratorOptions(
@@ -305,8 +335,10 @@ def parse_document(
         "docling_version": version("docling"),
         "torch_version": version("torch"),
         "device": "cpu",
-        "ocr_enabled": True,
-        "ocr_engine": "rapidocr/onnxruntime",
+        "ocr_enabled": options.do_ocr,
+        "native_utility_fast_path": native_bill,
+        "table_structure_enabled": options.do_table_structure,
+        "ocr_engine": "native_pdf_text" if native_bill else "rapidocr/onnxruntime",
         "rapidocr_version": version("rapidocr"),
         "onnxruntime_version": version("onnxruntime"),
         "timing_scope": (

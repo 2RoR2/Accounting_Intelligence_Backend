@@ -10,7 +10,7 @@ import re
 from uuid import uuid4
 from services.extraction.layout.layout_headers import records
 
-VERSION = '0.4.4'
+VERSION = '0.4.5'
 # "-- Reprint Receipt --" says this is a copy, and that it may have been paid. It is a signal about
 # the document, and does not compete with the main heading unless there is no other heading at all.
 COPY_MARKER = re.compile(r'[-*=#\s]*(?:reprint(?:ed)?|duplicate|copy\s+of|customer\s+copy\s+of)\s+'
@@ -297,7 +297,7 @@ def context_pages(document):
 CONTEXT_MONEY = r'(?:[A-Z]{3}|RM|Rp|[$€£])?\s*\d+(?:[,.]\d{3})*[.,]\d{2}(?:\s*[A-Z]{3})?'
 
 
-def linked_context(positioned, pattern, valid):
+def linked_context(positioned, pattern, valid, *, max_gap_heights=12):
     """A labelled inline value or exactly one nearby value on the same page."""
     pattern = '(?:' + pattern + ')'
     for label, a in positioned:
@@ -313,7 +313,7 @@ def linked_context(positioned, pattern, valid):
             if value is label or not valid(value.get('text', '').strip()):
                 continue
             aligned = abs((a[1] + a[3] - box[1] - box[3]) / 2) <= min(h, box[3] - box[1]) * .65
-            right = aligned and 0 <= box[0] - a[2] <= h * 12
+            right = aligned and 0 <= box[0] - a[2] <= h * max_gap_heights
             below = (0 <= box[1] - a[3] <= h * 1.8
                      and abs(box[0] - a[0]) <= h * 1.5)
             if right or below:
@@ -335,6 +335,17 @@ def retail_transaction_context(document):
         headers = [x for x, _ in positioned if re.fullmatch(r'qty(?:\s+item)?|quantity|item', x.get('text', '').strip(), re.I)]
         # OCR can drop the space between a printed date and time (18/01/201817:09:21).
         dates = [x for x, _ in positioned if re.search(r'\b\d{1,2}[/.-]\d{1,2}[/.-]\d{4}(?:\b|(?=\d{1,2}:\d{2}))', x.get('text', ''))]
+        # Named-month POS timestamps are unambiguous source dates too.
+        from services.extraction.layout.layout_headers import NAMED_DATE_TEXT, normalized_date
+        for item, _ in positioned:
+            match = re.search(r'\b(' + NAMED_DATE_TEXT + r')\b', item.get('text', ''), re.I)
+            if match:
+                try:
+                    normalized_date(match[1])
+                except ValueError:
+                    continue
+                if item not in dates:
+                    dates.append(item)
         if not headers or not dates:
             continue
         monetary = lambda value: bool(re.fullmatch(CONTEXT_MONEY, value))
@@ -345,9 +356,9 @@ def retail_transaction_context(document):
             re.fullmatch(r'total\s*:?', x.get('text', '').strip(), re.I)
             and any(abs((b[1] + b[3] - h[1] - h[3]) / 2) <= min(b[3] - b[1], h[3] - h[1]) * .65
                     for h in header_boxes))]
-        total = linked_context(summary, r'total(?:\s+(?:rounded|amt\s+payable))?', monetary)
-        tender = linked_context(positioned, tender_pattern, monetary)
-        change = linked_context(positioned, r'change|baki|kembalian', monetary)
+        total = linked_context(summary, r'(?:(?:net|nett|grand)\s+)?total(?:\s+(?:amount|rounded|amt\s+payable))?', monetary)
+        tender = linked_context(positioned, tender_pattern, monetary, max_gap_heights=18)
+        change = linked_context(positioned, r'change|baki|kembalian', monetary, max_gap_heights=18)
         if total and tender and change:
             return [headers[0], dates[0], *total, *tender, *change], True
         tender_labels = [x for x, _ in positioned if re.fullmatch(

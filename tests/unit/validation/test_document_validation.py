@@ -74,6 +74,42 @@ class DocumentValidationTests(unittest.TestCase):
         self.result['fields']['invoice_number'].update(value=None, state='missing', resolution='candidate_for_review', ai_candidate='AI-GUESS')
         self.assertTrue(any(error['field'] == 'invoice_number' for error in self.evaluate()['errors']))
 
+    def disagreeing_second_reading(self, outcome='PARSER_MODEL_CONFLICT'):
+        self.result['fields']['supplier_name'].update(
+            ai_candidate='Example Stationery (Synthetlc)',
+            ai_candidate_details={'outcome': outcome, 'source_check': 'source_near_match', 'evidence': [{'page': 1}],
+                                  'model': 'qwen3.7-plus', 'attempt_id': 'a1'})
+        return map_m2_result(self.result, self.result['document_id'])
+
+    def test_second_reading_that_disagrees_needs_a_person_and_changes_nothing(self):
+        from validation.documents.document_validation import evaluate_document, MODEL_DISAGREEMENT_RULE
+        mapped = self.disagreeing_second_reading()
+        supplier = next(f for f in mapped['fields'] if f['field_key'] == 'supplier')
+        self.assertEqual(supplier['current_value'], 'Example Stationery (Synthetic)')
+        ai = [c for c in supplier['candidates'] if c.get('source') == 'ai']
+        self.assertEqual(len(ai), 1); self.assertFalse(ai[0]['auto_accepted']); self.assertEqual(ai[0]['evidence'], [{'page': 1}])
+        result = evaluate_document(self.doc, {'raw_json': self.result}, mapped['fields'], mapped['line_items'])
+        found = [e for e in result['errors'] if e['code'] == MODEL_DISAGREEMENT_RULE]
+        self.assertEqual(len(found), 1)
+        self.assertEqual((found[0]['severity'], found[0]['cause']), ('high', 'MODEL_DISAGREEMENT'))
+        self.assertFalse(result['validation_passed'])
+        self.assertEqual(supplier['current_value'], 'Example Stationery (Synthetic)')
+
+    def test_a_recorded_decision_clears_the_disagreement(self):
+        from validation.documents.document_validation import evaluate_document, MODEL_DISAGREEMENT_RULE
+        mapped = self.disagreeing_second_reading()
+        for row in mapped['fields']:
+            if row['field_key'] == 'supplier':  # The reviewer kept the printed value and saved it.
+                row.update(corrected_by='user-1', corrected_at='2026-11-11T02:00:00Z')
+        result = evaluate_document(self.doc, {'raw_json': self.result}, mapped['fields'], mapped['line_items'])
+        self.assertFalse(any(e['code'] == MODEL_DISAGREEMENT_RULE for e in result['errors']))
+
+    def test_agreeing_second_reading_raises_nothing(self):
+        from validation.documents.document_validation import evaluate_document, MODEL_DISAGREEMENT_RULE
+        mapped = self.disagreeing_second_reading(outcome='PARSER_PRESERVED')
+        result = evaluate_document(self.doc, {'raw_json': self.result}, mapped['fields'], mapped['line_items'])
+        self.assertFalse(any(e['code'] == MODEL_DISAGREEMENT_RULE for e in result['errors']))
+
     def test_unclassified_invoice_is_not_accepted(self):
         self.result['document_type'].update(value='unknown', status='unknown')
         self.assertTrue(any(error['field'] == 'document_type' for error in self.evaluate()['errors']))

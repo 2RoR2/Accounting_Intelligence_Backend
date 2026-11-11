@@ -10,7 +10,12 @@ def list_exceptions(request: Request):
         params = [scope, scope]
         if user["role"] == "accountant":
             params.extend([user["id"], user["id"]])
-        rows = db.execute(f"SELECT * FROM exceptions WHERE (%s IS NULL OR tenant_id=%s){owner_filter} ORDER BY created_at DESC", params).fetchall()
+        # Optional: one document's exceptions, so a review page need not load the whole tenant's.
+        document_filter = ""
+        if request.query_params.get("documentId"):
+            document_filter = " AND document_id=%s"
+            params.append(str(_uuid_or_422(request.query_params["documentId"], "document id")))
+        rows = db.execute(f"SELECT * FROM exceptions WHERE (%s IS NULL OR tenant_id=%s){owner_filter}{document_filter} ORDER BY created_at DESC", params).fetchall()
     return [{"id": str(r["id"]), "documentId": str(r["document_id"]), "tenantId": str(r["tenant_id"]), "type": r["type"], "severity": r["severity"].upper(), "assignedTo": str(r["assigned_to"]) if r["assigned_to"] else None, "status": r["status"].upper(), "message": r["message"], "note": r["note"] or "", "createdAt": str(r["created_at"]), "resolvedAt": str(r["resolved_at"] or "")} for r in rows]
 
 def get_validation_rules(request: Request):

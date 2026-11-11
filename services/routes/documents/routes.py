@@ -7,6 +7,11 @@ def _notify_tenant_users(db, tenant_id, actor_id, title, message, resource, role
     for recipient in users:
         db.execute("INSERT INTO notifications(tenant_id,user_id,type,title,message,resource) VALUES (%s,%s,%s,%s,%s,%s)", (tenant_id, recipient['id'], 'document_workflow', title, message, resource))
 
+
+def _document_action(db, user, document_id, action, details):
+    db.execute('INSERT INTO audit_logs(tenant_id,user_id,user_name,role,action,resource,details) VALUES (%s,%s,%s,%s,%s,%s,%s)',
+               (user['tenant_id'], user['id'], user.get('name', 'Workspace user'), user['role'], action, str(document_id), json.dumps(details)))
+
 def _raw_scalar(value):
     """Unwrap the list/object shape used by XML-to-JSON extraction payloads."""
     while isinstance(value, list):
@@ -550,7 +555,9 @@ def standardise_document(document_id: str, request: Request):
              values.get('supplier'), values.get('invoice'), values.get('reference'),
              values.get("customer"), values.get("date"), values.get("due"), values.get("currency"),
              values.get("total"), values.get('subtotal'), values.get('tax'), values.get('discount'), Jsonb(snapshot), user["id"])).fetchone()
+        db.execute("SELECT set_config('app.user_id',%s,true), set_config('app.status_reason',%s,true)", (str(user['id']), 'Approved revision standardised'))
         db.execute("UPDATE documents SET status='completed', updated_at=now() WHERE id=%s", (document_id,))
+        _document_action(db, user, document_id, 'document.standardised', {'record_id': str(row['id']), 'content_revision': doc['content_revision']})
     return {"id": str(row["id"]), "documentId": str(row["document_id"]), "tenantId": str(row["tenant_id"]), "category": row["category"].upper(), "validation": row["validation_status"].upper(), "status": "COMPLETED", "createdAt": str(row["created_at"])}
 
 def get_document_extraction(document_id: str, request: Request):
@@ -834,6 +841,66 @@ def decide_ai_assist(document_id: str, data: AIAssistDecisionInput, request: Req
     return {'recorded': True}
 
 
+class LineItemInput(BaseModel):
+    description: str = Field(min_length=1, max_length=2000)
+    quantity: str | None = Field(default=None, max_length=40)
+    unitPrice: str | None = Field(default=None, max_length=40)
+    amount: str = Field(min_length=1, max_length=40)
+    sourcePage: int = Field(strict=True, ge=1)
+    sourceNote: str = Field(min_length=10, max_length=2000)
+    expectedContentRevision: int = Field(strict=True, ge=1)
+
+
+def add_line_item(document_id: str, data: LineItemInput, request: Request):
+    """Human transcription of a missing printed row, with revision and audit guards."""
+    user = require_workspace_user(request, {'local_admin', 'accountant'})
+    description, note = data.description.strip(), data.sourceNote.strip()
+    if not description or len(note) < 10:
+        raise HTTPException(422, 'Enter the printed description and explain its source.')
+    values = {'description': description}
+    try:
+        for key, raw, scale in [('quantity', data.quantity, 3), ('unit_price', data.unitPrice, 4), ('amount', data.amount, 2)]:
+            if raw is None:
+                values[key] = None
+            elif not re.fullmatch(r'-?[0-9]+(?:\.[0-9]+)?', raw):
+                raise ValueError('Use a plain decimal string; leave unprinted optional cells empty.')
+            else:
+                values[key] = decimal_text(raw, precision=14, scale=scale)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    with connect() as db:
+        document = _lock_workspace_document(db, document_id, user)
+        if document['status'] not in {'extracted', 'corrected', 'exception'}:
+            raise HTTPException(409, 'Missing rows can only be added before submission.')
+        if document['content_revision'] != data.expectedContentRevision:
+            raise HTTPException(409, 'The document changed. Refresh before adding a row.')
+        if data.sourcePage > (document.get('page_count') or 1):
+            raise HTTPException(422, 'The source page is outside this document.')
+        extraction = _require_current_extraction(db, document_id)
+        evidence = {key: [{'page': data.sourcePage, 'text': str(value), 'method': 'HUMAN',
+                          'source_note': note, 'reviewed_by': str(user['id'])}]
+                    for key, value in values.items() if value is not None}
+        row = db.execute("""INSERT INTO line_items(document_id,extraction_id,line_number,description,quantity,unit_price,amount,field_states,evidence,candidates)
+            SELECT %s,%s,COALESCE(MAX(line_number),0)+1,%s,%s,%s,%s,%s::jsonb,%s::jsonb,'{}'::jsonb
+            FROM line_items WHERE document_id=%s AND extraction_id=%s RETURNING *""",
+            (document_id, extraction['id'], description, values['quantity'], values['unit_price'], values['amount'],
+             json.dumps({key: 'resolved' if value is not None else 'missing' for key, value in values.items()}),
+             json.dumps(evidence), document_id, extraction['id'])).fetchone()
+        for key, value in values.items():
+            if value is not None:
+                db.execute('INSERT INTO line_item_corrections(line_item_id,document_id,field_key,old_value,new_value,corrected_by) VALUES (%s,%s,%s,NULL,%s,%s)',
+                           (row['id'], document_id, key, value, user['id']))
+        db.execute("SELECT set_config('app.user_id',%s,true), set_config('app.status_reason',%s,true)",
+                   (str(user['id']), 'Missing printed line item transcribed'))
+        revision = db.execute("UPDATE documents SET content_revision=content_revision+1,status='corrected',updated_at=now() WHERE id=%s RETURNING content_revision", (document_id,)).fetchone()
+        db.execute('INSERT INTO audit_logs(tenant_id,user_id,user_name,role,action,resource,details) VALUES (%s,%s,%s,%s,%s,%s,%s)',
+                   (user['tenant_id'], user['id'], user.get('name', 'Workspace user'), user['role'], 'document.line_item_added', document_id,
+                    json.dumps({'line_item_id': str(row['id']), 'source_page': data.sourcePage, 'source_note': note,
+                                'content_revision': revision['content_revision'], 'values': values})))
+        validation = validate_document(db, document_id, user)
+    return {'id': str(row['id']), 'contentRevision': revision['content_revision'], 'validation': validation}
+
+
 def correct_line_item(document_id: str, line_item_id: str, field_key: str, data: LineItemCorrectionInput, request: Request):
     user = require_workspace_user(request, {'local_admin', 'accountant'})
     if field_key not in {'description', 'quantity', 'unit_price', 'amount'}:
@@ -945,22 +1012,40 @@ def save_document_draft(document_id: str, request: Request):
     if not row: raise HTTPException(404, "Document cannot be saved as a draft.")
     return {"documentId": str(row["id"]), "status": row["status"].upper(), "savedAt": str(row["updated_at"])}
 
+def _require_approvable_document(db, document, user):
+    from validation.documents.document_validation import evaluate_document, load_current
+    _, extraction, fields, items = load_current(db, str(document['id']), user)
+    result = evaluate_document(document, extraction, fields, items, db)
+    external = db.execute("SELECT id FROM exceptions WHERE document_id=%s AND tenant_id=%s AND type NOT LIKE 'VALIDATION:%%' AND status<>'resolved' LIMIT 1",
+                          (document['id'], document['tenant_id'])).fetchone()
+    if result['errors'] or not result.get('coverage_complete') or external:
+        raise HTTPException(422, 'Resolve the current validation findings and revalidate before submission or approval.')
+    stored = db.execute("""SELECT count(*) AS total, count(*) FILTER (WHERE status='failed' OR prevents_approval OR (status='not_checked' AND requires_review)) AS failures
+        FROM validation_results WHERE document_id=%s AND tenant_id=%s AND content_revision=%s""",
+        (document['id'], document['tenant_id'], document['content_revision'])).fetchone()
+    if not stored or not stored['total'] or stored['failures']:
+        raise HTTPException(422, 'Save and revalidate the current revision before submission or approval.')
+
+
 def submit_document_review(document_id: str, data: ReviewInput, request: Request):
-    user = require_workspace_user(request, {"accountant", "local_admin"})
+    user = require_workspace_user(request, {"accountant"})
     with connect() as db:
         document = _lock_workspace_document(db, document_id, user)
         _require_current_extraction(db, document_id)
-        if document['status'] not in {'extracted','corrected','exception','in_review','validated'}:
+        if document['status'] not in {'extracted','corrected','exception'}:
             raise HTTPException(409, 'Only extracted documents can be submitted for review.')
         if data.expectedContentRevision is not None and data.expectedContentRevision != document["content_revision"]:
             raise HTTPException(409, "The document changed. Refresh it before submitting for approval.")
         if data.decision != "submitted":
             raise HTTPException(422, "Accountants submit documents for approval; only local administrators can decide them.")
+        _require_approvable_document(db, document, user)
+        db.execute("SELECT set_config('app.user_id',%s,true), set_config('app.status_reason',%s,true)", (str(user['id']), 'Submitted for independent approval'))
         db.execute("INSERT INTO review_submissions(document_id,tenant_id,submitted_by,decision,note,content_revision) VALUES (%s,%s,%s,%s,%s,(SELECT content_revision FROM documents WHERE id=%s))", (document_id, user["tenant_id"], user["id"], data.decision, data.note, document_id))
         _notify_tenant_users(db, user['tenant_id'], user['id'], 'Document submitted for approval',
                              f"{document.get('document_code', 'A document')} is ready for approval.", f"documents/{document_id}", roles=('local_admin',))
         next_status = "in_review"
         db.execute("UPDATE documents SET status=%s,updated_at=now() WHERE id=%s", (next_status, document_id))
+        _document_action(db, user, document_id, 'document.submitted', {'content_revision': document['content_revision'], 'note': data.note})
     return {"documentId": document_id, "decision": data.decision, "status": next_status.upper()}
 
 def decide_document_review(document_id: str, data: ReviewDecisionInput, request: Request):
@@ -977,10 +1062,14 @@ def decide_document_review(document_id: str, data: ReviewDecisionInput, request:
             ORDER BY created_at DESC LIMIT 1""", (document_id, user["tenant_id"], document["content_revision"], user["id"])).fetchone()
         if not submission:
             raise HTTPException(422, "The document has not been submitted for approval.")
+        if data.decision == 'approved':
+            _require_approvable_document(db, document, user)
+        db.execute("SELECT set_config('app.user_id',%s,true), set_config('app.status_reason',%s,true)", (str(user['id']), 'Independent review: ' + data.decision))
         db.execute("""INSERT INTO review_decisions(submission_id,document_id,tenant_id,reviewed_by,decision,note,approved_content_revision)
             SELECT %s,%s,%s,%s,%s,%s,content_revision FROM documents WHERE id=%s AND tenant_id=%s""", (submission["id"], document_id, user["tenant_id"], user["id"], data.decision, data.note, document_id, user["tenant_id"]))
-        next_status = "validated" if data.decision == "approved" else ("exception" if data.decision == "rejected" else "in_review")
+        next_status = "validated" if data.decision == "approved" else "exception"
         db.execute("UPDATE documents SET status=%s,updated_at=now() WHERE id=%s", (next_status, document_id))
+        _document_action(db, user, document_id, 'document.' + data.decision, {'content_revision': document['content_revision'], 'submission_id': str(submission['id']), 'note': data.note})
         title = 'Document approved' if data.decision == 'approved' else 'Document review updated'
         message = f"{document.get('document_code', 'A document')} was approved." if data.decision == 'approved' else f"{document.get('document_code', 'A document')} review status is {next_status}."
         db.execute("INSERT INTO notifications(tenant_id,user_id,type,title,message,resource) VALUES (%s,%s,%s,%s,%s,%s)", (user['tenant_id'], submission['submitted_by'], 'document_workflow', title, message, f"documents/{document_id}"))
@@ -1167,6 +1256,7 @@ def register(router, handlers):
     router.add_api_route('/api/documents/{document_id}/ai-assist/decision', decide_ai_assist, methods=['POST'])
     router.add_api_route('/api/documents/{document_id}/extraction/{field_key}', correct_extracted_field, methods=['PATCH'])
     router.add_api_route('/api/documents/{document_id}/line-items/{line_item_id}/{field_key}', correct_line_item, methods=['PATCH'])
+    router.add_api_route('/api/documents/{document_id}/line-items', add_line_item, methods=['POST'], status_code=201)
     router.add_api_route('/api/records/{record_id}/amendments', request_record_amendment, methods=['POST'], status_code=201)
     router.add_api_route('/api/documents/{document_id}/revalidate', revalidate_document, methods=['POST'])
     router.add_api_route('/api/documents/{document_id}/validation-review', accept_validation_review, methods=['POST'])

@@ -114,10 +114,14 @@ def audit(db, document, job_id, action):
 
 
 def lock_document(db, document_id, tenant_id):
+    from services.queue.scope import assert_queue_tenant
+    assert_queue_tenant(tenant_id)
     row = db.execute('SELECT * FROM documents WHERE id=%s AND tenant_id=%s FOR UPDATE',
                      (uuid_text(document_id), uuid_text(tenant_id))).fetchone()
     if not row:
         raise AttemptRejected('ATTEMPT_DOCUMENT_MISMATCH')
+    from services.queue.scope import assert_queue_document
+    assert_queue_document(row)
     return row
 
 

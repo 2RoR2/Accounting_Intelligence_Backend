@@ -82,13 +82,17 @@ def processing_trends(request: Request, period: str = "week"):
     scope = tenant_scope(user)
     days = 30 if period in {"month", "30"} else 7
     with connect() as db:
-        rows = db.execute("""SELECT date_trunc('day', j.created_at) AS day, count(*) AS processed,
+        owner = " AND (d.owner_id=%s OR d.assigned_to=%s)" if user['role'] == 'accountant' else ''
+        rows = db.execute("""SELECT date_trunc('day', j.created_at) AS day,
+            count(*) FILTER (WHERE j.status IN ('succeeded','failed')) AS processed,
             count(*) FILTER (WHERE j.status='succeeded') AS succeeded,
-            count(e.id) AS exceptions
-            FROM pending_jobs j LEFT JOIN exceptions e ON e.document_id=j.document_id
+            count(*) FILTER (WHERE j.status='failed') AS failed,
+            count(*) FILTER (WHERE EXISTS (SELECT 1 FROM exceptions e WHERE e.document_id=j.document_id AND e.status<>'resolved')) AS exceptions
+            FROM pending_jobs j JOIN documents d ON d.id=j.document_id
             WHERE j.created_at >= now() - (%s || ' days')::interval AND (%s IS NULL OR j.tenant_id=%s)
-            GROUP BY 1 ORDER BY 1""", (days, scope, scope)).fetchall()
-    return [{"day": r["day"].strftime("%d %b"), "processed": int(r["processed"]), "accuracy": round((int(r["succeeded"]) / int(r["processed"]) * 100) if r["processed"] else 0, 1), "exceptions": int(r["exceptions"])} for r in rows]
+            """ + owner + ' GROUP BY 1 ORDER BY 1',
+            [days, scope, scope, *([user['id'], user['id']] if owner else [])]).fetchall()
+    return [{"day": r["day"].strftime("%d %b"), "processed": int(r["processed"]), "succeeded": int(r["succeeded"]), "failed": int(r["failed"]), "accuracy": round((int(r["succeeded"]) / int(r["processed"]) * 100) if r["processed"] else 0, 1), "exceptions": int(r["exceptions"])} for r in rows]
 """Queue API route registrations."""
 
 def register(router, handlers):

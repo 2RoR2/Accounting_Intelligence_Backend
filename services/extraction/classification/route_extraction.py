@@ -2,6 +2,7 @@
 import argparse
 import hashlib
 import json
+import os
 import re
 from pathlib import Path
 from uuid import uuid4
@@ -56,6 +57,40 @@ _EXPLANATIONS = {
 ASSESSMENT_DECISIONS = ('PARSER_SUFFICIENT_FOR_VALIDATION', 'DETERMINISTIC_RECOVERY_NEEDED',
                         'QWEN_RECOVERY_ELIGIBLE', 'HUMAN_REVIEW_REQUIRED',
                         'EXTRACTION_FAILED_OR_INFRA_UNAVAILABLE')
+
+
+SECOND_OPINION_POLICY = 'risk-based-second-opinion/1'
+MAX_SECOND_OPINIONS = 2
+_IDENTITY_FIELDS = {'supplier_name', 'supplier_address', 'issuer', 'provider_address', 'merchant', 'merchant_address'}
+_DATE_AMOUNT_FIELDS = {'invoice_date', 'bill_date', 'transaction_date', 'total_amount', 'amount_due'}
+# OCR glyph slips ("&" read as "G", words run together) pass every format rule. Identity
+# fields drive supplier matching and duplicate checks, so they are re-read below a near-
+# perfect line score; dates and amounts only when the line score is clearly lower.
+# Thresholds were chosen on the development split and need held-out confirmation.
+IDENTITY_OCR_SCORE, DATE_AMOUNT_OCR_SCORE = 0.99, 0.95
+
+
+def second_opinion_mode():
+    """off (default) or risk. Selection only; eligibility in the plan is always computed."""
+    return 'risk' if os.environ.get('QWEN_SECOND_OPINION_MODE', '').strip().lower() == 'risk' else 'off'
+
+
+def second_opinion_risks(name, field):
+    """Why a value the parser already resolved deserves a second reading; empty if none.
+
+    Uses only the extraction itself, never labels or the model.
+    """
+    if field.state != 'resolved' or name not in _IDENTITY_FIELDS | _DATE_AMOUNT_FIELDS:
+        return []
+    risks = []
+    ocr = [e for e in field.evidence if isinstance(e, dict) and e.get('from_ocr') is True]
+    scores = [e['ocr_score'] for e in ocr if isinstance(e.get('ocr_score'), (int, float)) and not isinstance(e.get('ocr_score'), bool)]
+    floor = IDENTITY_OCR_SCORE if name in _IDENTITY_FIELDS else DATE_AMOUNT_OCR_SCORE
+    if scores and min(scores) < floor:  # No score means no evidence of risk, not risk.
+        risks.append('OCR_LINE_SCORE_BELOW_' + str(floor))
+    if len({c.value for c in field.candidates if c.value is not None}) > 1:
+        risks.append('PRINTED_CANDIDATES_DISAGREE')
+    return risks
 
 
 def profile_document(document):
@@ -121,6 +156,15 @@ def assess_extraction(payload, project_root=None, *, allow_vlm_inference=False,
         # Fields validation needs first, within the execution's attempt budget.
         recovery.sort(key=lambda name: name not in unresolved)
         recovery = recovery[:plan['max_attempts_per_execution']]
+        if second_opinion_mode() == 'risk':
+            # Parser values with a stated risk, read again in the same request. Advice only:
+            # a disagreement keeps the parser value and needs a person's decision.
+            second = [name for name, cell in plan['fields'].items() if cell['eligible'] and cell.get('second_opinion')]
+            second.sort(key=lambda name: (name not in _IDENTITY_FIELDS, name))
+            for name in second[:plan['max_second_opinions_per_execution']]:
+                recovery.append(name)
+                fields.setdefault(name, {'state': result.fields[name].state})
+                fields[name].update(status='qwen_second_opinion', reason='SECOND_OPINION:' + ','.join(plan['fields'][name]['second_opinion']))
     if not classified:
         decision, reasons = 'HUMAN_REVIEW_REQUIRED', ['DOCUMENT_TYPE_REQUIRES_REVIEW']
     elif recovery:
@@ -274,11 +318,12 @@ def plan_field_recovery(payload, project_root, *, source_access_authorized=False
         weak = (field.state == 'resolved' and any(i.get('code') == 'INCOMPLETE_EVIDENCE'
                 and i.get('detail', '').split(':', 1)[0] == name for i in result.issues))
         reason = None
-        if field.state == 'resolved' and not weak:
+        risks = second_opinion_risks(name, field) if name in RECOVERY_FIELDS.get(kind, ()) else []
+        if field.state == 'resolved' and not weak and not risks:
             reason = 'RESOLVED_PARSER_VALUE_PROTECTED'
         elif name not in RECOVERY_FIELDS.get(kind, ()):
             reason = 'OUTSIDE_RECOVERY_SCOPE'
-        elif field.state not in {'missing', 'ambiguous', 'conflict'} and not weak:
+        elif field.state not in {'missing', 'ambiguous', 'conflict'} and not weak and not risks:
             reason = 'UNSUPPORTED_OR_UNREADABLE_STATE'
         elif blockers:
             reason = blockers[0]
@@ -297,22 +342,44 @@ def plan_field_recovery(payload, project_root, *, source_access_authorized=False
             reason = 'ATTEMPT_ALREADY_RESERVED'
         fields[name] = {'eligible': reason is None, 'reason': reason or ('INCOMPLETE_EVIDENCE' if weak else field.state.upper()),
                         'source_refs': cues, 'issue_id': issue_id, 'attempt_id': attempt_id,
-                        'parser_value_protected': True, 'comparison_only': field.state == 'resolved'}
+                        'parser_value_protected': True, 'comparison_only': field.state == 'resolved',
+                        **({'second_opinion': risks} if risks and not weak and reason is None else {})}
+    # An address needs a cue showing where it is printed. When its party is itself being
+    # recovered, that party's letterhead is the cue, so the address is read in the same
+    # request. Verification still anchors an address to parser party evidence, so without
+    # a resolved party the answer can only be an unverified hint for the reviewer.
+    for address, party in _PARTY_OF_ADDRESS.items():
+        cell, owner = fields.get(address), fields.get(party)
+        if (cell and owner and owner['eligible'] and not owner.get('second_opinion') and not cell['eligible']
+                and cell['reason'] == 'NO_VERIFIABLE_PRINTED_FIELD_CUE'):
+            cell.update(eligible=True, reason=result.fields[address].state.upper(),
+                        source_refs=list(owner['source_refs']), cue='party_recovered_in_same_request')
     return {'policy_version': 'field-recovery-plan/1', 'document_id': result.document_id,
             'document_review_required': True, 'inference_authorized': False, 'ai_call_performed': False,
             'source_verified': source_hash is not None, 'source_sha256': source_hash,
             'blocking_reasons': blockers, 'configuration_sha256': configuration_hash,
-            'max_attempts_per_execution': 3, 'max_attempts_per_field_issue': 1, 'fields': fields}
+            'max_attempts_per_execution': 3, 'max_second_opinions_per_execution': MAX_SECOND_OPINIONS,
+            'max_attempts_per_field_issue': 1, 'second_opinion_policy': SECOND_OPINION_POLICY, 'fields': fields}
 
 
 def reserve_recovery_attempt(plan, field_name, attempts):
     """Execution-local reservation only; never calls AI or grants permission."""
     field = plan['fields'].get(field_name)
-    if (not field or not field['eligible'] or field['issue_id'] in attempts
-            or len(attempts) >= plan['max_attempts_per_execution']):
+    if not field or not field['eligible'] or field['issue_id'] in attempts or not budget_allows(plan, [field_name], attempts):
         return False
     attempts[field['issue_id']] = field['attempt_id']
     return True
+
+
+def budget_allows(plan, field_names, attempts):
+    """Recovery fields and second opinions each have their own per-execution allowance."""
+    second = {f['issue_id'] for f in plan['fields'].values() if f.get('second_opinion')}
+    used_second = sum(1 for issue in attempts if issue in second)
+    used_main = len(attempts) - used_second
+    asked_second = sum(1 for name in field_names if plan['fields'].get(name, {}).get('second_opinion'))
+    asked_main = len(field_names) - asked_second
+    return (used_main + asked_main <= plan['max_attempts_per_execution']
+            and used_second + asked_second <= plan.get('max_second_opinions_per_execution', 0))
 
 def decide_route(payload, allow_vlm_inference: bool = True):
     if not isinstance(allow_vlm_inference, bool):

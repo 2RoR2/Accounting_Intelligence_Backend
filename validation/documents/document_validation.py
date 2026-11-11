@@ -42,6 +42,7 @@ CAUSE_LABELS = {
     'TRANSACTION_ANOMALY': 'Unusual amount',
     'CLASSIFICATION_MISMATCH': 'Document type unresolved',
     'POLICY_REQUIREMENT': 'Business rule requires review',
+    'MODEL_DISAGREEMENT': 'A second reading disagrees',
 }
 
 
@@ -50,6 +51,8 @@ def exception_cause(code, field=None, message=''):
     code, field, message = str(code or ''), str(field or ''), str(message or '')
     if field == 'document_type':
         return 'CLASSIFICATION_MISMATCH'
+    if code == MODEL_DISAGREEMENT_RULE:
+        return 'MODEL_DISAGREEMENT'
     if field == 'category' or code == 'PROFILE-001':
         return 'POLICY_REQUIREMENT'
     if code in {'EX-003', 'EX-004', 'EX-005', 'EX-006'} or code.startswith('BR-CO') or code.endswith(('-LINE_MATH', '-SUBTOTAL', '-TOTAL', '-DATES', '-SIGN')):
@@ -71,6 +74,33 @@ def exception_cause(code, field=None, message=''):
     if code == 'EX-002' or code.endswith('-FORMAT'):
         return 'INVALID_FORMAT'
     return 'POLICY_REQUIREMENT'
+
+
+MODEL_DISAGREEMENT_RULE = 'MODEL-DISAGREEMENT'
+
+
+def model_disagreements(fields):
+    """A parser value that a source-checked second reading contradicts needs a person's decision.
+
+    The value is never changed here. Saving a value for the field (the same one or another)
+    records who decided and when, and the field history keeps both; until then the finding
+    blocks approval. Model answers the source did not support never reach the field.
+    """
+    errors = []
+    for row in fields:
+        if row.get('corrected_by') is not None and row.get('corrected_at') is not None:
+            continue
+        if row.get('extraction_state') != 'resolved':
+            continue
+        conflict = next((c for c in row.get('candidates') or [] if isinstance(c, dict) and c.get('source') == 'ai'
+                         and c.get('auto_accepted') is False and c.get('outcome') == 'PARSER_MODEL_CONFLICT'), None)
+        if conflict is None:
+            continue
+        errors.append({'code': MODEL_DISAGREEMENT_RULE, 'field': FIELD_KEYS.get(row.get('field_key'), row.get('field_key')),
+                       'severity': 'high', 'model_candidate': conflict.get('value'), 'source_check': conflict.get('source_check'),
+                       'message': 'A second reading of the page gives a different value. Check the source, then save the correct '
+                                  'value (even if unchanged) to record your decision. Nothing was changed automatically.'})
+    return errors
 
 
 def _with_causes(errors):
@@ -331,12 +361,13 @@ def evaluate_document(document, extraction, fields, items, db=None):
         values = _profile_values(fields)
         profile = validate_profile(kind, values, items)
         result['errors'].extend(profile['errors']); result['checks'].extend(profile['checks'])
+        result['errors'].extend(model_disagreements(fields))
         result['errors'] = _with_causes(consolidate_errors(result['errors']))
         result['coverage_complete'] = coverage_complete(result['checks'])
         result['validation_passed'] = not result['errors']
         return result
     errors = []
-    if kind not in {'bill', 'receipt'} or (is_m2 and (
+    if kind not in {'bill', 'receipt', 'credit_note', 'debit_note'} or (is_m2 and (
             classification.get('status') != 'classified' or kind != document['kind'])):
         errors.append({'code': 'EX-002', 'field': 'document_type', 'severity': 'high',
                        'message': 'Source document kind is unknown, ambiguous or disagrees with intake; review the source.'})
@@ -345,6 +376,7 @@ def evaluate_document(document, extraction, fields, items, db=None):
         values = _profile_values(fields)
         profile = validate_profile(kind, values, items)
         result['errors'].extend(profile['errors']); result['checks'].extend(profile['checks'])
+        result['errors'].extend(model_disagreements(fields))
         result['errors'] = consolidate_errors(result['errors'])
         receivable = document.get('category') == 'accounts_receivable'
         role = 'customer' if receivable else 'supplier'
@@ -443,6 +475,8 @@ def validate_document(db, document_id, user=None):
     document, extraction, fields, items = load_current(db, document_id, user, lock=True)
     if document['status'] in {'completed', 'standardised'}:
         raise HTTPException(409, 'Approved records require an amendment.')
+    if document['status'] in {'in_review', 'validated'}:
+        raise HTTPException(409, 'This revision has already been submitted or approved. Save a correction before revalidating.')
     result = evaluate_document(document, extraction, fields, items, db)
     rule_version = RULE_VERSION
     db.execute("""UPDATE exceptions SET status='resolved',resolved_at=now(), note=COALESCE(note,'') || %s

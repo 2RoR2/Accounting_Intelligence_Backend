@@ -122,13 +122,16 @@ class ContractDatabase:
             self.db.execute('UPDATE raw_extractions SET is_current=FALSE WHERE document_id=?', (document_id,))
             self.db.execute('UPDATE raw_extractions SET is_current=TRUE WHERE id=?', (extraction_id,))
             return Rows([])
+        # PostgreSQL array membership (col=ANY(%s::text[]/uuid[])) -> SQLite IN over a JSON array; same set semantics.
+        sql = re.sub(r'=ANY\(%s::(?:text|uuid)\[\]\)', ' IN (SELECT value FROM json_each(%s))', sql)
         sql = (sql.replace(' FOR UPDATE OF d SKIP LOCKED', '').replace(' FOR UPDATE', '').replace('%s', '?')
                .replace('clock_timestamp()', 'CURRENT_TIMESTAMP')
                .replace('now()', 'CURRENT_TIMESTAMP'))
         sql = re.sub(r'EXTRACT\(EPOCH FROM \(CURRENT_TIMESTAMP - uploaded_at\)\)', '0', sql)
         sql = sql.replace('EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - COALESCE(processing_started_at,CURRENT_TIMESTAMP)))', '0')
         sql = sql.replace('::date', '').replace('::numeric', '').replace('::text', '').replace('RETURNING fp.*', 'RETURNING *')
-        params = [json.dumps(p.obj) if isinstance(p, Jsonb) else str(p) if isinstance(p, (Decimal, UUID)) else p for p in params]
+        params = [json.dumps(p.obj) if isinstance(p, Jsonb) else str(p) if isinstance(p, (Decimal, UUID))
+                  else json.dumps([str(v) for v in p]) if isinstance(p, (list, tuple)) else p for p in params]
         cursor = self.db.execute(sql, params)
         rows = [dict(row) for row in cursor.fetchall()] if cursor.description else []
         for row in rows:
@@ -142,6 +145,12 @@ class AccountingContractTests(unittest.TestCase):
     def setUp(self):
         self.database = ContractDatabase()
         self.addCleanup(self.database.db.close)
+        # Canonical audit_logs has user_id; standardisation now audits the actor. Added here, as the
+        # mutation-guard and field-correction subclasses do, so their own ALTERs keep working.
+        self.database.db.executescript('''
+          ALTER TABLE audit_logs ADD COLUMN user_id TEXT;
+          CREATE TABLE users (id TEXT PRIMARY KEY, tenant_id TEXT, role TEXT);
+          CREATE TABLE notifications (tenant_id TEXT, user_id TEXT, type TEXT, title TEXT, message TEXT, resource TEXT);''')
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.claim = Claim(Delivery(DOCUMENT, JOB, TENANT, DISPATCH_TOKEN), CLAIM_TOKEN)
@@ -181,6 +190,10 @@ class AccountingContractTests(unittest.TestCase):
         actual = self.database.db.execute('SELECT content_revision FROM documents WHERE id=?', (DOCUMENT,)).fetchone()[0]
         if revision is None:
             from validation.documents.document_validation import validate_document
+            # Validation runs before submission, as in production; a submitted or approved
+            # revision is refused (409) and must be corrected first, so start from 'corrected'.
+            self.database.db.execute("UPDATE documents SET status='corrected' WHERE id=? AND status IN ('in_review','validated')", (DOCUMENT,))
+            self.database.db.commit()
             with self.database as db:
                 validate_document(db,DOCUMENT)
         self.database.db.execute("UPDATE documents SET status='validated' WHERE id=?", (DOCUMENT,))

@@ -75,10 +75,20 @@ class AccountTests(unittest.TestCase):
             db.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
             db.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
             db.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(cls.schema)))
+        # tearDownClass does not run when setUpClass fails; a class cleanup always does.
+        cls.addClassCleanup(cls._drop_schema)
         cls.db_patch = patch.object(api, "connect", cls.connect)
         cls.route_db_patch = patch.object(admin_routes, "connect", cls.connect)
         cls.db_patch.start()
         cls.route_db_patch.start()
+        # Every route module binds its own `connect`; patch them all so no handler (login,
+        # reset, sessions ...) can fall through to the DATABASE_URL named in .env.
+        import sys as _sys
+        cls.extra_route_patches = [patch.object(module, "connect", cls.connect) for name, module in list(_sys.modules.items())
+                                   if name.startswith("services.routes.") and name.endswith(".routes")
+                                   and module is not admin_routes and hasattr(module, "connect")]
+        for extra in cls.extra_route_patches:
+            extra.start()
         with cls.connect() as db:
             # The schema is repository-level, not under tests/unit/database.
             base = Path(__file__).resolve().parents[3]
@@ -98,12 +108,17 @@ class AccountTests(unittest.TestCase):
         return db
 
     @classmethod
+    def _drop_schema(cls):
+        with psycopg.connect(cls.url) as db:
+            db.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(cls.schema)))
+
+    @classmethod
     def tearDownClass(cls):
         cls.db_patch.stop()
         cls.route_db_patch.stop()
+        for extra in cls.extra_route_patches:
+            extra.stop()
         cls.env_patch.stop()
-        with psycopg.connect(cls.url) as db:
-            db.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(cls.schema)))
 
     def setUp(self):
         with self.connect() as db:

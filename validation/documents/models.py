@@ -17,6 +17,8 @@ AMOUNT_TOLERANCE = Decimal("0.01")
 
 def finite_decimal(value):
     """Keep financial inputs exact; reject floats, booleans and bad grouping."""
+    if value is None:
+        raise ValueError('Missing numeric value.')
     if isinstance(value, bool) or not isinstance(value, (str, int, Decimal)):
         raise ValueError('Expected an exact decimal string or Decimal.')
     if isinstance(value, str):

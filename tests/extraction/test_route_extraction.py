@@ -2,6 +2,7 @@
 from copy import deepcopy
 import hashlib
 import json
+import os
 from tempfile import TemporaryDirectory
 from pathlib import Path
 import sys
@@ -155,8 +156,11 @@ class RecoveryPlanTests(unittest.TestCase):
                 self.assertEqual(data,before)
 
     def test_resolved_values_and_unsupported_fields_are_protected(self):
-        data,_=self.case();plan=self.plan(data)
+        data,_=self.case()
+        for evidence in data['fields']['supplier_name']['evidence']:evidence['ocr_score']=0.995
+        plan=self.plan(data)
         self.assertEqual(plan['fields']['supplier_name']['reason'],'RESOLVED_PARSER_VALUE_PROTECTED')
+        self.assertNotIn('second_opinion',plan['fields']['supplier_name'])
         self.assertFalse(plan['fields']['currency']['eligible'])
         data['fields']['supplier_name'].update(state='unsupported',value=None)
         self.assertEqual(self.plan(data)['fields']['supplier_name']['reason'],'UNSUPPORTED_OR_UNREADABLE_STATE')
@@ -208,6 +212,57 @@ class RecoveryPlanTests(unittest.TestCase):
         data,_=self.case();self.missing(data,'supplier_name')
         data['issues'].append({'code':'BANK_RECONCILIATION_DISAGREEMENT','detail':'supplier_name'})
         self.assertIn('UNHANDLED_OR_NONEXTRACTION_ISSUE',self.plan(data)['blocking_reasons'])
+
+    def test_address_is_asked_with_its_party_never_alone(self):
+        for kind,party,address in [('invoice','supplier_name','supplier_address'),('bill','issuer','provider_address'),
+                                   ('receipt','merchant','merchant_address')]:
+            with self.subTest(kind=kind):
+                data,_=self.case(kind)
+                data['fields'].setdefault(address,deepcopy(data['fields'][party]))  # The service adds this placeholder.
+                self.missing(data,address)
+                # Party resolved but no address-like text beneath it: still no cue.
+                self.assertEqual(self.plan(data)['fields'][address]['reason'],'NO_VERIFIABLE_PRINTED_FIELD_CUE')
+                # Party itself recovered (its label is printed): the address joins that request.
+                self.missing(data,party);plan=self.plan(data)
+                self.assertTrue(plan['fields'][party]['eligible'])
+                self.assertTrue(plan['fields'][address]['eligible'])
+                self.assertEqual(plan['fields'][address]['cue'],'party_recovered_in_same_request')
+                self.assertEqual(plan['fields'][address]['source_refs'],plan['fields'][party]['source_refs'])
+
+    def test_risky_resolved_value_is_a_comparison_only_second_opinion(self):
+        data,_=self.case();before=deepcopy(data)  # Fixture OCR line score 0.8, below the identity threshold.
+        field=self.plan(data)['fields']['supplier_name']
+        self.assertTrue(field['eligible']);self.assertTrue(field['comparison_only']);self.assertTrue(field['parser_value_protected'])
+        self.assertEqual(field['second_opinion'],['OCR_LINE_SCORE_BELOW_0.99'])
+        self.assertEqual(data,before)
+        # A missing score is not evidence of risk.
+        for evidence in data['fields']['supplier_name']['evidence']:evidence.pop('ocr_score',None)
+        self.assertNotIn('second_opinion',self.plan(data)['fields']['supplier_name'])
+
+    def test_second_opinions_are_selected_only_when_enabled_and_within_their_own_budget(self):
+        from unittest.mock import patch
+        from services.extraction.classification.route_extraction import assess_extraction, budget_allows
+        data,_=self.case()
+        with patch.dict(os.environ,{'QWEN_SECOND_OPINION_MODE':'off'}):
+            off=assess_extraction(data,self.root,allow_vlm_inference=True,source_access_authorized=True)
+        with patch.dict(os.environ,{'QWEN_SECOND_OPINION_MODE':'risk'}):
+            on=assess_extraction(data,self.root,allow_vlm_inference=True,source_access_authorized=True)
+        self.assertNotIn('supplier_name',off['recovery_fields'])
+        self.assertIn('supplier_name',on['recovery_fields'])
+        self.assertEqual(on['fields']['supplier_name']['status'],'qwen_second_opinion')
+        self.assertEqual(data['fields']['supplier_name']['value'],'Example Trading')
+        plan=self.plan(data);second=[n for n,f in plan['fields'].items() if f.get('second_opinion')]
+        self.assertTrue(budget_allows(plan,second[:2],{}))
+        self.assertFalse(budget_allows(plan,['supplier_name']*3,{}))
+
+    def test_address_without_an_eligible_party_stays_ineligible(self):
+        data,_=self.case('invoice');data['fields'].setdefault('supplier_address',deepcopy(data['fields']['supplier_name']))
+        self.missing(data,'supplier_address');self.missing(data,'supplier_name')
+        data['issues'].append({'code':'BANK_RECONCILIATION_DISAGREEMENT','detail':'supplier_name'})
+        plan=self.plan(data)
+        self.assertFalse(plan['fields']['supplier_name']['eligible'])
+        self.assertFalse(plan['fields']['supplier_address']['eligible'])
+        self.assertNotIn('cue',plan['fields']['supplier_address'])
 
     def test_attempt_identity_and_execution_budget_are_deterministic_and_local(self):
         data,_=self.case()

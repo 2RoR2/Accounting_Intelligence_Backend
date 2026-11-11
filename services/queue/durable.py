@@ -5,6 +5,7 @@ from datetime import datetime, timezone, timedelta
 from database.connection import connect
 from services.queue import attempts
 from services.queue.config import get_queues
+from services.queue.scope import scope_clause, scope_bindings
 
 log = logging.getLogger(__name__)
 
@@ -29,10 +30,11 @@ def dispatch_due_jobs(limit=50):
         rows = db.execute("""SELECT j.id,j.document_id,j.tenant_id FROM pending_jobs j
             JOIN documents d ON d.id=j.document_id AND d.tenant_id=j.tenant_id
             WHERE j.status='pending' AND j.next_attempt_at<=clock_timestamp() AND d.status='queued'
+            """ + scope_clause() + """
             ORDER BY EXISTS (SELECT 1 FROM pending_jobs old WHERE old.document_id=j.document_id
                 AND old.status='failed' AND old.last_error IS DISTINCT FROM 'LEASE_EXPIRED') DESC,
                 j.created_at FOR UPDATE OF d SKIP LOCKED LIMIT %s""",
-            (min(limit, capacity),)).fetchall()
+            (*scope_bindings(), min(limit, capacity))).fetchall()
         for row in rows:
             try:
                 with db.transaction():
@@ -55,9 +57,10 @@ def recover_expired_jobs():
     with connect() as db:
         rows = db.execute("""SELECT j.id,j.document_id,j.tenant_id FROM pending_jobs j
             JOIN documents d ON d.id=j.document_id AND d.tenant_id=j.tenant_id
-            WHERE (j.status='dispatched' AND j.dispatch_expires_at<clock_timestamp())
-               OR (j.status='processing' AND j.processing_expires_at<clock_timestamp())
-            ORDER BY j.created_at FOR UPDATE OF d SKIP LOCKED""").fetchall()
+            WHERE ((j.status='dispatched' AND j.dispatch_expires_at<clock_timestamp())
+               OR (j.status='processing' AND j.processing_expires_at<clock_timestamp()))
+            """ + scope_clause() + """
+            ORDER BY j.created_at FOR UPDATE OF d SKIP LOCKED""", scope_bindings()).fetchall()
         for row in rows:
             document = attempts.lock_document(db,str(row['document_id']),str(row['tenant_id']))
             job=db.execute('SELECT * FROM pending_jobs WHERE id=%s FOR UPDATE',(row['id'],)).fetchone()
@@ -139,7 +142,7 @@ def recover_lost_local_workers():
         if job.get_status() != JobStatus.STARTED:
             continue
         with connect() as db:
-            row = db.execute('SELECT * FROM pending_jobs WHERE dispatch_token=%s', (rq_id,)).fetchone()
+            row = db.execute('SELECT j.* FROM pending_jobs j JOIN documents d ON d.id=j.document_id WHERE j.dispatch_token=%s ' + scope_clause(), (rq_id, *scope_bindings())).fetchone()
             if not row:
                 continue
             document = attempts.lock_document(db, str(row['document_id']), str(row['tenant_id']))

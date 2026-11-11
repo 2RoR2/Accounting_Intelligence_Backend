@@ -32,10 +32,9 @@ ROOT = Path(__file__).resolve().parents[2]
 AI = ROOT / "ai"
 VERSION = "module2-offline-baseline/1.1.0"
 ORIGINAL_POLICY = "typed-exact-decimal-text-nfkc-whitespace-casefold/1"
-ADDRESS_POLICY = "address-comma-line-separators/1"
 POLICY = "dual-original-v1-address-separators-v1/2"
-ADDRESS_FIELDS = {"supplier_address", "customer_address", "provider_address", "merchant_address",
-                  "billing_address", "shipping_address", "service_address"}
+# One shared address rule for this benchmark and the service evaluator (field_accuracy.py).
+from ai.evaluation.address_policy import ADDRESS_FIELDS, ADDRESS_POLICY, normalise_address  # noqa: E402
 ROW_POLICY = "maximum-weight-one-to-one-desc-ge-0.5-or-two-numeric/1"
 sys.dont_write_bytecode = True
 if str(ROOT) not in sys.path:
@@ -483,20 +482,6 @@ def _strict_compare_cell(gold, cell):
         normalized = False
     return {**base, "exact": "correct" if exact else "incorrect",
             "normalized": "correct" if normalized else "incorrect", "exclusion_reason": None}
-
-
-def normalise_address(value):
-    """Address-only separator equivalence; never fuzzy content matching.
-
-    In addition to original NFKC/case/whitespace rules, commas between address
-    components equal a space or line break. Preserve commas embedded between
-    digits, all other punctuation, word boundaries, digits and component order.
-    This never splits joined OCR words, corrects spelling or changes predictions.
-    """
-    text = normalise(value, "text")
-    if text is None:
-        raise ValueError("MISSING_ADDRESS")
-    return " ".join(re.sub(r"(?<!\d),|,(?!\d)", " ", text).split())
 
 
 def compare_cell(gold, cell):

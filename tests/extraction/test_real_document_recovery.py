@@ -95,6 +95,43 @@ class RecoveryTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'OCR_MODEL_MISSING'):
                 rapidocr_options()
 
+    def test_detector_resize_policy_is_explicit_and_bounded(self):
+        from services.extraction.workflow.runtime import detector_resize_params
+        with patch.dict('os.environ', {}, clear=True):
+            self.assertEqual(detector_resize_params(), {'Det.limit_type': 'min', 'Det.limit_side_len': 736})
+        with patch.dict('os.environ', {'RAPIDOCR_DET_LIMIT_TYPE': 'max'}, clear=True):
+            self.assertEqual(detector_resize_params(), {'Det.limit_type': 'max', 'Det.limit_side_len': 2000})
+        for env in ({'RAPIDOCR_DET_LIMIT_TYPE': 'none'}, {'RAPIDOCR_DET_LIMIT_SIDE_LEN': 'big'},
+                    {'RAPIDOCR_DET_LIMIT_SIDE_LEN': '50'}, {'RAPIDOCR_DET_LIMIT_SIDE_LEN': '99999'}):
+            with self.subTest(env=env), patch.dict('os.environ', env, clear=True):
+                with self.assertRaises(RuntimeError):
+                    detector_resize_params()
+
+    def test_model_warmup_parses_only_a_blank_local_page_with_the_job_models(self):
+        from services.extraction.parsing import baseline_parser
+        calls = []
+        def fake_parse(source, output_parent, project_root, models_dir):
+            import pypdfium2 as pdfium
+            with pdfium.PdfDocument(source) as pdf:
+                textpage = pdf[0].get_textpage()
+                calls.append((len(pdf), textpage.get_text_range(), Path(source).parent == Path(project_root),
+                              models_dir))
+                textpage.close()
+            return None, {}
+        with TemporaryDirectory() as models, patch.dict('os.environ', {'DOCLING_MODELS_DIR': models}), \
+                patch.object(baseline_parser, 'parse_document', fake_parse):
+            seconds = baseline_parser.warm_converter()
+            expected = baseline_parser.resolve_models_dir(baseline_parser.PROJECT_ROOT)
+        self.assertEqual(calls, [(1, '', True, expected)])
+        self.assertGreaterEqual(seconds, 0)
+
+    def test_detector_policy_reaches_docling_rapidocr_params(self):
+        from docling.datamodel.pipeline_options import RapidOcrOptions
+        from services.extraction.workflow.runtime import rapidocr_options
+        with patch.dict('os.environ', {'RAPIDOCR_DET_LIMIT_TYPE': 'max', 'RAPIDOCR_DET_LIMIT_SIDE_LEN': '1600'}):
+            options = RapidOcrOptions(**rapidocr_options())
+        self.assertEqual(options.rapidocr_params, {'Det.limit_type': 'max', 'Det.limit_side_len': 1600})
+
     def test_multilingual_headings_and_attached_reference(self):
         for heading, kind in [('RESIT', 'receipt'), ('INVOIS CUKAI', 'invoice'),
                               ('Fatura Simplificada FS/123', 'invoice'), ('BIL ELEKTRIK', 'bill')]:

@@ -163,7 +163,9 @@ def persist_extraction_result(document_id: str, result: dict[str, Any], *, claim
             )
 
         db.execute('SELECT switch_current_extraction(%s)',(extraction_id,))
-        _rename_after_extraction(db, document, mapped['fields'])
+        from services.queue.scope import replay_document_ids
+        if document_id not in replay_document_ids():
+            _rename_after_extraction(db, document, mapped['fields'])
         db.execute("UPDATE documents SET status='extracted', content_revision=content_revision+1, processing_seconds=EXTRACT(EPOCH FROM (clock_timestamp() - COALESCE(processing_started_at,clock_timestamp()))), processing_completed_at=clock_timestamp(), updated_at=clock_timestamp() WHERE id=%s", (document_id,))
         classification = mapped['document_kind']
         if classification.get('status') == 'classified' and classification.get('value') in {'invoice', 'bill', 'receipt', 'credit_note', 'debit_note'}:

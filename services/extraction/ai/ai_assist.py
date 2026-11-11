@@ -15,6 +15,7 @@ from uuid import uuid4
 from services.extraction.ai.qwen_provider import (
     OllamaQwenProvider, model_digest, parse_json, prepare_request, validate_response_fields,
 )
+from services.extraction.ai.providers import provider_label, select_qwen_provider
 from services.extraction.ai.run_selective_qwen import checked_path, render_single_page, verified_pdf
 from services.extraction.classification.reconcile_selective import (
     MODEL_FAILURE, arbitrate, check_candidate_against_source, REJECTED_SOURCE_CHECKS,
@@ -58,7 +59,7 @@ def _explain(outcome, status, rejection):
     }[outcome]
 
 
-def run_ai_assist(service_run_id, source_path, requested, *, root, current_values=None, provider_factory=OllamaQwenProvider,
+def run_ai_assist(service_run_id, source_path, requested, *, root, current_values=None, provider_factory=select_qwen_provider,
                   renderer=render_single_page):
     """Examine fields of one already authorised document and return advice per field.
 
@@ -139,5 +140,5 @@ def run_ai_assist(service_run_id, source_path, requested, *, root, current_value
                         'rejected_value_hash': (hashlib.sha256(candidate.encode()).hexdigest()[:12] if candidate and visible is None else None),
                         'explanation': _explain(outcome, check['status'], rejected.get(name))})
     return {'version': VERSION, 'status': 'COMPLETED', 'attempt_id': uuid4().hex, 'profile': profile, 'model': provider.model,
-            'model_digest': digest, 'page': 1, 'seconds': round(time.perf_counter() - started, 2), 'fields': results,
+            'provider': provider_label(provider), 'model_digest': digest, 'page': 1, 'seconds': round(time.perf_counter() - started, 2), 'fields': results,
             'review_required': True, 'accounting_approval_performed': False}
