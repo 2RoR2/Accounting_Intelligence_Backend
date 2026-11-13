@@ -4,6 +4,7 @@ Each pending_jobs row is one processing attempt (at most one worker claim).
 Dispatch/processing deadlines use the PostgreSQL clock. Every retry creates a
 new row; terminal attempts and their delivery identities are retained.
 """
+import re
 from dataclasses import dataclass
 from datetime import timedelta
 from uuid import UUID, uuid4
@@ -286,6 +287,29 @@ def complete(db, claim, document):
     audit(db,document,delivery.job_id,'extraction.succeeded')
 
 
+# Exact lite-engine codes that may be stored as-is (services/extraction/lite).
+LITE_FAILURE_CODES = frozenset({'INVALID_OR_UNREADABLE_PDF', 'INVALID_OR_UNSAFE_IMAGE', 'IMAGE_PIXEL_LIMIT',
+                                'LITE_EXTRACTION_FAILED', 'INVALID_LITE_CONFIGURATION'})
+_PREFIXED_FAILURE_CODE = re.compile(r'\b(?:IMAGE_OCR|OCR|SOURCE|UNSUPPORTED_EXTRACTION|INVALID_IMAGE)_[A-Z_]+\b')
+_ANY_CODE = re.compile(r'\b[A-Z][A-Z_]+[A-Z]\b')
+
+
+def safe_failure_code(message):
+    """The failure text that may be stored: an allowlisted code, never arbitrary caller text.
+
+    Full exception chains stay in the worker logs.
+    """
+    text = str(message or '')
+    code = _PREFIXED_FAILURE_CODE.search(text)
+    safe = code.group(0) if code else next(
+        (token for token in _ANY_CODE.findall(text) if token in LITE_FAILURE_CODES), 'EXTRACTION_FAILED')
+    if text.startswith('Extraction attempt failed: '):
+        kind = text.removeprefix('Extraction attempt failed: ')
+        if kind.isidentifier():
+            safe = 'EXTRACTION_FAILED:' + kind
+    return safe
+
+
 def fail_claim(claim, message='EXTRACTION_FAILED'):
     """Failure is fenced exactly like success, never selected by latest document job."""
     try:
@@ -298,15 +322,7 @@ def fail_claim(claim, message='EXTRACTION_FAILED'):
                 protected = True
             terminal = 'cancelled' if protected else 'failed'
             instant = now(db)
-            # Persist safe codes; retain full exception chains in worker logs.
-            # Never turn arbitrary caller text into document/API data.
-            import re
-            text = str(message or '')
-            code = re.search(r'\b(?:IMAGE_OCR|OCR|SOURCE|UNSUPPORTED_EXTRACTION|INVALID_IMAGE)_[A-Z_]+\b', text)
-            safe_message = code.group(0) if code else 'EXTRACTION_FAILED'
-            if text.startswith('Extraction attempt failed: '):
-                kind = text.removeprefix('Extraction attempt failed: ')
-                if kind.isidentifier(): safe_message = 'EXTRACTION_FAILED:' + kind
+            safe_message = safe_failure_code(message)
             changed = db.execute("""UPDATE pending_jobs SET status=%s,finished_at=%s,
                 last_error=%s,updated_at=%s WHERE id=%s AND document_id=%s AND tenant_id=%s
                 AND status='processing' AND dispatch_token=%s AND claim_token=%s
@@ -324,22 +340,34 @@ def fail_claim(claim, message='EXTRACTION_FAILED'):
         return False
 
 
+def _publish_rq(delivery):
+    """Legacy Redis/RQ transport (QUEUE_BACKEND=rq)."""
+    from services.queue.config import get_queues
+    cpu,_ = get_queues()
+    cpu.enqueue_call('services.queue.jobs.process_document_extraction_job',
+        # The worker receives only the opaque document ID. It resolves and
+        # claims the exact dispatched pending_jobs row from PostgreSQL.
+        args=(delivery.document_id,),
+        job_id=delivery.dispatch_token,timeout=PROCESSING_SECONDS,ttl=DISPATCH_SECONDS,
+        # Keep only RQ metadata long enough for registry cleanup. The job
+        # return value never contains extraction data; PostgreSQL remains
+        # the source of truth for results and failures.
+        result_ttl=3600,failure_ttl=86400,description='Accounting extraction '+delivery.job_id)
+
+
 def publish(delivery):
     """One send per reserved token; SQL claim is the deduplication authority."""
     try:
-        from services.queue.config import get_queues
-        cpu,_ = get_queues()
-        cpu.enqueue_call('services.queue.jobs.process_document_extraction_job',
-            # The worker receives only the opaque document ID. It resolves and
-            # claims the exact dispatched pending_jobs row from PostgreSQL.
-            args=(delivery.document_id,),
-            job_id=delivery.dispatch_token,timeout=PROCESSING_SECONDS,ttl=DISPATCH_SECONDS,
-            # Keep only RQ metadata long enough for registry cleanup. The job
-            # return value never contains extraction data; PostgreSQL remains
-            # the source of truth for results and failures.
-            result_ttl=3600,failure_ttl=86400,description='Accounting extraction '+delivery.job_id)
+        from services.queue.backend import queue_backend
+        if queue_backend() == 'inline':
+            # Same reservation, different transport: a thread in this process
+            # claims the delivery through claim_delivery() like any worker.
+            from services.queue import inline
+            inline.submit(delivery)
+        else:
+            _publish_rq(delivery)
     except Exception:
-        # Redis may have accepted the message before raising. Fence it by
+        # The transport may have accepted the message before raising. Fence it by
         # closing ONLY an unclaimed matching reservation; never alter a claim.
         with connect() as db:
             document = lock_document(db,delivery.document_id,delivery.tenant_id)

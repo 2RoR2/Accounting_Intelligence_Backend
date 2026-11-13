@@ -5,6 +5,47 @@ OCR engine scores describe text recognition only, not whether the text belongs t
 this field. No calibrated confidence exists without a labelled calibration set, so
 extraction confidence stays null.
 """
+REVIEW_SIGNALS = ('verified', 'check', 'suggestion', 'missing')
+DEFAULT_OCR_SCORE_THRESHOLD = 0.90  # Until a tenant setting exists (task P2.2/P3).
+# Document issues that mean a filled value was assumed, not read exactly as printed.
+ASSUMPTION_ISSUES = frozenset({'DATE_ORDER_ASSUMED', 'DEFAULT_CURRENCY_APPLIED'})
+
+
+def review_signal(*, evidence, candidates, resolution, extraction_state, threshold=DEFAULT_OCR_SCORE_THRESHOLD,
+                  field_issues=()):
+    """What a reviewer should do with one stored field. Never a confidence number.
+
+    verified    a value is filled and every evidence row is printed in the source: read from
+                the PDF text layer, or by OCR with an engine score >= threshold
+    check       a value is filled but needs a look: OCR score below threshold or unknown, no
+                source evidence (e.g. a configured default), an assumed date order or default,
+                or a model reading that disagrees with the value
+    suggestion  no value is filled, but an AI candidate is offered (AI_PREFILL=never, or a
+                model value that was not applied)
+    missing     nothing to show
+    """
+    entries = [e for e in (evidence or []) if isinstance(e, dict)]
+    options = [c for c in (candidates or []) if isinstance(c, dict)]
+    model = [c for c in options if c.get('source') == 'ai' and c.get('value') not in (None, '')]
+    filled = extraction_state == 'resolved' and resolution != 'candidate_for_review'
+    if not filled:
+        return 'suggestion' if model or extraction_state == 'resolved' else 'missing'
+    if ASSUMPTION_ISSUES & set(field_issues or ()):
+        return 'check'
+    if any(c.get('outcome') == 'PARSER_MODEL_CONFLICT' for c in model):
+        return 'check'
+    if not entries:
+        return 'check'
+    for entry in entries:
+        if entry.get('from_ocr') is False:
+            continue  # Text layer: the characters are the document's own.
+        score = next((entry[name] for name in ('engine_score', 'ocr_score')
+                      if isinstance(entry.get(name), (int, float)) and not isinstance(entry.get(name), bool)), None)
+        if entry.get('from_ocr') is not True or score is None or score < threshold:
+            return 'check'
+    return 'verified'
+
+
 def evidence_quality(state,reviewed,evidence,candidates):
     entries=[e for e in evidence if isinstance(e,dict)]
     options=[c for c in candidates if isinstance(c,dict)]

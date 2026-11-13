@@ -209,7 +209,7 @@ def list_documents(
                 SELECT COALESCE(current_value, normalized_value, raw_value) AS value
                 FROM field_predictions
                 WHERE document_id=d.id
-                  AND field_key IN ('invoice', 'invoice_number', 'reference', 'reference_number', 'bill_reference', 'receipt', 'receipt_number')
+                  AND field_key IN ('invoice', 'invoice_number', 'reference', 'reference_number', 'bill_number', 'bill_reference', 'receipt', 'receipt_number')
                 ORDER BY created_at DESC
                 LIMIT 1
             ) identifier_field ON true

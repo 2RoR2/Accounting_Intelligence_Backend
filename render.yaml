@@ -1,3 +1,6 @@
+# One web service: the API is also the extraction worker (QUEUE_BACKEND=inline),
+# PostgreSQL is the only queue, OCR runs on this CPU. No Redis, no RQ worker,
+# no supervisor service. AI is off unless AI_EXTRACTION=text is set here.
 services:
   - type: web
     name: accounting-intelligence-api
@@ -8,65 +11,39 @@ services:
     envVars:
       - key: DATABASE_URL
         sync: false
-      - key: REDIS_URL
-        sync: false
       - key: FRONTEND_ORIGINS
         sync: false
       - key: COOKIE_SECURE
         value: "true"
-      - key: PYTHON_VERSION
-        value: "3.12.11"
-      - key: ENABLE_IMAGE_OCR
-        value: "true"
-      - key: WEB_CONCURRENCY
-        value: "1"
-      - key: OMP_NUM_THREADS
-        value: "1"
-      - key: OPENBLAS_NUM_THREADS
-        value: "1"
-      - key: MKL_NUM_THREADS
-        value: "1"
-      - key: MALLOC_ARENA_MAX
-        value: "2"
       - key: COOKIE_SAMESITE
         value: none
-      - key: JWT_SECRET
-        sync: false
-      - key: S3_BUCKET
-        sync: false
-      - key: S3_ENDPOINT_URL
-        sync: false
-      - key: AWS_ENDPOINT_URL_S3
-        sync: false
-      - key: AWS_ACCESS_KEY_ID
-        sync: false
-      - key: AWS_SECRET_ACCESS_KEY
-        sync: false
-
-  - type: worker
-    name: accounting-intelligence-rq-worker
-    runtime: python
-    buildCommand: bash scripts/render_build.sh
-    startCommand: rq worker cpu_tasks --url $REDIS_URL --serializer rq.serializers.JSONSerializer
-    envVars:
-      - key: DATABASE_URL
-        sync: false
-      - key: REDIS_URL
-        sync: false
-      - key: S3_BUCKET
-        sync: false
-      - key: S3_ENDPOINT_URL
-        sync: false
-      - key: AWS_ENDPOINT_URL_S3
-        sync: false
-      - key: AWS_ACCESS_KEY_ID
-        sync: false
-      - key: AWS_SECRET_ACCESS_KEY
+      # Signs sessions and encrypts TOTP secrets (read by security/authentication.py).
+      - key: AUTH_SECRET
         sync: false
       - key: PYTHON_VERSION
         value: "3.12.11"
-      - key: ENABLE_IMAGE_OCR
-        value: "true"
+      # Slim runtime
+      - key: QUEUE_BACKEND
+        value: inline
+      - key: EXTRACTION_ENGINE
+        value: lite
+      - key: INLINE_WORKERS
+        value: "1"
+      - key: WEB_CONCURRENCY
+        value: "1"
+      - key: LITE_OCR_MAX_SIDE
+        value: "1024"
+      - key: OCR_THREADS
+        value: "1"
+      # Optional hosted text model. Leave AI_EXTRACTION unset/off to keep every
+      # document on this server; set it to "text" to send masked OCR text only.
+      - key: AI_EXTRACTION
+        sync: false
+      - key: AI_PROVIDERS
+        value: gemini
+      - key: GEMINI_API_KEY
+        sync: false
+      # Memory limits for a small host
       - key: OMP_NUM_THREADS
         value: "1"
       - key: OPENBLAS_NUM_THREADS
@@ -75,17 +52,7 @@ services:
         value: "1"
       - key: MALLOC_ARENA_MAX
         value: "2"
-
-  - type: worker
-    name: accounting-intelligence-queue-supervisor
-    runtime: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: python -m services.queue.queue_supervisor
-    envVars:
-      - key: DATABASE_URL
-        sync: false
-      - key: REDIS_URL
-        sync: false
+      # Object storage
       - key: S3_BUCKET
         sync: false
       - key: S3_ENDPOINT_URL

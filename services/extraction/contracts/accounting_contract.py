@@ -262,8 +262,12 @@ def record_values(rows):
 
 
 def prediction_dto(row):
-    from services.extraction.contracts.reliability import field_guidance
+    from services.extraction.contracts.reliability import field_guidance, review_signal
     return {
+        # Document-level issues (date order assumed) are not on the row yet; a filled
+        # field without source evidence, such as a configured default, already shows 'check'.
+        'reviewSignal': review_signal(evidence=row.get('evidence') or [], candidates=row.get('candidates') or [],
+                                      resolution=row.get('resolution'), extraction_state=row.get('extraction_state')),
         'key': row['field_key'], 'label': row['field_label'], 'value': effective_value(row),
         'rawValue': row.get('raw_value'), 'normalizedValue': row.get('normalized_value'),
         'currentValue': row.get('current_value'),

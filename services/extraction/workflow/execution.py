@@ -216,6 +216,26 @@ def execute_document_extraction(
     if parser is None and path.suffix.lower()=='.json':
         from services.extraction.parsing.structured_note import extract_structured_note
         return extract_structured_note(document_id,path,project_root or Path(__file__).resolve().parents[3])
+    if parser is None:
+        # Default engine: PDF text layer + local CPU OCR, no Docling or PyTorch.
+        # EXTRACTION_ENGINE=docling keeps the original parser path below.
+        from services.extraction.lite import extraction_engine
+        if extraction_engine() == 'lite':
+            if path.suffix.lower() in {'.pdf', '.jpg', '.jpeg', '.png', '.tif', '.tiff'}:
+                from services.extraction.lite.pipeline import execute_lite_extraction
+                return execute_lite_extraction(document_id, path, project_root)
+            # Spreadsheets (.xlsx/.csv) are accepted for storage but have no extractor
+            # in the lite engine: fail visibly and terminally, never via the Docling path.
+            return {
+                "execution_status": "STRUCTURAL_FAILURE",
+                "document_id": document_id,
+                "error": "UNSUPPORTED_EXTRACTION_FORMAT",
+                "error_code": "UNSUPPORTED_EXTRACTION_FORMAT",
+                "public_result_path": None,
+                "service_run_id": None,
+                "review_required": True,
+                "accounting_approval_performed": False,
+            }
     if parser is None and path.suffix.lower() in {'.jpg', '.jpeg', '.png'} and os.getenv('ENABLE_IMAGE_OCR', '').lower() == 'true':
         from services.extraction.ocr.image_parser import execute_image_extraction
         return execute_image_extraction(document_id, path, project_root)

@@ -77,6 +77,8 @@ class WindowsWorker(SimpleWorker):
 
 
 def main():
+    from services.queue.backend import require_rq
+    require_rq('The RQ worker')
     parser=argparse.ArgumentParser()
     parser.add_argument('--burst',action='store_true')
     parser.add_argument('--max-jobs',type=int)

@@ -1,0 +1,4 @@
+# Legacy Redis/RQ transport. Install only where QUEUE_BACKEND=rq is used.
+-r requirements.txt
+rq==2.12.0
+redis==5.2.0

@@ -89,11 +89,41 @@ def check_schema_compatibility():
         check_runtime_schema(db)
 
 
+def warm_ocr_on_start():
+    """OCR_WARM_ON_START=true loads the OCR weights at startup (default false).
+
+    Costs startup time and memory up front so the first upload is not slower.
+    A failure is logged and never stops the API; OCR then loads on first use.
+    """
+    if os.getenv("OCR_WARM_ON_START", "false").strip().lower() != "true":
+        return None
+    try:
+        from services.extraction.lite import pages
+        seconds = pages.warm_engine()
+        logging.getLogger(__name__).info("OCR engine warmed in %ss", seconds)
+        return seconds
+    except Exception:
+        logging.getLogger(__name__).exception("OCR warm-up failed; it will load on first use")
+        return None
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     """Check schema prerequisites without mutating the database at startup."""
     check_schema_compatibility()
-    yield
+    # With the default in-process queue this API is also the extraction worker:
+    # start the loop that recovers expired leases and dispatches waiting jobs.
+    from services.queue.backend import queue_backend
+    inline_queue = queue_backend() == "inline"
+    if inline_queue:
+        from services.queue import inline
+        inline.start_supervisor()
+    warm_ocr_on_start()
+    try:
+        yield
+    finally:
+        if inline_queue:
+            inline.stop_supervisor()
 
 
 app = FastAPI(

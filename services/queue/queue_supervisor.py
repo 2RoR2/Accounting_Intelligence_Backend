@@ -13,6 +13,8 @@ log = logging.getLogger("queue-supervisor")
 
 
 def main() -> None:
+    from services.queue.backend import require_rq
+    require_rq("The queue supervisor")
     interval = max(1.0, float(os.getenv("QUEUE_SUPERVISOR_INTERVAL_SECONDS", "5")))
     while True:
         try:
