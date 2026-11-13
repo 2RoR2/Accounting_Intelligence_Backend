@@ -1,5 +1,11 @@
 version: '3.8'
 
+# Default (`docker compose up -d`): PostgreSQL only. Run the API on the host with
+# `uvicorn main:app` (QUEUE_BACKEND=inline, EXTRACTION_ENGINE=lite).
+# Opt-in profiles:
+#   --profile api  the API in a container built from the Dockerfile
+#   --profile rq   legacy Redis + RQ worker (QUEUE_BACKEND=rq)
+
 services:
   db:
     image: postgres:16-alpine
@@ -11,24 +17,41 @@ services:
     ports:
       - "127.0.0.1:5433:5432"
 
+  api:
+    profiles: ["api"]
+    build: .
+    environment:
+      - DATABASE_URL=postgresql://${DB_USER:-postgres}:${DB_PASSWORD:?Set DB_PASSWORD in your untracked .env file}@db:5432/${DB_NAME:-accounting_db}
+      - AUTH_SECRET=${AUTH_SECRET:-}
+      - QUEUE_BACKEND=inline
+      - EXTRACTION_ENGINE=lite
+      - AI_EXTRACTION=${AI_EXTRACTION:-off}
+      - PORT=8000
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      - db
+
   redis:
+    profiles: ["rq"]
     image: redis:7.2-alpine
     # Bind to localhost to prevent public exposure
     ports:
       - "127.0.0.1:6379:6379"
 
   worker-cpu:
+    profiles: ["rq"]
     image: python:3.12-slim
     volumes:
       - .:/app
     working_dir: /app
     # Scope: Development container. Installs dependencies at runtime to match host
     # and ensures RQ uses JSON serialization.
-    command: bash -c "pip install -r requirements.txt && rq worker cpu_tasks --url redis://redis:6379/0 --serializer rq.serializers.JSONSerializer --worker-class rq.worker.SimpleWorker"
+    command: bash -c "pip install -r requirements-rq.txt && rq worker cpu_tasks --url redis://redis:6379/0 --serializer rq.serializers.JSONSerializer --worker-class rq.worker.SimpleWorker"
     environment:
       - DATABASE_URL=postgresql://${DB_USER:-postgres}:${DB_PASSWORD:?Set DB_PASSWORD in your untracked .env file}@db:5432/${DB_NAME:-accounting_db}
       - REDIS_URL=redis://redis:6379/0
+      - QUEUE_BACKEND=rq
     depends_on:
       - db
       - redis
-

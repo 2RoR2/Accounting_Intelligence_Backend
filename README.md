@@ -9,9 +9,9 @@ This repository contains the FastAPI backend. The companion frontend is in `../A
 - Next.js frontend with responsive workspaces for super administrators, local administrators, and accountants.
 - FastAPI backend with OpenAPI documentation at `/docs`.
 - PostgreSQL persistence for tenants, users, documents, jobs, extraction runs, field predictions, line items, validation results, exceptions, reviews, comments, standardised records, exports, and audit logs.
-- Redis and RQ asynchronous processing using a Windows-compatible `SimpleWorker`.
+- Asynchronous processing with PostgreSQL as the queue, run inside the API process by default (`QUEUE_BACKEND=inline`); legacy Redis and RQ processing with a Windows-compatible `SimpleWorker` remains available (`QUEUE_BACKEND=rq`).
 - Local Ollama connectivity for `qwen2.5vl:7b` at the configured `OLLAMA_HOST`.
-- Docling-based parsing with PNG/JPG/TIFF image-to-PDF conversion.
+- Lite extraction by default (PDF text layer + CPU OCR, `EXTRACTION_ENGINE=lite`); legacy Docling-based parsing with PNG/JPG/TIFF image-to-PDF conversion remains available (`EXTRACTION_ENGINE=docling`).
 - Field-level confidence, validation, human correction, revalidation, approval, standardisation, and Excel export.
 - Tenant/role isolation, password hashing, email OTP for accountants, TOTP for privileged roles, and protected document APIs.
 - Stale-job reconciliation without deleting document or audit records.
@@ -24,7 +24,7 @@ This repository contains the FastAPI backend. The companion frontend is in `../A
 
 ### Current implementation boundaries
 
-- Default extraction uses Docling/parser processing and human review.
+- Default extraction uses the lite engine and human review (see "Lightweight deployment (default)"). Docling/parser processing is the legacy path.
 - Qwen/Ollama is an implemented optional pathway, but automatic routing is disabled by default with `allow_vlm_inference=false` until accuracy is measured.
 - Validation supports document-specific profiles and structured revisioned results. Missing optional evidence is `NOT_CHECKED`; it is not treated as a failed rule.
 - Currency validation accepts only the configured supported ISO-style codes and applies their configured minor-unit policy.
@@ -32,6 +32,102 @@ This repository contains the FastAPI backend. The companion frontend is in `../A
 - PO/GRN and approval-limit database structures are present. They require tenant data and policy configuration before they can produce matching or approval decisions.
 
 The workflow is human-in-the-loop. AI candidates are never automatically treated as approved accounting records.
+
+## Lightweight deployment (default)
+
+The default runtime is one FastAPI process with PostgreSQL. No Redis, no separate worker, no Docling or PyTorch, no GPU. The plan, task list and status live in [docs/MASTER_PLAN.md](docs/MASTER_PLAN.md). Step-by-step laptop setup: [docs/LOCALHOST.md](docs/LOCALHOST.md). What changes for teammates who pull this: [docs/UPGRADE_PHASE0.md](docs/UPGRADE_PHASE0.md). Tuning history: [docs/ACCURACY_LOG.md](docs/ACCURACY_LOG.md).
+
+| Layer | Default | Setting |
+|---|---|---|
+| API + worker | One `uvicorn main:app` process. It also runs extraction on a small thread pool and a supervisor thread that dispatches and recovers jobs | `QUEUE_BACKEND=inline` |
+| Queue | PostgreSQL table `pending_jobs` (same reservation, claim, lease and fencing rules as before) | |
+| Reading documents | Digital PDF pages from their own text layer (pypdfium2); scans, photos and images through RapidOCR on the CPU, in process | `EXTRACTION_ENGINE=lite` |
+| Structuring fields | Off by default. Optionally a hosted text model receives masked OCR text | `AI_EXTRACTION=text` |
+| Verification | A model value is used only if it is found printed in the local OCR rows; amounts, dates and currency codes are normalised locally | `services/extraction/lite/structure.py` |
+| Hosting | One web service: `render.yaml` (Render), `Dockerfile` (Render Docker, Cloud Run, laptop) | |
+
+### Privacy model
+
+- **Stays on the server:** the uploaded file, page images, the full OCR text (`runs/lite-*/ocr.private.json`) and the mapping of masked tokens.
+- **AI is off by default.** With `AI_EXTRACTION` unset or `off`, nothing about a document leaves the server; fields come from local rules and human review.
+- **When `AI_EXTRACTION=text`:** only the OCR text is sent, never the image. Before sending, emails, phone numbers, Malaysian NRIC numbers, payment card numbers and bank/customer account numbers are replaced with tokens such as `[[ACCOUNT_1]]` (`services/extraction/lite/privacy.py`). Business names, addresses, registration/tax numbers, document numbers, dates and amounts are sent because extraction needs them. A token returned by the model is restored locally.
+- **API tiers:** free tiers of hosted model APIs may use submitted content to improve their products. Use a paid key for real client documents. Paid tiers can still retain requests for a limited period (for example for abuse monitoring); check the provider's current terms before going live. This is not verified by this project.
+- **On-premises option:** `AI_PROVIDERS=ollama` sends the masked text to a model on the organisation's own machine or network (plain `http` is accepted only for a private address), so nothing leaves the organisation.
+- Nothing is approved, posted or paid automatically: `review_required` stays true on every result.
+
+### Environment variables
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `QUEUE_BACKEND` | `inline` | `inline` = the API process runs extraction; `rq` = legacy Redis/RQ workers |
+| `INLINE_WORKERS` | `2` | Extraction threads in the API process (use `1` on a 512 MB host) |
+| `INLINE_SUPERVISOR` | `true` | Run the dispatch/recovery loop in the API process |
+| `INLINE_RECOVER_ON_START` | `true` | At startup and every supervisor cycle, release leases nobody has heartbeated for `INLINE_STALE_LEASE_SECONDS`, within the queue scope, so a job left by a restart is retried. Safe with several processes on one database |
+| `INLINE_STALE_LEASE_SECONDS` | `90` | Lease age without a heartbeat (workers beat every 30 s) after which it is released, 60-3600 |
+| `QUEUE_SUPERVISOR_INTERVAL_SECONDS` | `5` | Supervisor loop interval |
+| `EXTRACTION_ENGINE` | `lite` | `lite` = text layer + CPU OCR; `docling` = legacy parser |
+| `LITE_OCR_MAX_SIDE` | `1280` | Longest image side sent to OCR, 800-4096; lower uses less memory (`1024` in `render.yaml`) |
+| `LITE_MAX_PAGES` | `10` | Pages read per document, 1-50 |
+| `OCR_THREADS` | `2` | ONNX Runtime threads for OCR, 1-16 |
+| `OCR_WARM_ON_START` | `false` | Load the OCR weights at startup instead of on the first upload |
+| `RAPIDOCR_MODELS_DIR` | unset | Use OCR weights from this folder instead of the installed package |
+| `DEFAULT_CURRENCY` | unset | ISO code used when no currency is printed. Filled as a `PARSER` value with issue `DEFAULT_CURRENCY_APPLIED`; a printed currency always wins |
+| `AI_EXTRACTION` | `off` | `text` sends masked OCR text to the configured model |
+| `AI_PROVIDERS` | `gemini` | Providers tried in order: `gemini`, `qwen`, `openrouter`, `ollama`, `custom` |
+| `AI_MODEL`, `AI_BASE_URL`, `AI_API_KEY`, `AI_EXTRA_BODY` | provider preset | Settings for the first provider |
+| `AI_<NAME>_MODEL` / `_BASE_URL` / `_API_KEY` / `_EXTRA_BODY` | | Per-provider settings, e.g. `AI_QWEN_MODEL` |
+| `GEMINI_API_KEY` | unset | Gemini key (also `GOOGLE_API_KEY`) |
+| `AI_PREFILL` | `verified` | `verified` = values printed in the source fill the field for review; `never` = keep them as AI candidates only |
+| `DATE_ORDER` | `DMY` | How to read `03/04/2026` when day and month are both 12 or less (`MDY` for US documents) |
+| `AI_TIMEOUT_SECONDS` | `30` | Per request, 1-120 |
+| `AI_MAX_RETRIES` | `2` | Retries on 429/5xx, 0-4 |
+| `AI_MAX_CONCURRENCY` | `2` | Simultaneous model requests from this process, 1-8 |
+| `AI_RESPONSE_FORMAT` | `json_object` | `none` for providers that reject JSON mode |
+
+`.env.example` lists these with placeholder values. Spreadsheet uploads (`.xlsx`, `.csv`) are stored but not extracted by the lite engine; they fail with `UNSUPPORTED_EXTRACTION_FORMAT`. AI Assist works only on legacy Docling runs and reports `EXTRACTION_ARTIFACTS_NOT_ON_THIS_MACHINE` for lite runs.
+
+### Run locally (laptop)
+
+```powershell
+copy .env.example .env          # then set DB_PASSWORD, DATABASE_URL and AUTH_SECRET (see docs/LOCALHOST.md)
+docker compose up -d db         # PostgreSQL only; or use any local PostgreSQL
+python -m venv .venv
+.venv\Scripts\python -m pip install -r requirements.txt
+# load database\PostgreSQL Database schema.sql (and mock.data.sql for demo users) into the database
+.venv\Scripts\python -m uvicorn main:app --host 127.0.0.1 --port 8000
+```
+
+`docker compose --profile api up` runs the API in a container instead. Tests: `pip install -r requirements-dev.txt`, then `TEST_DATABASE_URL= .venv/Scripts/python.exe -m pytest tests -q -p no:cacheprovider --ignore=tests/acceptance --ignore=tests/live`.
+
+Benchmark on the 35 labelled public documents (no database needed):
+
+```powershell
+.venv\Scripts\python scripts\lite_benchmark.py --ai off
+```
+
+### Measured numbers (team laptop, CPU only, 2026-11-12)
+
+| Measurement | Result |
+|---|---|
+| Slim install on disk (incl. dev tools) | 403 MB |
+| `import main` memory, no heavy modules loaded | about 73 MB |
+| OCR per A4 scan | 3-5 s |
+| Digital PDF read from text layer | under 0.1 s |
+| OCR peak working set by `LITE_OCR_MAX_SIDE` | 700 MB at 2000, 504 MB at 1600, 378 MB at 1280, 307 MB at 1024 (same rows found) |
+| `scripts/lite_benchmark.py --ai off`, 35 documents | Field accuracy 0.68% (2 of 292 labelled fields) at both 1280 px / 2 threads and 1024 px / 1 thread |
+| Read time per document, same benchmark | 1280 px / 2 threads: mean 2.74 s, max 5.49 s (first run). 1024 px / 1 thread: mean 8.75 s, max 19.9 s. Later re-runs of the 1280 px setting on the same laptop took about 7.9 s per receipt, so laptop timings varied about 2.7x between runs for an unidentified reason; treat them as indicative and re-measure on the host |
+
+The AI-off accuracy is near zero by design: without a model, the lite engine only reads the text and applies the legacy rule mapper to single scanned images, which classifies few of these public documents (it recognises headings such as "TAX INVOICE"). AI-off documents go to human review with the text read. **Not yet verified:** accuracy with a real model (no API key was available), the inline queue against a real PostgreSQL, and memory on a 512 MB Linux host.
+
+### Switching back to the legacy path
+
+```powershell
+pip install -r requirements-docling.txt -r requirements-rq.txt
+$env:EXTRACTION_ENGINE="docling"; $env:QUEUE_BACKEND="rq"; $env:REDIS_URL="redis://127.0.0.1:6379/0"
+docker compose --profile rq up -d   # Redis + RQ worker
+```
+
+The sections below that describe Redis/RQ workers, the queue supervisor and Docling parsing document that legacy path. It is kept as the report baseline.
 
 ## Approved FYP scope and implementation plan
 
@@ -357,7 +453,7 @@ The report contains per-field exact match, precision, recall, F1, true positives
 
 ### Queue reliability operations
 
-Uploads and imports commit a `pending_jobs` outbox entry with the document. Run `python scripts/run_worker.py` and `python scripts/run_queue_supervisor.py` alongside the API. The worker uses `cpu_tasks`, Redis database configured by `REDIS_URL`, and `JSONSerializer`; Windows uses a non-forking worker with timer timeouts. The supervisor dispatches according to healthy worker capacity. `dispatched` means waiting for a claim, while only `processing` means active extraction. Claim heartbeats are fenced by the attempt and delivery tokens. Expired attempts are closed with their identities intact; eligible recovery creates a new attempt row. Automatic recovery is bounded; an explicitly requested retry creates a separately audited attempt. Approval and correction protections still apply. `python scripts/extraction_status.py` reports actual queued, running, persisted and failed counts without changing data; `python scripts/audit_extraction.py` retains the full diagnostic report in `.diagnostics`.
+Uploads and imports commit a `pending_jobs` outbox entry with the document. With the default `QUEUE_BACKEND=inline` the API process dispatches, claims and recovers these jobs itself; the rest of this paragraph describes the legacy `QUEUE_BACKEND=rq` setup. Run `python scripts/run_worker.py` and `python scripts/run_queue_supervisor.py` alongside the API. The worker uses `cpu_tasks`, Redis database configured by `REDIS_URL`, and `JSONSerializer`; Windows uses a non-forking worker with timer timeouts. The supervisor dispatches according to healthy worker capacity. `dispatched` means waiting for a claim, while only `processing` means active extraction. Claim heartbeats are fenced by the attempt and delivery tokens. Expired attempts are closed with their identities intact; eligible recovery creates a new attempt row. Automatic recovery is bounded; an explicitly requested retry creates a separately audited attempt. Approval and correction protections still apply. `python scripts/extraction_status.py` reports actual queued, running, persisted and failed counts without changing data; `python scripts/audit_extraction.py` retains the full diagnostic report in `.diagnostics`.
 
 ## Roles and security
 
@@ -462,7 +558,9 @@ In plain terms:
 
 The separation keeps the API boundary, business workflow, validation rules, and test coverage easy to find. New endpoint work normally starts in `services/routes/`, while new accounting rules belong in `validation/` and new persistence changes belong in `database/`.
 
-## Run locally on Windows
+## Run locally on Windows (legacy Redis/RQ + Docling)
+
+This is the legacy setup (`QUEUE_BACKEND=rq`, `EXTRACTION_ENGINE=docling`, `pip install -r requirements-docling.txt -r requirements-rq.txt`). For the default one-process setup see "Lightweight deployment (default)" above.
 
 Required services are PostgreSQL (`DATABASE_URL`), Redis (`REDIS_URL`), the configured object store (`S3_BUCKET` and endpoint/credentials in deployed environments), the backend on port 8000, an RQ worker consuming `cpu_tasks`, and the frontend on port 3000. Ollama and `qwen2.5vl:7b` are optional for selective VLM work.
 

@@ -20,6 +20,17 @@ def get_processing_job(job_id: str, request: Request):
 
 def processing_health(request: Request):
     user = require_workspace_user(request, {"super_admin", "local_admin"})
+    from services.queue.backend import queue_backend
+    if queue_backend() == "inline":
+        # The API process is the worker; PostgreSQL is the queue and Redis is not used.
+        from services.queue import inline
+        state = inline.status()
+        with connect() as db:
+            scope = tenant_scope(user)
+            pending = db.execute("SELECT count(*) AS n FROM pending_jobs WHERE status IN ('pending','processing') AND (%s IS NULL OR tenant_id=%s)", (scope, scope)).fetchone()["n"]
+        return {"status": "healthy" if state["supervisor"] else "degraded", "worker": state["supervisor"],
+                "redis": "not_used", "queueBackend": "inline", "workers": state["workers"],
+                "busyWorkers": state["busy"], "pendingJobs": int(pending)}
     redis_status = "unavailable"
     worker_online = False
     try:

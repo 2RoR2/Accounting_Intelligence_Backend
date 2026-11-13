@@ -180,7 +180,29 @@ def process_document_extraction_job(document_id: str, pending_job_id: str | None
     claim = attempts.claim_delivery(delivery, str(current_job.id))
     if not claim:
         raise ExtractionResolutionError("Job is not dispatched or its lease has expired.")
+    return _execute_claimed(document_id, claim)
 
+
+def process_inline_delivery(delivery) -> Dict[str, Any]:
+    """Run one reserved delivery in this process (QUEUE_BACKEND=inline).
+
+    The delivery's own dispatch token plays the part of the RQ job id, so the
+    same SQL claim fence applies: a stale, duplicate or protected delivery is
+    rejected before any file is read.
+    """
+    from services.queue import attempts
+    logger.info("Executing inline extraction job for document: %s", delivery.document_id)
+    try:
+        claim = attempts.claim_delivery(delivery, delivery.dispatch_token)
+    except attempts.AttemptRejected as exc:
+        logger.warning("Inline delivery for %s was not claimable: %s", delivery.document_id, exc.code)
+        return {"status": "REJECTED", "reason": exc.code}
+    return _execute_claimed(delivery.document_id, claim)
+
+
+def _execute_claimed(document_id: str, claim) -> Dict[str, Any]:
+    """Extract and persist under an already granted claim; shared by both transports."""
+    from services.queue import attempts
     stopped = threading.Event()
     def heartbeat():
         while not stopped.wait(30):

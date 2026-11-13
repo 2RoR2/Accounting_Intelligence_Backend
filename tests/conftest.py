@@ -35,6 +35,8 @@ def unsafe_test_database(test_url, shared_url=None):
 def pytest_configure(config):
     import os
     from dotenv import dotenv_values
+    config.addinivalue_line('markers', 'runtime_defaults: test the shipped defaults '
+                            '(in-process queue, lite extraction engine) instead of the legacy ones')
     env_file = dotenv_values(Path(__file__).resolve().parents[1] / '.env')
     test_url = os.environ.get('TEST_DATABASE_URL', env_file.get('TEST_DATABASE_URL'))
     shared_url = os.environ.get('DATABASE_URL', env_file.get('DATABASE_URL'))
@@ -42,3 +44,17 @@ def pytest_configure(config):
     if reason:
         pytest.exit(f'Refusing to run tests: {reason}. Point it at a disposable local database '
                     'or set TEST_DATABASE_URL= (empty) to skip PostgreSQL tests.', returncode=4)
+
+
+@pytest.fixture(autouse=True)
+def legacy_runtime_defaults(request, monkeypatch):
+    """The existing suites were written against the Redis/RQ transport and the Docling
+    parser path, and several clear os.environ entirely. Keep them on those paths by
+    changing the built-in defaults; tests marked `runtime_defaults` use the shipped ones.
+    An explicit QUEUE_BACKEND or EXTRACTION_ENGINE in a test still wins."""
+    if request.node.get_closest_marker('runtime_defaults'):
+        return
+    import services.extraction.lite as lite
+    import services.queue.backend as backend
+    monkeypatch.setattr(lite, 'DEFAULT_ENGINE', 'docling')
+    monkeypatch.setattr(backend, 'DEFAULT_BACKEND', 'rq')

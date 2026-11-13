@@ -38,3 +38,7 @@ models/
 *.safetensors
 *.pt
 *.pth
+!.env.example
+
+# Generated synthetic documents (the generator ai/synthetic/generate.py is committed)
+ai/synthetic/output/

@@ -1,0 +1,15 @@
+.git
+.venv*
+runs
+storage
+.extraction-tmp
+tests
+ai/assets
+ai/models
+ai/manifests
+ai/provenance
+__pycache__
+*.pyc
+.env
+.env.*
+!.env.example

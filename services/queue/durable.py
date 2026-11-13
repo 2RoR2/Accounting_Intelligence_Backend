@@ -4,14 +4,19 @@ from uuid import uuid4
 from datetime import datetime, timezone, timedelta
 from database.connection import connect
 from services.queue import attempts
-from services.queue.config import get_queues
 from services.queue.scope import scope_clause, scope_bindings
 
 log = logging.getLogger(__name__)
 
 
-def dispatch_due_jobs(limit=50):
-    """Dispatch only what healthy workers can claim before its lease expires."""
+def get_queues():
+    """Redis/RQ is imported only when the legacy transport is in use."""
+    from services.queue.config import get_queues as _get_queues
+    return _get_queues()
+
+
+def _rq_capacity():
+    """Idle, healthy RQ workers that are not already owed a queued job."""
     from rq.worker import Worker
     import socket
     cpu, _ = get_queues()
@@ -22,7 +27,17 @@ def dispatch_due_jobs(limit=50):
                and (w.hostname != socket.gethostname() or local_process_alive(w.pid) is not False)]
     # Count available workers, not all historical started executions. A lost
     # worker must not consume the capacity of a different, healthy idle worker.
-    capacity = max(0, len(ready)-len(cpu))
+    return max(0, len(ready)-len(cpu))
+
+
+def dispatch_due_jobs(limit=50):
+    """Dispatch only what healthy workers can claim before its lease expires."""
+    from services.queue.backend import queue_backend
+    if queue_backend() == 'inline':
+        from services.queue import inline
+        capacity = inline.capacity()
+    else:
+        capacity = _rq_capacity()
     if not capacity:
         return 0
     deliveries = []
