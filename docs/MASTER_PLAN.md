@@ -313,3 +313,77 @@ First UAT cut = Phases 0-4 plus P7.1 and P7.3. The ledger and export templates f
 | Supabase free project pauses after 7 idle days | Demo down | Weekly ping |
 | Scope creep from the ledger | UAT slips | Ledger is the second cut, after Phases 0-4 |
 | Legacy tests need a database | 66 tests cannot run locally | Run them in P0.6 once Postgres is up; record the real count |
+
+---
+
+## 9. Plan v2 — a daily-use system for accountants (added 2026-11-14)
+
+### 9.1 Where we are
+
+| Item | State |
+|---|---|
+| Phase 0 (P0.1-P0.6) | Done, in PR #4 (`phase0/slim-private-extraction` -> `features`). P0.7 hosted deploy waits for accounts. |
+| Phase 1 | P1.1 done; P1.2 first tuning round done (synthetic tuning set 68% -> 97.24%, `docs/ACCURACY_LOG.md`); holdout and P1.3 vision not done. |
+| Phases 2-7 | Not started. P2.2 (`reviewSignal`) done early. |
+| Feedback | "Too technical, not accountant based." The pages exist (documents, exceptions, ledger, money in/out, reconciliation, records, reports, contacts), but they show system internals (processing health, extraction traces, rule codes) and the reports are only a transaction register and an audit trail. |
+| Data | 35 public + 120 synthetic labelled documents for extraction only. The demo seed has 20 documents, a few accounts and 6 bank rows: not enough to show contacts, chart of accounts, ledger, reconciliation or month-end. |
+
+The backend already has most of the bookkeeping machinery (ledger accounts and periods, journals from supplier bills and customer invoices, settlements and allocations, trial balance, chart of accounts, cost centres, suppliers and customers, bank import with confirm/discard, reconciliation suggestions, decisions and period close, exports). Plan v2 therefore spends most effort on (a) realistic data that exercises all of it, (b) an accountant-first front end, (c) month-end reports, and only then on new back-end logic.
+
+### 9.2 Principles
+
+1. Every screen answers "what do I do next?" in accounting words. Rule codes, model names, OCR traces and JSON sit behind a "Details" toggle.
+2. One home page ("Today") for the daily routine; system health and processing internals move to an admin-only "System" page.
+3. Numbers on reports come only from approved, posted records. Extraction values are never posted automatically; the accountant posts (one by one or in bulk).
+4. Guard rails unchanged: record the tax printed on documents, never compute or file tax, never initiate payments, no live ERP posting. Reports are labelled "internal management report".
+5. Every list exports to Excel and CSV; every import has a downloadable CSV template, a preview and a confirm step.
+
+### 9.3 Phases
+
+**Phase A — Data foundation (start first; everything else is demoed and tested on it)**
+
+- **A1 Company pack generator (M)** `ai/synthetic/company_pack.py`, reusing `generate.py` rendering. Three fictional Malaysian SMEs (trading, services, F&B), three months each. Per company: `contacts.csv` (suppliers and customers with SSM, TIN, SST, payment terms, default expense/income account), `coa.csv` (Malaysian SME template, about 60 accounts with type and report section), `opening_balances.csv`, documents with gold labels (sales invoices, supplier invoices and bills, receipts, credit and debit notes, utility bills; clean PDFs and degraded scans), and `bank_{month}.csv` in three generic column layouts (no bank branding). Bank rows include exact payments, partial payments, one transfer paying two bills, fees, interest, refunds, unmatched noise, 0-5 day date lag and reference variants, plus `expected_matches.csv` as gold for reconciliation. Done when: packs validate (documents through `validate_collection`, totals reconcile to the opening balances) and are reproducible from a seed.
+- **A2 CSV imports (M)** contacts and chart of accounts: downloadable template, upload, preview with row errors, confirm. Same pattern as the existing bank import. Endpoints `POST /api/contacts/import`, `POST /api/chart-of-accounts/import`, `GET .../template`. Opening balances as a journal import.
+- **A3 Demo company seed (M, replaces P7.1)** `manage.py seed-demo-company --pack trading` loads users, contacts, chart of accounts and opening balances, uploads the documents through the real pipeline and imports the bank files, so the demo shows every state (to review, ready, exceptions, matched, unmatched).
+- **A4 More evaluation data (S)** add CORD v2 receipts (CC BY 4.0, 1,000 labelled) as an extra manifest; FATURA (10,000 invoices, CC BY-NC-SA 4.0) only as a local, non-committed benchmark; SROIE beyond the current 10 only after its terms are confirmed. A real SAIC pilot set (with consent and a paid key) remains the decisive test.
+
+**Phase B — Accountant-first front end**
+
+- **B1 Plain-language pass (M, quick win)** one glossary module (`src/lib/glossary.ts`) used everywhere: rule codes to sentences ("New supplier: add it to Contacts"), statuses ("Ready to approve", "Needs fixing"), review signals ("Read from document", "Please check", "Suggested", "Not found"). Hide model/OCR/Docling traces behind "Details". Move processing health, worker status and amount-anomaly charts to admin "System".
+- **B2 Navigation by job (M)** Today · Inbox · Purchases (supplier invoices, bills, payables) · Sales (customer invoices, receivables) · Bank (money in/out, reconcile) · Contacts · Accounts (chart, journals, ledger) · Reports · Settings. Accountant and local admin share it; super admin keeps the platform menu.
+- **B3 Today page (M)** backend `GET /api/home/summary`; tiles that open filtered lists: to review, ready to approve, needs fixing (with the top reasons), bank lines to match, bills due in 7 days (RM), customers overdue (RM), journals waiting to post, month-end checklist progress.
+- **B4 Inbox and review (M)** = P2.1 + P2.3 (drag and drop, automatic type, side-by-side with evidence highlight, keyboard).
+- **B5 Lanes, bulk approve, suggested fixes (M)** = P3.1-P3.4.
+
+**Phase C — Bookkeeping core**
+
+- **C1 Contacts as the hub (M)** supplier/customer page: details, defaults (expense/income account, tax code, terms), open items, documents, statement of account, learned corrections (P4 supplier memory folds in here).
+- **C2 Chart of accounts (S)** Malaysian SME template created with each company; import/export; each account mapped to a report section (P&L or balance sheet line).
+- **C3 Posting (M)** on approval, prepare a journal (Dr expense or asset from the supplier default, Dr input tax with the printed tax amount, Cr payables; sales mirror it). The accountant edits and posts, or bulk-posts. Period locks apply. (= P5.2)
+- **C4 Payables and receivables (M)** open items per contact, due dates, payments and receipts recorded from bank matches through settlements/allocations, ageing buckets.
+- **C5 Bank reconciliation (M)** saved column mappings per bank account; suggestions by amount, date window and reference/name similarity, including partial and combined payments; one-click confirm for exact matches; "create expense from this line" for fees and charges; reconciliation statement per period; lock. (= P5.3) Measured against A1's `expected_matches.csv`.
+
+**Phase D — Month-end and reports**
+
+- **D1 Month-end checklist (M)** per period: all documents reviewed, all bank lines matched or explained, journals posted, reconciliation complete, period locked; each item links to what is left.
+- **D2 Reports (M)** on screen and as Excel/CSV/PDF: profit and loss by month, balance sheet, trial balance, general ledger, payables and receivables ageing, supplier and customer statements, expenses by category and cost centre, money in/out by month, recorded tax summary (sum of printed tax amounts; explicitly not a tax return), bank reconciliation statement. Backend `GET /api/reports/{key}?from=&to=`.
+- **D3 Month pack (S)** one button: all reports for a period in one Excel workbook plus the open-exceptions list. This is the main lever for the "manual effort down 70%" criterion on monthly reporting.
+- **D4 Exports and import templates (S)** = P6.1, P6.2.
+
+**Phase E — UAT and evidence**: P0.7 hosted deploy, P1.2 holdout and public-set run with the chosen model, P6.3 evaluation page, P7.2 load test, P7.3 tester guide (rewritten around Today -> review -> post -> reconcile -> month pack), P7.4 hardening.
+
+### 9.4 Order and branches
+
+1. Merge PR #4 into `features` (after the Render check in its description). All new branches start from `features`; nothing goes to `main`.
+2. In parallel: **A1** (backend), **B1 + B2** (frontend).
+3. **A2 + A3**, then **B3**; **C3** and **C5** in parallel.
+4. **C1, C4**, then **D1-D3**.
+5. **B4, B5** and Phase E.
+
+One task (or pair) per Claude session, so each starts with a fresh context and reads this section. Branch names `planv2/<task-id>-<short-name>` in the repo the task touches; each task ends with a PR into `features` in that repo, merged after the team's localhost test (`docs/LOCALHOST.md`).
+
+First UAT cut = A1-A3, B1-B3, C3, C5, D1-D3. Second cut = the rest.
+
+### 9.5 Done means (whole plan)
+
+An accountant can log in, see Today, review and approve a month of documents for the demo company, post them, import the bank statement, reconcile it, close the month and download the month pack, without reading a rule code or a model name, and every number in the pack traces back to an approved document or a bank line.
