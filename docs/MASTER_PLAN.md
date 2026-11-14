@@ -325,6 +325,7 @@ First UAT cut = Phases 0-4 plus P7.1 and P7.3. The ledger and export templates f
 | Phase 0 (P0.1-P0.6) | Done, in PR #4 (`phase0/slim-private-extraction` -> `features`). P0.7 hosted deploy waits for accounts. |
 | Phase 1 | P1.1 done; P1.2 first tuning round done (synthetic tuning set 68% -> 97.24%, `docs/ACCURACY_LOG.md`); holdout and P1.3 vision not done. |
 | Phases 2-7 | Not started. P2.2 (`reviewSignal`) done early. |
+| Plan v2 A1 | Done 2026-11-14 on `planv2/a1-company-pack` (PR into `features`): `ai/synthetic/company_pack.py`, three packs of 58-64 documents and 58-83 bank rows each, formats in `docs/COMPANY_PACKS.md`, 13 tests in `tests/synthetic/`. The `dr_cr` bank layout (F&B pack) is not readable by the current bank parser yet (C5). |
 | Feedback | "Too technical, not accountant based." The pages exist (documents, exceptions, ledger, money in/out, reconciliation, records, reports, contacts), but they show system internals (processing health, extraction traces, rule codes) and the reports are only a transaction register and an audit trail. |
 | Data | 35 public + 120 synthetic labelled documents for extraction only. The demo seed has 20 documents, a few accounts and 6 bank rows: not enough to show contacts, chart of accounts, ledger, reconciliation or month-end. |
 

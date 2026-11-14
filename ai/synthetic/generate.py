@@ -154,6 +154,13 @@ class Page:
 
 
 class Generator:
+    """Draws random documents and renders them. Subclasses (ai/synthetic/company_pack.py) reuse the
+    render_* methods with their own data: every optional render_* value the caller supplies replaces a
+    draw from the random stream, and a missing one is drawn exactly as before."""
+    source_file = 'ai/synthetic/generate.py'
+    dataset = 'ai-synthetic-my'
+    revision = GENERATOR
+
     def __init__(self, set_name):
         config = SETS[set_name]
         self.set_name, self.split, self.prefix = set_name, config['split'], config['prefix']
@@ -211,13 +218,15 @@ class Generator:
                           'line_total': money(quantity * unit)})
         return items
 
-    def header(self, page, supplier, address, ids, title, y=40):
+    def header(self, page, supplier, address, ids, title, y=40, phone=None, email=None):
         page.text(40, y, supplier, 14, bold=True)
         y += 20
         for row in address + [ids]:
             page.text(40, y, row, 8.5)
             y += 12
-        page.text(40, y + 4, f'Tel: {self.phone()}   E-mel: akaun@contoh-{self.rng.randint(100, 999)}.test', 8.5)
+        phone = phone or self.phone()
+        email = email or f'akaun@contoh-{self.rng.randint(100, 999)}.test'
+        page.text(40, y + 4, f'Tel: {phone}   E-mel: {email}', 8.5)
         page.text(page.width - 40, 44, title, 15, bold=True, right=True)
         return y + 26
 
@@ -233,6 +242,20 @@ class Generator:
         issued = self.day()
         number = {'invoice': 'INV', 'credit_note': 'CN', 'debit_note': 'DN'}[kind] + f'-{issued:%y%m}-{self.digits(4)}'
         items = self.lines(GOODS, self.rng.randint(1, 12) if kind == 'invoice' else self.rng.randint(1, 3))
+        return self.render_invoice_like(kind, {
+            'rate': rate, 'supplier': supplier, 'supplier_address': supplier_address, 'customer': customer,
+            'customer_address': customer_address, 'ssm': ssm, 'sst': sst, 'tin': tin, 'issued': issued,
+            'number': number, 'items': items})
+
+    def render_invoice_like(self, kind, doc):
+        """Render a tax invoice, credit note or debit note from `doc`. Required keys: rate, supplier,
+        supplier_address, customer, customer_address, ssm, sst, tin, issued, number, items. Optional keys
+        (drawn when missing): terms (invoice), po (invoice; None = no PO), original and reason (notes),
+        stamp (bool), phone, email."""
+        rate, supplier, supplier_address = doc['rate'], doc['supplier'], doc['supplier_address']
+        customer, customer_address, issued, number, items = (doc['customer'], doc['customer_address'], doc['issued'],
+                                                             doc['number'], doc['items'])
+        ssm, sst, tin = doc['ssm'], doc['sst'], doc['tin']
         subtotal = sum((item['line_total'] for item in items), Decimal('0.00'))
         tax = money(subtotal * rate / 100)
         total = subtotal + tax
@@ -241,7 +264,7 @@ class Generator:
                  'debit_note': self.labels('NOTA DEBIT', 'DEBIT NOTE')}[kind]
         page = Page(*A4)
         ids = f'{self.labels("No. Syarikat", "Co. Reg. No.")}: {ssm}   SST: {sst}   TIN: {tin}'
-        y = self.header(page, supplier, supplier_address, ids, title)
+        y = self.header(page, supplier, supplier_address, ids, title, phone=doc.get('phone'), email=doc.get('email'))
         page.text(40, y, self.labels('Kepada', 'Bill To') + ':', 9, bold=True)
         page.text(40, y + 13, customer, 9)
         for index, row in enumerate(customer_address):
@@ -257,17 +280,20 @@ class Generator:
                   'subtotal': (format(subtotal, 'f'), printed(subtotal)), 'tax': (format(tax, 'f'), printed(tax)),
                   'total': (format(total, 'f'), printed(total))}
         if kind == 'invoice':
-            terms = self.rng.choice([14, 30, 30, 60])
+            terms = doc['terms'] if 'terms' in doc else self.rng.choice([14, 30, 30, 60])
             due = issued + timedelta(days=terms)
             meta += [(self.labels('Terma', 'Terms'), f'Net {terms}'), (self.labels('Tarikh Akhir', 'Due Date'), self.dmy(due))]
             labels.update(invoice_number=number, payment_terms=f'Net {terms}', due_date=(due.isoformat(), meta[3][1]))
-            if self.rng.random() < 0.4:
-                po = f'PO-{self.digits(5)}'
+            if 'po' in doc:
+                po = doc['po']
+            else:
+                po = f'PO-{self.digits(5)}' if self.rng.random() < 0.4 else None
+            if po:
                 meta.append((self.labels('No. Pesanan', 'PO No.'), po))
                 labels['purchase_order_number'] = po
         else:
-            original = f'INV-{issued:%y%m}-{self.digits(4)}'
-            reason = self.rng.choice(REASONS if kind == 'credit_note' else DEBIT_REASONS)
+            original = doc['original'] if 'original' in doc else f'INV-{issued:%y%m}-{self.digits(4)}'
+            reason = doc['reason'] if 'reason' in doc else self.rng.choice(REASONS if kind == 'credit_note' else DEBIT_REASONS)
             meta.append((self.labels('Rujukan Invois', 'Original Invoice'), original))
             labels.update({kind + '_number': number, 'original_invoice_number': original, 'note_reason': reason})
         for index, (label, value) in enumerate(meta):
@@ -281,7 +307,8 @@ class Generator:
         y = self.totals(page, y, [(self.labels('Jumlah Kecil', 'Subtotal'), subtotal),
                                   (f'SST {rate}%', tax),
                                   (self.labels('Jumlah Besar', 'Grand Total') + ' (RM)', total)])
-        if kind == 'invoice' and self.rng.random() < 0.3:
+        stamp = doc['stamp'] if 'stamp' in doc else kind == 'invoice' and self.rng.random() < 0.3
+        if stamp:
             page.stamp(380, y + 40, 'PAID / DIBAYAR')
         self.footer(page, 800)
         return page, labels, items
@@ -323,23 +350,46 @@ class Generator:
         end = issued.replace(day=1) - timedelta(days=1)
         due = issued + timedelta(days=21)
         number = f'B{self.digits(9)}'
+        items = self.utility_items(subtype)
+        subtotal = sum((item['line_total'] for item in items), Decimal('0.00'))
+        tax = money(subtotal * Decimal(self.rng.choice([6, 8])) / 100)
+        arrears = money(Decimal(self.rng.randint(1000, 30000)) / 100) if self.rng.random() < 0.3 else Decimal('0.00')
+        return self.render_bill({
+            'subtype': subtype, 'provider': provider, 'provider_address': provider_address, 'customer': customer,
+            'service_address': service_address, 'account': account, 'issued': issued, 'start': start, 'end': end,
+            'due': due, 'number': number, 'items': items, 'tax': tax, 'arrears': arrears})
+
+    def utility_items(self, subtype, low=80, high=2400):
+        """Charge lines of a utility bill: metered consumption or a plan fee, then 1-2 fixed charges."""
+        word, unit, charges = UTILITIES[subtype]
         items = []
         if unit:
-            consumption = Decimal(self.rng.randint(80, 2400))
+            consumption = Decimal(self.rng.randint(low, high))
             rate = Decimal(self.rng.choice(['0.218', '0.334', '0.516', '0.57', '1.20', '1.53']))
             items.append({'description': f'{charges[0]} ({consumption} {unit} x RM {rate})', 'line_total': money(consumption * rate)})
         else:
             items.append({'description': charges[0], 'line_total': money(self.rng.choice([129, 149, 189, 249]))})
         for charge in charges[1:self.rng.randint(2, 3)]:
             items.append({'description': charge, 'line_total': money(Decimal(self.rng.randint(300, 2500)) / 100)})
+        return items
+
+    def render_bill(self, doc):
+        """Render a utility bill from `doc`. Required keys: subtype, provider, provider_address, customer,
+        service_address, account, issued, start, end, due, number, items, tax, arrears. Optional keys
+        (drawn when missing): provider_ssm, provider_sst, phone, email, stamp (bool), payment_line."""
+        subtype, provider, provider_address = doc['subtype'], doc['provider'], doc['provider_address']
+        customer, service_address, account = doc['customer'], doc['service_address'], doc['account']
+        issued, start, end, due, number, items = doc['issued'], doc['start'], doc['end'], doc['due'], doc['number'], doc['items']
         subtotal = sum((item['line_total'] for item in items), Decimal('0.00'))
-        tax = money(subtotal * Decimal(self.rng.choice([6, 8])) / 100)
+        tax, arrears = doc['tax'], doc['arrears']
         total = subtotal + tax
-        arrears = money(Decimal(self.rng.randint(1000, 30000)) / 100) if self.rng.random() < 0.3 else Decimal('0.00')
         due_amount = total + arrears
         page = Page(*A4)
-        ids = f'{self.labels("No. Syarikat", "Co. Reg. No.")}: {self.ssm()}   SST: {self.sst()}'
-        y = self.header(page, provider, provider_address, ids, self.labels('BIL', 'BILL') + ' ' + subtype.upper())
+        provider_ssm = doc.get('provider_ssm') or self.ssm()
+        provider_sst = doc.get('provider_sst') or self.sst()
+        ids = f'{self.labels("No. Syarikat", "Co. Reg. No.")}: {provider_ssm}   SST: {provider_sst}'
+        y = self.header(page, provider, provider_address, ids, self.labels('BIL', 'BILL') + ' ' + subtype.upper(),
+                        phone=doc.get('phone'), email=doc.get('email'))
         period = f'{self.dmy(start)} - {self.dmy(end)}'
         meta = [(self.labels('No. Akaun', 'Account No.'), account), (self.labels('No. Bil', 'Bill No.'), number),
                 (self.labels('Tarikh Bil', 'Bill Date'), self.dmy(issued)), (self.labels('Tempoh Bil', 'Billing Period'), period),
@@ -357,9 +407,14 @@ class Generator:
             rows.append((self.labels('Tunggakan', 'Arrears'), arrears))
         rows.append((self.labels('Jumlah Perlu Dibayar', 'Amount Due') + ' (RM)', due_amount))
         y = self.totals(page, y, rows)
-        if self.rng.random() < 0.25:
+        stamp = doc['stamp'] if 'stamp' in doc else self.rng.random() < 0.25
+        if stamp:
             page.stamp(380, y + 40, 'PAID / DIBAYAR')
-        page.text(40, y + 30, f'JomPAY Biller Code: {self.digits(5)}   Ref-1: {account}', 8.5)
+        if 'payment_line' in doc:
+            payment_line = doc['payment_line']
+        else:
+            payment_line = f'JomPAY Biller Code: {self.digits(5)}   Ref-1: {account}'
+        page.text(40, y + 30, payment_line, 8.5)
         self.footer(page, 800)
         labels = {'provider_name': provider, 'provider_address': '\n'.join(provider_address),
                   'customer_name': customer, 'customer_account_number': account, 'bill_number': number,
@@ -370,21 +425,36 @@ class Generator:
         return page, labels, [{'description': i['description'], 'line_total': i['line_total']} for i in items], subtype
 
     def receipt(self):
+        return self.render_receipt(self.receipt_data())
+
+    def receipt_data(self):
         merchant = self.company(trade=self.rng.choice(SHOPS), suffix=self.rng.choice(['Enterprise', 'Sdn. Bhd.']))
         address = self.address()
         items = self.lines(SHOP_ITEMS, self.rng.randint(1, 8))
-        subtotal = sum((item['line_total'] for item in items), Decimal('0.00'))
         rate = Decimal(self.rng.choice([6, 8]))
-        tax = money(subtotal * rate / 100)
-        exact = subtotal + tax
-        total = (exact * 20).quantize(Decimal('1'), rounding=ROUND_HALF_UP) / 20  # Cash rounding to 5 sen.
-        total = money(total)
-        rounding = total - exact
         when = self.day()
         clock = f'{self.rng.randint(8, 22):02d}:{self.rng.randint(0, 59):02d}'
         number = f'{self.rng.choice(["CS", "R", "INV"])}{self.digits(6)}'
-        method, method_text = self.rng.choice([('cash', self.labels('TUNAI', 'CASH')), ('card', self.labels('KAD', 'CARD')),
-                                               ('e_wallet', 'E-WALLET')])
+        method = self.rng.choice(['cash', 'card', 'e_wallet'])
+        return {'merchant': merchant, 'address': address, 'items': items, 'rate': rate, 'when': when, 'clock': clock,
+                'number': number, 'method': method}
+
+    @staticmethod
+    def receipt_totals(items, rate):
+        """Subtotal, tax, cash-rounded total and rounding of a receipt."""
+        subtotal = sum((item['line_total'] for item in items), Decimal('0.00'))
+        tax = money(subtotal * rate / 100)
+        exact = subtotal + tax
+        total = money((exact * 20).quantize(Decimal('1'), rounding=ROUND_HALF_UP) / 20)  # Cash rounding to 5 sen.
+        return subtotal, tax, total, total - exact
+
+    def render_receipt(self, doc):
+        """Render a thermal cash-sale receipt from `doc` (keys of receipt_data). Optional keys (drawn when
+        missing): sst, tender (cash only)."""
+        merchant, address, items, rate, when = doc['merchant'], doc['address'], doc['items'], doc['rate'], doc['when']
+        clock, number, method = doc['clock'], doc['number'], doc['method']
+        method_text = {'cash': self.labels('TUNAI', 'CASH'), 'card': self.labels('KAD', 'CARD'), 'e_wallet': 'E-WALLET'}[method]
+        subtotal, tax, total, rounding = self.receipt_totals(items, rate)
         height = 330 + 24 * len(items)
         page = Page(THERMAL_WIDTH, height)
         center = THERMAL_WIDTH / 2
@@ -397,7 +467,7 @@ class Generator:
             y += 11
             centred(y, row)
         y += 11
-        centred(y, f'SST: {self.sst()}')
+        centred(y, f'SST: {doc.get("sst") or self.sst()}')
         y += 18
         centred(y, self.labels('RESIT JUALAN TUNAI', 'CASH SALE RECEIPT'), 8, True)
         y += 16
@@ -421,7 +491,10 @@ class Generator:
             page.text(10, y, label, 7.5, bold=label.startswith(('JUMLAH', 'TOTAL')))
             page.text(THERMAL_WIDTH - 10, y, printed(amount), 7.5, right=True)
             y += 11
-        tender = total if method != 'cash' else money(Decimal(self.rng.choice([10, 20, 50, 100])) + (total // 10) * 10)
+        if method != 'cash':
+            tender = total
+        else:
+            tender = doc.get('tender') or money(Decimal(self.rng.choice([10, 20, 50, 100])) + (total // 10) * 10)
         page.text(10, y, method_text, 7.5)
         page.text(THERMAL_WIDTH - 10, y, printed(tender), 7.5, right=True)
         y += 11
@@ -468,7 +541,7 @@ class Generator:
         return buffer.getvalue(), image.size, variant
 
     def annotation(self, reference):
-        return {'source_kind': 'SYNTHETIC_FIXTURE', 'source_reference': reference, 'revision': GENERATOR,
+        return {'source_kind': 'SYNTHETIC_FIXTURE', 'source_reference': reference, 'revision': self.revision,
                 'verification_state': 'SCHEMA_TEST_ONLY', 'annotator_id': None, 'verifier_id': None, 'verified_at': None,
                 'notes': 'Label is the generator input printed on the page.'}
 
@@ -490,11 +563,16 @@ class Generator:
             page, labels, items = self.receipt()
         else:
             page, labels, items = self.invoice_like(kind)
-        manifest_kind = 'invoice' if kind in {'credit_note', 'debit_note'} else kind
         sample_id = f'{self.prefix}-{kind.upper().replace("_", "")}-{number:03d}'
+        scan = self.rng.random() < (0.8 if kind == 'receipt' else 0.6)
+        return self.package(sample_id, kind, page, labels, items, subtype, out, scan)
+
+    def package(self, sample_id, kind, page, labels, items, subtype, out, scan, folder='files'):
+        """Write the page as a clean PDF or a degraded JPG scan under out/folder and return
+        (manifest document type, manifest sample with gold labels)."""
+        manifest_kind = 'invoice' if kind in {'credit_note', 'debit_note'} else kind
         pdf_bytes = page.pdf()
-        image_share = 0.8 if kind == 'receipt' else 0.6
-        if self.rng.random() < image_share:
+        if scan:
             data, (width, height), variant = self.degrade(pdf_bytes, kind == 'receipt')
             file_format = 'jpg'
             pages = [{'page': 1, 'width': float(width), 'height': float(height), 'units': 'pixel',
@@ -503,9 +581,9 @@ class Generator:
             data, file_format, variant = pdf_bytes, 'pdf', 'digital'
             pages = [{'page': 1, 'width': page.width, 'height': page.height, 'units': 'pdf_point',
                       'image_width_px': None, 'image_height_px': None}]
-        relative = f'files/{sample_id}.{file_format}'
+        relative = f'{folder}/{sample_id}.{file_format}'
         (out / relative).write_bytes(data)
-        reference = f'ai/synthetic/generate.py#{self.set_name}/{sample_id}'
+        reference = f'{self.source_file}#{self.set_name}/{sample_id}'
         rows = []
         for order, item in enumerate(items, 1):
             cells = [self.label('description', item['description'], f'{reference}/line/{order}')]
@@ -520,7 +598,7 @@ class Generator:
             'sample_id': sample_id, 'document_type': manifest_kind,
             'classification_annotation': self.annotation(reference + f'#kind={kind}'),
             'bill_subtype': subtype, 'benchmark_split': self.split,
-            'source': {'dataset': 'ai-synthetic-my', 'dataset_revision': GENERATOR, 'original_split': self.set_name,
+            'source': {'dataset': self.dataset, 'dataset_revision': self.revision, 'original_split': self.set_name,
                        'original_sample_id': f'{sample_id}:{kind}', 'origin': 'SYNTHETIC', 'languages': ['ms', 'en'],
                        'country': 'MY', 'file_format': file_format, 'page_count': 1, 'pages': pages,
                        'relative_path': relative, 'private_object_key': None,
@@ -535,6 +613,21 @@ class Generator:
             'repeated_groups': []}
 
 
+def write_manifests(out, benchmark_id, revision, samples):
+    """Write invoices.json, bills.json and receipts.json (frozen ground-truth schema) under `out`,
+    validate them together with validate_collection and return (paths, manifests)."""
+    paths = []
+    for kind, name in (('invoice', 'invoices.json'), ('bill', 'bills.json'), ('receipt', 'receipts.json')):
+        manifest = {'schema_version': '1.0.0', 'artifact_type': 'frozen_ground_truth', 'field_dictionary_version': '1.0.0',
+                    'benchmark_id': benchmark_id, 'benchmark_revision': revision,
+                    'purpose': 'SCHEMA_TEST_ONLY', 'document_type': kind, 'samples': samples[kind]}
+        path = Path(out) / name
+        path.write_text(json.dumps(manifest, indent=1, ensure_ascii=True), encoding='utf-8')
+        paths.append(path)
+    from ai.evaluation.dataset_contract import validate_collection
+    return paths, validate_collection(paths, Path(out))
+
+
 def generate(set_name, out_root):
     out = Path(out_root) / set_name
     (out / 'files').mkdir(parents=True, exist_ok=True)
@@ -547,16 +640,7 @@ def generate(set_name, out_root):
     for number, kind in enumerate(kinds, 1):
         manifest_kind, sample = generator.sample(number, kind, out)
         samples[manifest_kind].append(sample)
-    paths = []
-    for kind, name in (('invoice', 'invoices.json'), ('bill', 'bills.json'), ('receipt', 'receipts.json')):
-        manifest = {'schema_version': '1.0.0', 'artifact_type': 'frozen_ground_truth', 'field_dictionary_version': '1.0.0',
-                    'benchmark_id': f'ai-synthetic-my-{set_name}', 'benchmark_revision': GENERATOR,
-                    'purpose': 'SCHEMA_TEST_ONLY', 'document_type': kind, 'samples': samples[kind]}
-        path = out / name
-        path.write_text(json.dumps(manifest, indent=1, ensure_ascii=True), encoding='utf-8')
-        paths.append(path)
-    from ai.evaluation.dataset_contract import validate_collection
-    manifests = validate_collection(paths, out)
+    paths, manifests = write_manifests(out, f'ai-synthetic-my-{set_name}', GENERATOR, samples)
     counts = {m.document_type: len(m.samples) for m in manifests}
     formats = {}
     for m in manifests:
