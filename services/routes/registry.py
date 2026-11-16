@@ -10,6 +10,7 @@ from .validation.routes import register as register_validation
 from .workspace.routes import register as register_workspace
 from .demo.routes import register as register_demo
 from .effort.routes import register as register_effort
+from .home.routes import register as register_home
 
 def register_component_routes(router, handlers):
     register_accounting(router, handlers)
@@ -24,3 +25,4 @@ def register_component_routes(router, handlers):
     register_workspace(router, handlers)
     register_demo(router, handlers)
     register_effort(router, handlers)
+    register_home(router, handlers)
