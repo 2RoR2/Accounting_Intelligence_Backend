@@ -59,8 +59,10 @@ def dispatch_due_jobs(limit=50):
     sent = 0
     for delivery in deliveries:
         try:
-            attempts.publish(delivery)
-            sent += 1
+            # Not accepted means another dispatcher took the last free inline thread;
+            # the job is back in pending for the next cycle.
+            if attempts.publish(delivery)['dispatchAccepted']:
+                sent += 1
         except attempts.AttemptRejected:
             log.exception('Dispatch failed for attempt %s',delivery.job_id)
     return sent
