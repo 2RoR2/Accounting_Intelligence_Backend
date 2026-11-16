@@ -41,7 +41,12 @@ def main():
     commands.add_parser("requests")
     approve = commands.add_parser("approve-company")
     approve.add_argument("request_id")
+    from services.admin import demo_company
+    demo_company.add_arguments(commands.add_parser(
+        "seed-demo-company", help="local only: a demo company from an A1 company pack (see docs/LOCALHOST.md)"))
     args = parser.parse_args()
+    if args.command == "seed-demo-company":
+        sys.exit(demo_company.run(args))
     demo_password = None
     if args.command == "seed-demo-accounts":
         if (os.getenv("APP_ENV", "").lower() != "development"

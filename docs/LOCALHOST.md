@@ -63,6 +63,41 @@ Get-Content "database\mock.data.sql" | docker compose exec -T db psql -U postgre
 .venv\Scripts\python -c "import main; main.apply_compatibility_migrations()"
 ```
 
+### One-command demo company (plan v2, A3)
+
+A fuller demo: one fictional Malaysian company with three months of books, loaded through the
+same code paths an accountant uses (CSV imports, document upload, bank import):
+
+```powershell
+.venv\Scripts\python services\admin\manage.py seed-demo-company --pack trading
+```
+
+`--pack` is `trading`, `services` or `fnb`; add `--month 2026-08` for one month only (faster).
+It refuses to run unless `APP_ENV=development`, `DATABASE_URL` points at `127.0.0.1` or
+`localhost`, and `S3_BUCKET` is empty. It:
+
+1. generates the pack under `ai/synthetic/output/packs/<pack>/` if it is not there yet
+   (`docs/COMPANY_PACKS.md`) and aligns the document-code counters;
+2. creates the company and three users, `accountant@<pack>.demo.test`, `admin@<pack>.demo.test`
+   (local admin) and `superadmin@demo.test`, and prints their generated passwords **once** in the
+   console (nothing is written to a file; `--prompt-password` lets you type one instead, and
+   existing users keep their passwords unless you add `--reset-passwords`);
+3. creates the monthly accounting periods and imports the chart of accounts, contacts and opening
+   balances through the CSV imports (`/api/chart-of-accounts/import`, `/api/contacts/import`,
+   `/api/opening-balances/import`; templates at `.../import/template`);
+4. uploads every pack document through the normal upload, one per free extraction worker, and
+   waits for extraction (the whole seed took 1.3-2.5 minutes for 58-62 documents on a laptop with
+   AI off), then imports the bank statements through the bank import and confirms them;
+5. prints the documents per state and how many bank lines the reconciliation suggestions match
+   correctly against the pack's `expected_matches.csv` (`--report file.json` saves these numbers,
+   never the passwords).
+
+Running it again skips what is already there. With AI off (the default) the extraction reads the
+text but does not recognise the document kind, so every document lands in "needs fixing" (EX-002);
+set `AI_EXTRACTION=text` with a provider key (section 7) to see documents reach review. The F&B
+pack's bank layout (`dr_cr`) is not readable by the bank CSV parser yet (task C5), so the seed
+imports those rows through the bank import's JSON form instead.
+
 Or create your own accounts:
 
 ```powershell
