@@ -29,7 +29,8 @@ _stop = threading.Event()
 
 
 class InlineQueueFull(RuntimeError):
-    """Every worker thread is busy; the reservation is released for a later cycle."""
+    """Every worker thread is busy. Raised before the token is taken, so nothing can run it;
+    attempts.publish() puts the reservation back in pending for a later dispatch."""
 
 
 def max_workers() -> int:
