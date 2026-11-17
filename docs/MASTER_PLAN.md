@@ -399,7 +399,7 @@ Planner from here: an Opus session following `docs/PLANNER_PLAYBOOK.md`. Section
 
 ### 10.1 Target
 
-- **UAT handover:** end of semester week 12. Date: `____` (Jonathan fills this in; the planner plans backwards from it).
+- **UAT handover:** end of semester week 12: **Friday 27 Nov 2026** (set 2026-11-17; Jonathan may name a different day). Feature freeze **Thursday 26 Nov, 12:00**: after that only fixes from the walkthrough. Compressed schedule in 10.7; the 10.4 cut line is applied.
 - **Focus:** the accountant's user interface and daily/monthly workflow first, built on the teammates' existing design system (`src/styles/*.css`, `src/components/common/ui`) and existing functions. Change flows and wording, not the look.
 - **Testing accounts:** real team emails receive login codes through Brevo (`EMAIL_PROVIDER=brevo`, `BREVO_*` in `.env`). Emails live only in `.env` or the database, never in the repository.
 
@@ -500,6 +500,8 @@ Two lanes run in parallel: one backend executor and one frontend executor. "->" 
 
 **Minimum for UAT (cut line).** If time runs short, keep Z1, E1, E2, B4a, B4b, B5a, B5b, C1 (defaults and suggestions only), C3, C5, D1, D2 (P&L, BS, TB, recorded tax), D3, I1, I3, I4, I5, U1-U4. Defer C4 ageing detail, D4 vendor templates, I2 image fallback, and I6 beyond duplicates and due bills.
 
+**Cut line applied 2026-11-17** (UAT on 27 Nov). Deferred until after UAT: C4 ageing detail, D4 vendor templates, I2 image fallback, I6 beyond duplicates and bills due, C2 beyond a read-only chart of accounts list.
+
 ### 10.5 Dependencies at a glance
 
 ```
@@ -511,7 +513,31 @@ E1 -> B4a -> B4b --+
 C1 -> I2, I6     I1 any time after Z1     I3 -> I4, I5     all -> U1 -> U2 -> U3 -> U4
 ```
 
+### 10.7 Compressed schedule to UAT (added 2026-11-17)
+
+Operating rules for the last week (override 10.4's "one backend and one frontend executor"):
+
+- Up to two backend and two frontend executors at once, only when their file sets do not overlap; every brief states its file set.
+- Codex reviews every PR in parallel with the planner's verification; the planner collects its findings. If an executor stalls or hits a usage limit, Codex takes the task with the same brief.
+- Merges are batched: the planner asks Jonathan twice a day (midday and evening) with the ready PRs in merge order.
+- Evening status to Jonathan, five lines: done, ready to merge, running, at risk, what is needed from him tomorrow. 10.6 updated daily.
+- If a day slips, cut from the end of M3/M4; never skip E2, U2 or the walkthrough.
+
+| Day | Work |
+|---|---|
+| Tue 17 Nov | Z1 merges (#8, #7, #6, frontend #4). Start E1. |
+| Wed 18 | E1 done; start E2, B4a, B5a. |
+| Thu 19 | B4b, B5b; start C1. Start I1 accuracy runs (script only, no lane conflict). |
+| Fri 20 | C3 posting. |
+| Sat 21 - Sun 22 | C5 bank reconciliation; D2 reports (P&L, BS, TB, recorded tax). |
+| Mon 23 | D1 month-end checklist + lock, D3 month pack, I3 evaluation page. |
+| Tue 24 | I5 load test, U2 hardening. I4 effort study: two people for about an hour (Jonathan books it). |
+| Wed 25 | U1 hosted UAT environment (each step approved by Jonathan; secrets rotated first), U3 tester guide. |
+| Thu 26 | Full walkthrough (E2) on the hosted environment; fix list; freeze at 12:00. |
+| Fri 27 | U4 release PR `features` -> `main`, tag `uat-1` (Jonathan merges); handover. |
+
 ### 10.6 Handoff log
 
 - 2026-11-17 (Fable): Plan v3 and `docs/PLANNER_PLAYBOOK.md` written. Open PRs: backend #6, #7, #8; frontend #4, #2 (draft, stale). Next: Z1 merge queue, starting with backend #8. Blockers on Jonathan: week 12 date in 10.1, merge approvals, Docker Desktop running for E1, secret rotation before U1.
 - 2026-11-17 (Opus planner): Opened backend #9 (this plan) into `features`. Z1 verified #8, #7, #6 (ready; #6 needs a one-line `registry.py` update after #7) and frontend #4 (unit gates pass; browser check waits for E1). Evidence in 10.2. Frontend #2 is Jonathan's own draft: close or re-apply. Running sessions: none. Blockers on Jonathan: "merge #8", then "merge #7"; UAT date for 10.1; optional Codex review of #7 (largest diff). Next: after #7 merges, owner b3-today updates #6; start E1 (Docker is running).
+- 2026-11-17 (Opus planner, later): UAT set to Fri 27 Nov, freeze Thu 26 Nov 12:00; cut line applied; compressed schedule and rules in 10.7. Codex reviews of #8, #7, #6 running (`codex review --base origin/features` in detached verification worktrees). E1 brief proposed (branch `planv3/e1-local-login`), waiting for Jonathan to start it. Blockers on Jonathan: "merge #8", "merge #7"; start E1.
