@@ -184,6 +184,12 @@ def test_chart_counterpart_must_keep_the_existing_classification():
     assert rows[2]['values']['addTo'] == ['ledger']
 
 
+def test_unclosed_quote_is_an_error_not_a_swallowed_row():
+    content = b'type,name\nsupplier,"Open Quote Sdn Bhd\ncustomer,Later Customer\ncustomer,Last Customer\n'
+    with pytest.raises(ImportFileError, match='not valid CSV'):
+        read_rows(content, ['type', 'name'], 'contacts')
+
+
 def test_csv_parser_failures_become_import_errors():
     too_long = b'type,name\nsupplier,' + b'x' * 200_000 + b'\n'
     with pytest.raises(ImportFileError, match='Row 1 is not valid CSV'):
@@ -202,8 +208,9 @@ def ledger(*codes):
     return {code: {'id': uuid4(), 'name': code} for code in codes}
 
 
-def plan(*lines, accounts=('1010', '1100', '3000'), periods=(PERIOD,), posted=frozenset()):
-    return opening.plan_opening(opening.parse_opening(csv_bytes(OPENING_HEADER, *lines)), ledger(*accounts), list(periods), posted)
+def plan(*lines, accounts=('1010', '1100', '3000'), periods=(PERIOD,), posted=frozenset(), used=frozenset()):
+    return opening.plan_opening(opening.parse_opening(csv_bytes(OPENING_HEADER, *lines)), ledger(*accounts), list(periods),
+                                posted, used)
 
 
 BALANCED = ['account,2026-08-01,1010,Bank,,,,,,900.00,', 'account,2026-08-01,1100,Receivables,,,,,,100.00,',
@@ -249,6 +256,15 @@ def test_opening_rows_need_known_accounts_and_one_sided_amounts():
     assert 'Import the chart first' in rows[2]['errors'][0]
     assert 'either a debit or a credit' in ' '.join(rows[3]['errors'])
     assert 'at most two decimals' in ' '.join(rows[4]['errors'])
+
+
+def test_replacement_for_a_reversed_opening_journal_gets_a_new_key():
+    assert opening.idempotency_key(date(2026, 8, 1)) == 'opening-balances:2026-08-01'
+    used = frozenset({'opening-balances:2026-08-01', 'opening-balances:2026-08-01:2'})
+    assert opening.idempotency_key(date(2026, 8, 1), used) == 'opening-balances:2026-08-01:3'
+    # The reversed journal's date is not in already_posted, but its key is in used_keys.
+    _, errors, journal = plan(*BALANCED, used=frozenset({'opening-balances:2026-08-01'}))
+    assert errors == [] and journal['idempotencyKey'] == 'opening-balances:2026-08-01:2'
 
 
 def test_opening_needs_an_open_period_one_date_and_posts_once():

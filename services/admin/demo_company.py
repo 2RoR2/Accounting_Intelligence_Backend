@@ -492,6 +492,8 @@ def seed(key, month=None, pack_root=PACK_ROOT, prompt_password=False, reset_pass
     main.apply_compatibility_migrations()  # align document-code sequences before the first upload
     with connect() as db:
         tenant, users, passwords = ensure_company(db, key, pack, prompt_password, reset_passwords)
+    # The users are committed now: show their passwords before any later step can fail and lose them.
+    print_credentials(passwords)
     tokens, sessions = issue_tokens(users)
     report = {"pack": key, "company": pack["company"]["name"], "months": chosen, "steps": []}
     steps = report["steps"]
@@ -519,15 +521,19 @@ def seed(key, month=None, pack_root=PACK_ROOT, prompt_password=False, reset_pass
     report["reconciliation_in_database"]["suggestions_endpoint"] = len(suggestions)
     report["reconciliation_matcher_on_gold_records"] = matcher_baseline(folder, chosen)
     report["seconds"] = round(time.monotonic() - started, 1)
-    return report, passwords
+    return report
 
 
-def print_report(report, passwords):
-    print(f"\nDemo company ready in {report['seconds']} s:", report["company"])
+def print_credentials(passwords):
     print("Sign-in (shown once, not saved anywhere):")
     for role, email, password in passwords:
         print(f"  {role:12} {email:34} {password}")
-    print("Admin and super admin sign-in asks for an authenticator app; accountants get an e-mailed code.")
+    print("Admin and super admin sign-in asks for an authenticator app; accountants get an e-mailed code.", flush=True)
+
+
+def print_report(report):
+    print(f"\nDemo company ready in {report['seconds']} s:", report["company"])
+    print("(The sign-in details were printed at the start of this run.)")
     docs = report["documents"]
     print("\nDocuments by status:", json.dumps(docs["by_status"]))
     print("Accountant piles:   ", json.dumps(docs["piles"]))
@@ -551,12 +557,12 @@ def add_arguments(parser):
 
 def run(args):
     try:
-        report, passwords = seed(args.pack, args.month, args.pack_root, args.prompt_password,
-                                 args.reset_passwords, args.timeout_minutes)
+        report = seed(args.pack, args.month, args.pack_root, args.prompt_password,
+                      args.reset_passwords, args.timeout_minutes)
     except SeedError as error:
         print(str(error), file=sys.stderr)
         return 2
-    print_report(report, passwords)
+    print_report(report)
     if args.report:
         Path(args.report).write_text(json.dumps(report, indent=1, default=str) + "\n", encoding="utf-8")
     return 0

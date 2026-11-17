@@ -9,7 +9,8 @@ id in `source_field`). Open items are not yet stored as payables or receivables 
 (no table for items without a document; task C4).
 
 The journal must fall inside an open accounting period, every account must already be in the
-ledger list, and the same opening date can be imported once (idempotency key).
+ledger list, and an opening date has at most one journal that is not reversed (each import gets its own
+idempotency key, so a corrected file can replace a reversed opening journal).
 """
 from __future__ import annotations
 
@@ -25,8 +26,15 @@ ROW_TYPES = {"account", "receivable", "payable"}
 ZERO = Decimal("0.00")
 
 
-def idempotency_key(as_at) -> str:
-    return f"opening-balances:{as_at.isoformat()}"
+def idempotency_key(as_at, used_keys=frozenset()) -> str:
+    """`opening-balances:<date>` for the first import of a date. Once that journal is reversed, the replacement
+    takes the next free `:2`, `:3`, ..., otherwise the posting code would return the reversed journal as done."""
+    base = f"opening-balances:{as_at.isoformat()}"
+    key, number = base, 1
+    while key in used_keys:
+        number += 1
+        key = f"{base}:{number}"
+    return key
 
 
 def parse_opening(content: bytes):
@@ -62,9 +70,10 @@ def parse_opening(content: bytes):
     return parsed
 
 
-def plan_opening(parsed, ledger_accounts, open_periods, already_posted=frozenset()):
+def plan_opening(parsed, ledger_accounts, open_periods, already_posted=frozenset(), used_keys=frozenset()):
     """ledger_accounts: code -> {"id", "name"}; open_periods: [{"id", "period_code", "starts_on", "ends_on"}];
-    already_posted: as_at dates with an opening journal. Returns (rows, file_errors, journal or None)."""
+    already_posted: as_at dates with an opening journal that is not reversed; used_keys: every opening-balances
+    idempotency key already taken (reversed journals included). Returns (rows, file_errors, journal or None)."""
     rows, file_errors = [], []
     seen_accounts, seen_items = {}, {}
     for source_row, values, amounts, errors in parsed:
@@ -121,13 +130,13 @@ def plan_opening(parsed, ledger_accounts, open_periods, already_posted=frozenset
                                "Reverse that journal before importing again.")
     journal = None
     if not file_errors and not any(row["status"] == "error" for row in rows):
-        journal = _journal(account_rows, items_by_account, ledger_accounts, period, as_at)
+        journal = _journal(account_rows, items_by_account, ledger_accounts, period, as_at, used_keys)
     for row in rows:
         row.pop("_amounts", None)
     return rows, file_errors, journal
 
 
-def _journal(account_rows, items_by_account, ledger_accounts, period, as_at):
+def _journal(account_rows, items_by_account, ledger_accounts, period, as_at, used_keys=frozenset()):
     lines = []
     for row in account_rows:
         code = row["values"]["account_code"]
@@ -148,7 +157,7 @@ def _journal(account_rows, items_by_account, ledger_accounts, period, as_at):
                 description, source_field = "Opening balance", None
             lines.append({"accountId": str(ledger_accounts[code]["id"]), "debit": amount_debit, "credit": amount_credit,
                           "description": description[:500], "sourceField": source_field})
-    return {"periodId": str(period["id"]), "idempotencyKey": idempotency_key(as_at), "sourceType": "manual",
+    return {"periodId": str(period["id"]), "idempotencyKey": idempotency_key(as_at, used_keys), "sourceType": "manual",
             "sourceId": None, "journalDate": as_at, "description": f"Opening balances at {as_at.isoformat()}",
             "lines": lines}
 
@@ -158,10 +167,11 @@ def load_context(db, tenant_id):
         "SELECT id, code, name FROM ledger_accounts WHERE tenant_id=%s AND is_active", (tenant_id,)).fetchall()}
     periods = db.execute("""SELECT id, period_code, starts_on, ends_on FROM accounting_periods
         WHERE tenant_id=%s AND status='open' ORDER BY starts_on""", (tenant_id,)).fetchall()
-    posted = {row["journal_date"] for row in db.execute(
-        "SELECT journal_date FROM journal_headers WHERE tenant_id=%s AND idempotency_key LIKE 'opening-balances:%%'",
-        (tenant_id,)).fetchall()}
-    return accounts, periods, frozenset(posted)
+    journals = db.execute("""SELECT journal_date, idempotency_key, status FROM journal_headers
+        WHERE tenant_id=%s AND idempotency_key LIKE 'opening-balances:%%'""", (tenant_id,)).fetchall()
+    # A reversed opening journal no longer counts as posted, but its key stays taken.
+    posted = frozenset(row["journal_date"] for row in journals if row["status"] != "reversed")
+    return accounts, periods, posted, frozenset(row["idempotency_key"] for row in journals)
 
 
 def preview_plan(db, tenant_id, content: bytes):
