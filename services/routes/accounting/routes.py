@@ -97,27 +97,31 @@ def create_accounting_period(data: PeriodInput, request: Request):
 
 def post_journal(data: JournalInput, request: Request):
     user = require_workspace_user(request, {"local_admin"})
+    with connect() as db:
+        return record_journal(db, user, data)
+
+def record_journal(db, user, data: JournalInput):
+    """Post one balanced journal inside the caller's transaction (also used by the opening-balances import)."""
     debits = sum((line.debit for line in data.lines), Decimal("0"))
     credits = sum((line.credit for line in data.lines), Decimal("0"))
     if debits <= 0 or debits != credits:
         raise HTTPException(422, "Journal must have equal non-zero debit and credit totals.")
     period_id = _uuid_or_422(data.periodId, "period id")
     source_id = _uuid_or_422(data.sourceId, "source id") if data.sourceId else None
-    with connect() as db:
-        existing = db.execute("SELECT id,status FROM journal_headers WHERE tenant_id=%s AND idempotency_key=%s", (user["tenant_id"], data.idempotencyKey)).fetchone()
-        if existing:
-            return {"id": str(existing["id"]), "status": existing["status"], "idempotent": True}
-        period = db.execute("SELECT * FROM accounting_periods WHERE id=%s AND tenant_id=%s FOR UPDATE", (period_id, user["tenant_id"])).fetchone()
-        if not period or period["status"] != "open" or not (period["starts_on"] <= data.journalDate <= period["ends_on"]):
-            raise HTTPException(409, "Journal date must be inside an open accounting period.")
-        header = db.execute("""INSERT INTO journal_headers(tenant_id,period_id,idempotency_key,source_type,source_id,journal_date,description,posted_by,status,posted_at)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'posted',now()) RETURNING id""", (user["tenant_id"], period_id, data.idempotencyKey, data.sourceType, source_id, data.journalDate, data.description, user["id"])).fetchone()
-        for number, line in enumerate(data.lines, 1):
-            account_id = _uuid_or_422(line.accountId, "account id")
-            if (line.debit > 0) == (line.credit > 0):
-                raise HTTPException(422, "Each journal line must contain either a debit or a credit.")
-            db.execute("""INSERT INTO journal_lines(tenant_id,journal_id,account_id,line_number,description,debit,credit,source_field)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""", (user["tenant_id"], header["id"], account_id, number, line.description, line.debit, line.credit, line.sourceField))
+    existing = db.execute("SELECT id,status FROM journal_headers WHERE tenant_id=%s AND idempotency_key=%s", (user["tenant_id"], data.idempotencyKey)).fetchone()
+    if existing:
+        return {"id": str(existing["id"]), "status": existing["status"], "idempotent": True}
+    period = db.execute("SELECT * FROM accounting_periods WHERE id=%s AND tenant_id=%s FOR UPDATE", (period_id, user["tenant_id"])).fetchone()
+    if not period or period["status"] != "open" or not (period["starts_on"] <= data.journalDate <= period["ends_on"]):
+        raise HTTPException(409, "Journal date must be inside an open accounting period.")
+    header = db.execute("""INSERT INTO journal_headers(tenant_id,period_id,idempotency_key,source_type,source_id,journal_date,description,posted_by,status,posted_at)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'posted',now()) RETURNING id""", (user["tenant_id"], period_id, data.idempotencyKey, data.sourceType, source_id, data.journalDate, data.description, user["id"])).fetchone()
+    for number, line in enumerate(data.lines, 1):
+        account_id = _uuid_or_422(line.accountId, "account id")
+        if (line.debit > 0) == (line.credit > 0):
+            raise HTTPException(422, "Each journal line must contain either a debit or a credit.")
+        db.execute("""INSERT INTO journal_lines(tenant_id,journal_id,account_id,line_number,description,debit,credit,source_field)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""", (user["tenant_id"], header["id"], account_id, number, line.description, line.debit, line.credit, line.sourceField))
     return {"id": str(header["id"]), "status": "posted", "idempotent": False}
 
 def post_supplier_bill(record_id: str, data: SupplierBillPostingInput, request: Request):
