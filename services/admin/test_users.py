@@ -13,8 +13,8 @@ SMTP), local admins and super admins enter an authenticator (TOTP) code. New use
 from `UAT_TEST_PASSWORD`, or one typed at the prompt; existing users keep theirs unless
 `--reset-passwords` is given. The password is never printed.
 
-Local databases only: it refuses to run unless APP_ENV=development and DATABASE_URL points at
-127.0.0.1 or localhost.
+Local databases only: it applies seed-demo-company's guard (APP_ENV=development, every database
+address on 127.0.0.1 or localhost, S3_BUCKET empty).
 """
 from __future__ import annotations
 
@@ -25,14 +25,11 @@ import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
 
 ROOT = Path(__file__).resolve().parents[2]
 PACK_ROOT = ROOT / "ai" / "synthetic" / "output" / "packs"
 PACKS = ("trading", "services", "fnb")
 ROLES = ("accountant", "local_admin", "super_admin")
-PRIVILEGED = ("local_admin", "super_admin")
-LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 EMAIL = re.compile(r"^[^@\s,:]+@[^@\s,:]+\.[^@\s,:.]+$")
 PASSWORD_RULE = "8-256 characters with upper and lower case, a number and a symbol"
 
@@ -94,44 +91,11 @@ def parse_test_emails(raw: str | None) -> list[TestUser]:
 
 def refusal_reason(environ=None) -> str | None:
     """Why this environment must not get test accounts, or None for a local development database."""
-    environ = os.environ if environ is None else environ
-    if (environ.get("APP_ENV") or "").strip().lower() != "development":
-        return "APP_ENV must be development."
-    url = (environ.get("DATABASE_URL") or "").strip()
-    if not url:
-        return "DATABASE_URL is not set."
-    try:
-        hosts = database_hosts(url)
-    except ValueError:
-        return "DATABASE_URL is not a valid postgresql:// URL."
-    remote = [host for host in hosts if host not in LOOPBACK_HOSTS]
-    if not hosts or remote:
-        return (f"DATABASE_URL points at {', '.join(remote) or 'no host'}; test accounts are created only in "
-                "a database on this machine (127.0.0.1 or localhost).")
-    return None
-
-
-def database_hosts(url: str) -> list[str]:
-    """Every host libpq could connect to for this URL: the netloc (one or several, comma separated)
-    plus ?host= and ?hostaddr= overrides, which libpq lets replace the netloc host. A `service`
-    parameter (pg_service.conf) cannot be checked, so it is refused."""
-    parts = urlsplit(url)
-    if parts.scheme not in {"postgresql", "postgres"}:
-        raise ValueError("not a postgresql URL")
-    query = parse_qs(parts.query, keep_blank_values=True)
-    if "service" in query:
-        raise ValueError("service files are not allowed")
-    hosts = []
-    for item in parts.netloc.rpartition("@")[2].split(","):
-        item = item.strip()
-        if item.startswith("["):
-            hosts.append(item[1:item.index("]")].lower())
-        elif item:
-            hosts.append(item.split(":")[0].lower())
-    for key in ("host", "hostaddr"):
-        for value in query.get(key, []):
-            hosts.extend(host.strip().lower() for host in value.split(",") if host.strip())
-    return hosts
+    """Same rule as seed-demo-company (one guard for both local-only commands): APP_ENV=development and
+    every address libpq would use (URL host, ?host=, ?hostaddr=, PGHOST, PGHOSTADDR) is loopback, no
+    connection service, and S3_BUCKET empty."""
+    from services.admin.demo_company import refusal_reason as local_only_reason
+    return local_only_reason(os.environ if environ is None else environ)
 
 
 def display_name(email: str) -> str:

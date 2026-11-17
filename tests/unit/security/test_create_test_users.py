@@ -65,8 +65,10 @@ def test_parse_errors_never_show_the_full_address(raw, message):
     ({"APP_ENV": "development", "DATABASE_URL": "postgresql://u:p@127.0.0.1:5433,ep-x.neon.tech:5432/db"}, "ep-x.neon.tech"),
     ({"APP_ENV": "development", "DATABASE_URL": "postgresql:///db?host=ep-x.neon.tech"}, "ep-x.neon.tech"),
     ({"APP_ENV": "development", "DATABASE_URL": "postgresql:///db"}, "no host"),
-    ({"APP_ENV": "development", "DATABASE_URL": "postgresql://127.0.0.1/db?service=team"}, "not a valid"),
-    ({"APP_ENV": "development", "DATABASE_URL": "mysql://127.0.0.1/db"}, "not a valid"),
+    ({"APP_ENV": "development", "DATABASE_URL": "postgresql:///db", "PGHOST": "ep-x.neon.tech"}, "ep-x.neon.tech"),
+    ({"APP_ENV": "development", "DATABASE_URL": "postgresql://127.0.0.1/db?service=team"}, "service"),
+    ({"APP_ENV": "development", "DATABASE_URL": "mysql://127.0.0.1/db"}, "postgresql://"),
+    ({**LOCAL_ENV, "S3_BUCKET": "team-bucket"}, "S3_BUCKET"),
 ])
 def test_refuses_anything_but_a_local_development_database(environ, reason):
     assert reason in tu.refusal_reason(environ)
