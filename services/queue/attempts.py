@@ -355,15 +355,49 @@ def _publish_rq(delivery):
         result_ttl=3600,failure_ttl=86400,description='Accounting extraction '+delivery.job_id)
 
 
+def return_to_outbox(delivery):
+    """Put back a reservation that no transport accepted, so a later dispatch sends it.
+
+    Only for a refusal that is certain: the inline pool raises InlineQueueFull before
+    any thread holds the token, so nothing can claim it. The job goes back to pending
+    with no delivery identity and the document stays queued; its attempt budget is
+    untouched. A job that is no longer this exact reservation is left alone.
+    """
+    with connect() as db:
+        document = lock_document(db,delivery.document_id,delivery.tenant_id)
+        job = job_for_update(db,delivery)
+        if job['status']!='dispatched' or str(job['dispatch_token'])!=delivery.dispatch_token:
+            return False
+        instant = now(db)
+        # dispatch_count counts sends; this reservation was never sent.
+        db.execute("""UPDATE pending_jobs SET status='pending',dispatch_token=NULL,dispatched_at=NULL,
+            dispatch_expires_at=NULL,dispatch_count=CASE WHEN dispatch_count>0 THEN dispatch_count-1 ELSE 0 END,
+            updated_at=%s WHERE id=%s AND status='dispatched' AND dispatch_token=%s""",
+            (instant,job['id'],delivery.dispatch_token))
+        audit(db,document,job['id'],'extraction.dispatch_deferred')
+    return True
+
+
 def publish(delivery):
-    """One send per reserved token; SQL claim is the deduplication authority."""
+    """One send per reserved token; SQL claim is the deduplication authority.
+
+    Returns dispatchAccepted=False, with the job back in pending, when every inline
+    worker thread was already taken by a concurrent dispatcher.
+    """
+    deferred = False
     try:
         from services.queue.backend import queue_backend
         if queue_backend() == 'inline':
             # Same reservation, different transport: a thread in this process
             # claims the delivery through claim_delivery() like any worker.
             from services.queue import inline
-            inline.submit(delivery)
+            try:
+                inline.submit(delivery)
+            except inline.InlineQueueFull:
+                # Several dispatchers (upload wakeup, a finishing worker, the
+                # supervisor) can each see a free thread and reserve it. The pool
+                # refused this one before taking it: not ambiguous, not a failure.
+                deferred = True
         else:
             _publish_rq(delivery)
     except Exception:
@@ -385,6 +419,9 @@ def publish(delivery):
                     db.execute("UPDATE documents SET status='failed',updated_at=%s WHERE id=%s",(instant,document['id']))
                 audit(db,document,job['id'],'extraction.dispatch_unconfirmed')
         raise AttemptRejected('DISPATCH_UNCONFIRMED') from None
+    if deferred:
+        # The supervisor, or the next worker that finishes, dispatches it again.
+        return_to_outbox(delivery)
     with connect() as db:
         row = db.execute("""SELECT j.status AS job_status,d.status AS document_status
             FROM pending_jobs j JOIN documents d ON d.id=j.document_id AND d.tenant_id=j.tenant_id
@@ -392,6 +429,6 @@ def publish(delivery):
             (delivery.job_id,delivery.document_id,delivery.tenant_id)).fetchone()
         if not row:
             raise AttemptRejected('ATTEMPT_JOB_MISMATCH')
-    return {'jobId':delivery.job_id,'queueJobId':delivery.dispatch_token,
+    return {'jobId':delivery.job_id,'queueJobId':None if deferred else delivery.dispatch_token,
             'status':row['document_status'].upper(),'jobStatus':row['job_status'].upper(),
-            'dispatchAccepted':True}
+            'dispatchAccepted':not deferred}
