@@ -19,6 +19,7 @@ from __future__ import annotations
 import calendar
 import csv
 import getpass
+import ipaddress
 import json
 import os
 import secrets
@@ -30,7 +31,6 @@ from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[2]
 PACKS = ("trading", "services", "fnb")
-LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 PACK_ROOT = ROOT / "ai" / "synthetic" / "output" / "packs"
 WAITING_STATUSES = ("uploaded", "queued", "processing", "validating")
 HEADERS = {"X-Requested-With": "AccountingIntelligence", "Origin": "http://localhost:3000"}
@@ -51,17 +51,54 @@ def refusal_reason(environ=None):
     if not url:
         return "DATABASE_URL is not set."
     try:
-        parts = urlsplit(url)
-        host = (parts.hostname or "").lower()
+        scheme = urlsplit(url).scheme
     except ValueError:
         return "DATABASE_URL is not a valid URL."
-    if parts.scheme not in {"postgresql", "postgres"}:
+    if scheme not in {"postgresql", "postgres"}:
         return "DATABASE_URL must be a postgresql:// URL."
-    if host not in LOOPBACK_HOSTS:
-        return (f"DATABASE_URL points at {host or 'no host'}; only a database on this machine "
-                "(127.0.0.1 or localhost) can be seeded.")
+    reason = _remote_destination(url, environ)
+    if reason:
+        return reason.rstrip(".") + "; only a database on this machine (127.0.0.1 or localhost) can be seeded."
     if (environ.get("S3_BUCKET") or "").strip():
         return "S3_BUCKET is set; clear it so demo uploads stay in local storage and never reach a shared bucket."
+    return None
+
+
+def _is_loopback(value):
+    value = value.strip().strip("[]").lower()
+    if value == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(value).is_loopback
+    except ValueError:
+        return False
+
+
+def _remote_destination(url, environ):
+    """Why the address libpq will actually use is not this machine, or None.
+
+    Checks the parsed connection parameters, not just the URL's host: query parameters can override
+    `host`, add `hostaddr` (which libpq connects to instead of resolving `host`) or name a `service`
+    from pg_service.conf, and libpq falls back to PGHOST / PGHOSTADDR / PGSERVICE when a value is absent.
+    """
+    from psycopg import ProgrammingError
+    from psycopg.conninfo import conninfo_to_dict
+    try:
+        params = conninfo_to_dict(url)
+    except ProgrammingError:
+        return "DATABASE_URL is not a valid connection URL."
+    if params.get("service") or (environ.get("PGSERVICE") or "").strip():
+        return "DATABASE_URL (or PGSERVICE) names a connection service, which can point anywhere."
+    hosts = params.get("host") or (environ.get("PGHOST") or "")
+    if not hosts.strip():
+        return "DATABASE_URL names no host."
+    for host in hosts.split(","):
+        if not _is_loopback(host):
+            return f"DATABASE_URL points at {host.strip() or 'an empty host'}."
+    hostaddrs = params.get("hostaddr") or (environ.get("PGHOSTADDR") or "")
+    for address in filter(None, (part.strip() for part in hostaddrs.split(","))):
+        if not _is_loopback(address):
+            return f"DATABASE_URL (or PGHOSTADDR) connects to {address}."
     return None
 
 
@@ -330,6 +367,15 @@ def document_states(db, tenant_id):
     return {"by_status": statuses, "piles": dict(sorted(piles.items())), "open_exceptions_by_type": exceptions}
 
 
+def bank_import_files(db, tenant_id):
+    """{import id: pack bank file} for every confirmed import of the company, this run's or an earlier one's.
+    A pack bank file holds the rows posted in one month, so the month of an import's first row names its file."""
+    rows = db.execute("""SELECT i.id, min(t.posted_date) AS first_posted
+        FROM bank_imports i JOIN bank_transactions t ON t.import_id=i.id AND t.tenant_id=i.tenant_id
+        WHERE i.tenant_id=%s AND i.status='confirmed' GROUP BY i.id""", (tenant_id,)).fetchall()
+    return {str(row["id"]): f"bank_{row['first_posted']:%Y-%m}.csv" for row in rows if row["first_posted"]}
+
+
 def database_proposals(db, tenant_id, import_files):
     """{(bank_file, source_row): pack ids} from the reconciliation candidates the bank import proposed."""
     rows = db.execute("""SELECT t.import_id, t.source_row, d.original_filename
@@ -397,7 +443,6 @@ def _upload_documents(api, folder, chosen, tenant_id):
 
 
 def _import_bank(api, folder, pack, chosen, steps):
-    import_files = {}
     account_ref = f"Current account {pack['company']['bank_account_number'][-4:]}"
     parser = pack["bank"].get("parser")
     for code in chosen:
@@ -422,12 +467,9 @@ def _import_bank(api, folder, pack, chosen, steps):
                 print("  " + steps[-1])
                 continue
             confirmed = response.json()
-            import_id = confirmed["importId"]
-        import_files[import_id] = name
         steps.append(f"{name}: {confirmed['rowCount']} rows imported ({'CSV file' if parser else 'JSON rows'}), "
                      f"{confirmed['candidatesProposed']} matches proposed")
         print("  " + steps[-1])
-    return import_files
 
 
 def seed(key, month=None, pack_root=PACK_ROOT, prompt_password=False, reset_passwords=False, timeout_minutes=30):
@@ -465,7 +507,7 @@ def seed(key, month=None, pack_root=PACK_ROOT, prompt_password=False, reset_pass
             steps.append(_upload_documents(api, folder, chosen, tenant["id"]))
             print("  " + steps[-1])
             report["extraction_seconds"] = round(wait_for_processing(tenant["id"], timeout_minutes * 60), 1)
-            import_files = _import_bank(api, folder, pack, chosen, steps)
+            _import_bank(api, folder, pack, chosen, steps)
             suggestions = api.call("accountant", "GET", "/api/bank/reconciliation/suggestions").json()["suggestions"]
     finally:
         with connect() as db:
@@ -473,7 +515,7 @@ def seed(key, month=None, pack_root=PACK_ROOT, prompt_password=False, reset_pass
     expected = [row for row in read_csv(folder / "expected_matches.csv") if bank_file_month(row["bank_file"]) in chosen]
     with connect() as db:
         report["documents"] = document_states(db, tenant["id"])
-        report["reconciliation_in_database"] = score_proposals(expected, database_proposals(db, tenant["id"], import_files))
+        report["reconciliation_in_database"] = score_proposals(expected, database_proposals(db, tenant["id"], bank_import_files(db, tenant["id"])))
     report["reconciliation_in_database"]["suggestions_endpoint"] = len(suggestions)
     report["reconciliation_matcher_on_gold_records"] = matcher_baseline(folder, chosen)
     report["seconds"] = round(time.monotonic() - started, 1)

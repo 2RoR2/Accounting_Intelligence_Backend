@@ -34,6 +34,18 @@ def packs(tmp_path_factory):
     ({**LOCAL, 'DATABASE_URL': 'postgresql://postgres:x@10.0.0.5/accounting_db'}, 'only a database on this machine'),
     ({**LOCAL, 'DATABASE_URL': 'host=127.0.0.1 dbname=accounting_db'}, 'postgresql:// URL'),
     ({**LOCAL, 'S3_BUCKET': 'team-bucket'}, 'S3_BUCKET is set'),
+    # libpq connects to what the parsed parameters say, not to the URL's host part.
+    ({**LOCAL, 'DATABASE_URL': 'postgresql://localhost/demo?hostaddr=203.0.113.10'}, 'connects to 203.0.113.10'),
+    ({**LOCAL, 'DATABASE_URL': 'postgresql://localhost/demo?host=db.example.com'}, 'points at db.example.com'),
+    ({**LOCAL, 'DATABASE_URL': 'postgresql://localhost,db.example.com/demo'}, 'points at db.example.com'),
+    ({**LOCAL, 'DATABASE_URL': 'postgresql://localhost/demo?service=prod'}, 'connection service'),
+    ({**LOCAL, 'PGSERVICE': 'prod'}, 'connection service'),
+    ({**LOCAL, 'DATABASE_URL': 'postgresql:///demo'}, 'names no host'),
+    ({**LOCAL, 'DATABASE_URL': 'postgresql:///demo', 'PGHOST': 'db.example.com'}, 'points at db.example.com'),
+    ({**LOCAL, 'DATABASE_URL': 'postgresql:///demo', 'PGHOST': '127.0.0.1'}, None),
+    ({**LOCAL, 'PGHOSTADDR': '203.0.113.10'}, 'connects to 203.0.113.10'),
+    ({**LOCAL, 'DATABASE_URL': 'postgresql://localhost/demo?hostaddr=127.0.0.1'}, None),
+    ({**LOCAL, 'DATABASE_URL': 'postgresql://[::1]:5433/demo'}, None),
 ])
 def test_seed_guard(environ, expected):
     reason = demo_company.refusal_reason(environ)
@@ -72,6 +84,18 @@ def test_score_proposals_rules():
     assert {k: score[k] for k in ('bank_rows', 'rows_with_documents', 'correct', 'complete', 'wrong', 'missed')} == {
         'bank_rows': 5, 'rows_with_documents': 4, 'correct': 2, 'complete': 1, 'wrong': 2, 'missed': 1}
     assert score['by_match_type']['fee'] == {'rows': 1, 'wrong': 1}
+
+
+def test_bank_files_are_mapped_from_the_database_so_a_reseed_keeps_earlier_imports():
+    from datetime import date
+    from unittest.mock import MagicMock
+    db = MagicMock()
+    db.execute.return_value.fetchall.return_value = [
+        {'id': 'a1', 'first_posted': date(2026, 8, 3)}, {'id': 'b2', 'first_posted': date(2026, 9, 1)},
+        {'id': 'c3', 'first_posted': None}]
+    files = demo_company.bank_import_files(db, 'tenant')
+    assert files == {'a1': 'bank_2026-08.csv', 'b2': 'bank_2026-09.csv'}
+    assert "status='confirmed'" in db.execute.call_args[0][0]
 
 
 def test_matcher_baseline_on_a_pack_is_consistent(packs):

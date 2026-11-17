@@ -46,23 +46,31 @@ def read_rows(content: bytes, required, label: str):
     except UnicodeDecodeError as exc:
         raise ImportFileError("Save the file as CSV UTF-8 and try again.") from exc
     reader = csv.DictReader(io.StringIO(text, newline=""))
-    header = [name.strip() for name in (reader.fieldnames or [])]
+    try:
+        header = [name.strip() for name in (reader.fieldnames or [])]
+    except csv.Error as exc:
+        raise ImportFileError(f"The column-name row is not valid CSV ({exc}).") from exc
     if not header or len(header) != len(set(header)):
         raise ImportFileError("The first row must hold the column names, each used once.")
     missing = [column for column in required if column not in header]
     if missing:
         raise ImportFileError(f"This is not a {label} file: the column(s) {', '.join(missing)} are missing. "
                               "Download the template to see the expected columns.")
-    rows = []
-    for number, source in enumerate(reader, start=1):
-        if None in source:
-            raise ImportFileError(f"Row {number} has more cells than there are column names.")
-        values = {key.strip(): (value or "").strip() for key, value in source.items() if key is not None}
-        if not any(values.values()):
-            continue
-        if len(rows) >= MAX_IMPORT_ROWS:
-            raise ImportFileError(f"The file has more than {MAX_IMPORT_ROWS} rows. Split it into smaller files.")
-        rows.append((number, values))
+    rows, number = [], 0
+    try:
+        for number, source in enumerate(reader, start=1):
+            if None in source:
+                raise ImportFileError(f"Row {number} has more cells than there are column names.")
+            values = {key.strip(): (value or "").strip() for key, value in source.items() if key is not None}
+            if not any(values.values()):
+                continue
+            if len(rows) >= MAX_IMPORT_ROWS:
+                raise ImportFileError(f"The file has more than {MAX_IMPORT_ROWS} rows. Split it into smaller files.")
+            rows.append((number, values))
+    except csv.Error as exc:
+        # The csv module raises on an unclosed quote or a cell over its field size limit (131072 characters).
+        raise ImportFileError(f"Row {number + 1} is not valid CSV ({exc}). Check for an unclosed quote "
+                              "or a cell that is far too long.") from exc
     if not rows:
         raise ImportFileError("The file has column names but no rows.")
     return header, rows

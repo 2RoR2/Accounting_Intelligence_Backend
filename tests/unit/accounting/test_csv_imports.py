@@ -152,14 +152,44 @@ def test_chart_row_validation():
     assert 'also on row 1' in messages[5]
 
 
+def coa_account(name, account_class='asset'):
+    return {'name': name, 'account_class': account_class}
+
+
+def ledger_account(name, account_type='asset'):
+    return {'name': name, 'account_type': account_type}
+
+
 def test_chart_existing_codes():
     content = csv_bytes(COA_HEADER, '1000,Cash,asset,asset,,,', '1010,Bank,asset,asset,,,', '1020,Petty Cash,asset,asset,,,',
                         '1030,Deposits,asset,asset,,,')
-    rows = chart.plan_chart(chart.parse_chart(content), {'1000': 'Cash', '1010': 'BANK', '1020': 'Something else'}, {'1000': 'Cash'})
+    rows = chart.plan_chart(chart.parse_chart(content),
+                            {'1000': coa_account('Cash'), '1010': coa_account('BANK'), '1020': coa_account('Something else')},
+                            {'1000': ledger_account('Cash')})
     assert [row['status'] for row in rows] == ['duplicate', 'new', 'duplicate', 'new']
     assert rows[1]['values']['addTo'] == ['ledger']
     assert rows[2]['duplicateOf'] == 'Something else'
     assert rows[3]['values']['addTo'] == ['chart', 'ledger']
+
+
+def test_chart_counterpart_must_keep_the_existing_classification():
+    content = csv_bytes(COA_HEADER, '2000,Trade Payables,asset,asset,,,', '2010,Other Payables,asset,asset,,,',
+                        '2020,Accrued Expenses,liability,liability,,,')
+    rows = chart.plan_chart(chart.parse_chart(content),
+                            {'2010': coa_account('Other Payables', 'liability'), '2020': coa_account('Accrued Expenses', 'liability')},
+                            {'2000': ledger_account('Trade Payables', 'liability')})
+    assert [row['status'] for row in rows] == ['error', 'error', 'new']
+    assert 'already in the ledger as liability' in rows[0]['errors'][0]
+    assert 'already in the chart as liability' in rows[1]['errors'][0]
+    assert rows[2]['values']['addTo'] == ['ledger']
+
+
+def test_csv_parser_failures_become_import_errors():
+    too_long = b'type,name\nsupplier,' + b'x' * 200_000 + b'\n'
+    with pytest.raises(ImportFileError, match='Row 1 is not valid CSV'):
+        read_rows(too_long, ['type', 'name'], 'contacts')
+    with pytest.raises(ImportFileError, match='column-name row is not valid CSV'):
+        read_rows(b'type,' + b'n' * 200_000 + b'\nsupplier,A\n', ['type'], 'contacts')
 
 
 # --- opening balances -------------------------------------------------------------------------------

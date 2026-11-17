@@ -61,7 +61,8 @@ def parse_chart(content: bytes):
 
 
 def plan_chart(parsed, existing_coa, existing_ledger):
-    """existing_* map code -> name. Each new row says which list(s) it is added to."""
+    """existing_coa maps code -> {"name", "account_class"}, existing_ledger code -> {"name", "account_type"}.
+    Each new row says which list(s) it is added to; an account already in one list must keep its class/type."""
     first_row = {}
     results = []
     for source_row, values, errors in parsed:
@@ -75,17 +76,23 @@ def plan_chart(parsed, existing_coa, existing_ledger):
         if not errors:
             in_coa, in_ledger = existing_coa.get(code), existing_ledger.get(code)
             if in_coa and in_ledger:
-                duplicate_of = in_coa
-                warnings.append(f"Account {code} already exists (\"{in_coa}\"); this row is skipped.")
+                duplicate_of = in_coa["name"]
+                warnings.append(f"Account {code} already exists (\"{duplicate_of}\"); this row is skipped.")
             elif in_coa or in_ledger:
-                current = in_coa or in_ledger
-                if current.casefold() == values["name"].casefold():
+                current = (in_coa or in_ledger)["name"]
+                if current.casefold() != values["name"].casefold():
+                    duplicate_of = current
+                    warnings.append(f"Account code {code} is already used for \"{current}\"; this row is skipped.")
+                elif in_coa and in_coa["account_class"] != values["account_class"]:
+                    errors.append(f"Account {code} is already in the chart as {in_coa['account_class']}, but this row "
+                                  f"says {values['account_class']}. Make them agree before importing.")
+                elif in_ledger and in_ledger["account_type"] != values["type"]:
+                    errors.append(f"Account {code} is already in the ledger as {in_ledger['account_type']}, but this row "
+                                  f"says {values['type']}. Make them agree before importing.")
+                else:
                     values["addTo"] = ["ledger"] if in_coa else ["chart"]
                     warnings.append(f"Account {code} is already in the "
                                     f"{'chart' if in_coa else 'ledger'} list; it is added to the other list only.")
-                else:
-                    duplicate_of = current
-                    warnings.append(f"Account code {code} is already used for \"{current}\"; this row is skipped.")
             else:
                 values["addTo"] = ["chart", "ledger"]
         status = "error" if errors else ("duplicate" if duplicate_of else "new")
@@ -94,10 +101,10 @@ def plan_chart(parsed, existing_coa, existing_ledger):
 
 
 def _existing(db, tenant_id):
-    coa = {r["code"]: r["name"] for r in db.execute("SELECT code, name FROM coa_accounts WHERE tenant_id=%s",
-                                                     (tenant_id,)).fetchall()}
-    ledger = {r["code"]: r["name"] for r in db.execute("SELECT code, name FROM ledger_accounts WHERE tenant_id=%s",
-                                                        (tenant_id,)).fetchall()}
+    coa = {r["code"]: {"name": r["name"], "account_class": r["account_class"]} for r in db.execute(
+        "SELECT code, name, account_class FROM coa_accounts WHERE tenant_id=%s", (tenant_id,)).fetchall()}
+    ledger = {r["code"]: {"name": r["name"], "account_type": r["account_type"]} for r in db.execute(
+        "SELECT code, name, account_type FROM ledger_accounts WHERE tenant_id=%s", (tenant_id,)).fetchall()}
     return coa, ledger
 
 
