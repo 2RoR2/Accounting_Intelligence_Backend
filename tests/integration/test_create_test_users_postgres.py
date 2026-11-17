@@ -1,0 +1,139 @@
+"""E1: create-test-users against the real schema in a disposable local PostgreSQL.
+
+Creates a uniquely named database next to TEST_DATABASE_URL, loads the consolidated schema, adds a
+demo company matching a small pack.json, runs the command twice and drops the database afterwards.
+Skipped without TEST_DATABASE_URL. All addresses are synthetic (example.test).
+"""
+import json
+import os
+from pathlib import Path
+from types import SimpleNamespace
+from urllib.parse import urlsplit, urlunsplit
+from uuid import uuid4
+
+import psycopg
+import pytest
+from psycopg.rows import dict_row
+
+from database.schema_compatibility import apply_migrations
+from security.authentication import verify_password
+from services.admin import test_users as tu
+
+ROOT = Path(__file__).resolve().parents[2]
+PASSWORD = "Uat-Test-2026!"
+COMPANY = {"name": "Kedai Ujian Sdn Bhd (Demo)", "ssm": "202601099999"}
+EMAILS = ("lead.admin@uat.example.test:local_admin, acct.one@uat.example.test, "
+          "acct.two@uat.example.test, owner@uat.example.test:super_admin")
+
+
+@pytest.fixture(scope="module")
+def database(tmp_path_factory):
+    url = os.getenv("TEST_DATABASE_URL")
+    if not url:
+        pytest.skip("Requires the disposable local TEST_DATABASE_URL")
+    parts = urlsplit(url)
+    assert parts.hostname in {"127.0.0.1", "localhost", "::1"}
+    name = "e1_test_users_" + uuid4().hex[:12]
+    with psycopg.connect(url, autocommit=True) as admin:
+        admin.execute(f"CREATE DATABASE {name}")
+    target = urlunsplit(parts._replace(path="/" + name))
+    try:
+        with psycopg.connect(target, row_factory=dict_row) as db:
+            apply_migrations(db, ROOT / "database/PostgreSQL Database schema.sql",
+                             tmp_path_factory.mktemp("no-migrations"))
+            db.execute("""INSERT INTO tenants(name,registration_number,admin_email,seat_limit)
+                VALUES (%s,%s,'admin@trading.demo.test',2)""", (COMPANY["name"], COMPANY["ssm"]))
+            other = db.execute("""INSERT INTO tenants(name,registration_number,admin_email)
+                VALUES ('Other Co','OTHER-1','x@other.test') RETURNING id""").fetchone()
+            db.execute("""INSERT INTO users(tenant_id,name,email,role,status)
+                VALUES (%s,'Elsewhere','elsewhere@example.test','accountant','active')""", (other["id"],))
+        yield target
+    finally:
+        with psycopg.connect(url, autocommit=True) as admin:
+            admin.execute(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)")
+
+
+@pytest.fixture(scope="module")
+def pack_root(tmp_path_factory):
+    root = tmp_path_factory.mktemp("packs")
+    (root / "trading").mkdir()
+    (root / "trading" / "pack.json").write_text(json.dumps({"company": COMPANY}), encoding="utf-8")
+    return root
+
+
+def invoke(database, pack_root, emails, reset=False, password=PASSWORD):
+    environ = {"APP_ENV": "development", "DATABASE_URL": "postgresql://postgres@127.0.0.1:5433/x",
+               "UAT_TEST_EMAILS": emails, "UAT_TEST_PASSWORD": password}
+    lines = []
+    args = SimpleNamespace(pack="trading", company=None, reset_passwords=reset, pack_root=str(pack_root))
+    code = tu.run(args, environ=environ, out=lines.append,
+                  connect=lambda: psycopg.connect(database, row_factory=dict_row),
+                  prompt=lambda _: pytest.fail("must not prompt when UAT_TEST_PASSWORD is set"))
+    return code, lines
+
+
+def users(database):
+    with psycopg.connect(database, row_factory=dict_row) as db:
+        return {row["email"]: row for row in db.execute(
+            """SELECT u.*, t.name AS company FROM users u LEFT JOIN tenants t ON t.id=u.tenant_id
+               WHERE u.email LIKE '%%@uat.example.test'""")}
+
+
+def seat_limit(database):
+    with psycopg.connect(database, row_factory=dict_row) as db:
+        return db.execute("SELECT seat_limit FROM tenants WHERE registration_number=%s",
+                          (COMPANY["ssm"],)).fetchone()["seat_limit"]
+
+
+def test_creates_users_in_the_demo_company_then_is_idempotent(database, pack_root, capsys):
+    code, lines = invoke(database, pack_root, EMAILS)
+    assert code == 0, capsys.readouterr().err
+    rows = users(database)
+    assert {email: row["role"] for email, row in rows.items()} == {
+        "lead.admin@uat.example.test": "local_admin", "acct.one@uat.example.test": "accountant",
+        "acct.two@uat.example.test": "accountant", "owner@uat.example.test": "super_admin"}
+    assert rows["owner@uat.example.test"]["tenant_id"] is None
+    assert {rows[e]["company"] for e in rows if e != "owner@uat.example.test"} == {COMPANY["name"]}
+    assert all(row["status"] == "active" and not row["must_change_password"] for row in rows.values())
+    assert all(verify_password(PASSWORD, row["password_hash"]) for row in rows.values())
+    assert rows["acct.one@uat.example.test"]["name"] == "Acct One"
+    # three company users on a seat limit of 2: raised so the admin pages stay consistent
+    assert seat_limit(database) == 3
+    text = "\n".join(lines)
+    assert "uat.example.test" not in text and "l***@u***.test" in text
+
+    before = {email: (row["id"], row["password_hash"]) for email, row in users(database).items()}
+    code, lines = invoke(database, pack_root, EMAILS, password="Another-Pass-9!")
+    assert code == 0
+    assert [line.split()[0] for line in lines[:4]] == ["unchanged"] * 4
+    assert {email: (row["id"], row["password_hash"]) for email, row in users(database).items()} == before
+
+
+def test_role_change_and_password_reset_sign_the_user_out(database, pack_root):
+    with psycopg.connect(database, row_factory=dict_row) as db:
+        user_id = db.execute("SELECT id FROM users WHERE email='acct.two@uat.example.test'").fetchone()["id"]
+        db.execute("""INSERT INTO web_sessions(user_id,token_hash,expires_at)
+            VALUES (%s,%s,now()+interval '1 hour')""", (user_id, uuid4().hex))
+    promoted = EMAILS.replace("acct.two@uat.example.test", "acct.two@uat.example.test:local_admin")
+    code, _ = invoke(database, pack_root, promoted, reset=True, password="Reset-Pass-7!")
+    assert code == 0
+    row = users(database)["acct.two@uat.example.test"]
+    assert row["role"] == "local_admin" and verify_password("Reset-Pass-7!", row["password_hash"])
+    with psycopg.connect(database, row_factory=dict_row) as db:
+        assert db.execute("SELECT count(*) n FROM web_sessions WHERE user_id=%s", (user_id,)).fetchone()["n"] == 0
+
+
+def test_refuses_a_user_of_another_company_and_writes_nothing(database, pack_root, capsys):
+    before = users(database)
+    code, lines = invoke(database, pack_root, EMAILS + ", new.person@uat.example.test, elsewhere@example.test")
+    assert code == 2 and lines == []
+    err = capsys.readouterr().err
+    assert "e***@e***.test" in err and "elsewhere@example.test" not in err
+    assert users(database).keys() == before.keys()
+
+
+def test_missing_demo_company_points_to_the_seed(database, tmp_path, capsys):
+    (tmp_path / "trading").mkdir()
+    (tmp_path / "trading" / "pack.json").write_text(json.dumps({"company": {"name": "Nope", "ssm": "0"}}))
+    code, _ = invoke(database, tmp_path, EMAILS)
+    assert code == 2 and "seed-demo-company --pack trading" in capsys.readouterr().err
