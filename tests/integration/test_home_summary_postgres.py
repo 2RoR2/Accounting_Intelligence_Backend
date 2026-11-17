@@ -185,9 +185,9 @@ def _as(user_id, tenant_id, role):
     return {'id': user_id, 'tenant_id': tenant_id, 'role': role, 'name': role}
 
 
-def _summary(connect, user):
+def _summary(connect, user, as_of=TODAY):
     with patch.object(home, 'require_workspace_user', return_value=user), patch.object(home, 'connect', connect):
-        return home.home_summary(None, asOf=TODAY)
+        return home.home_summary(None, asOf=as_of)
 
 
 def _documents(connect, user, lane):
@@ -196,8 +196,11 @@ def _documents(connect, user, lane):
 
 
 def _records(connect, user, **query):
+    """Open the records list with the link's own query, parsed as FastAPI would (asOf as a date)."""
+    if 'asOf' in query:
+        query['asOf'] = date.fromisoformat(query['asOf'])
     with patch.object(documents, 'require_workspace_user', return_value=user), patch.object(documents, 'connect', connect):
-        return documents.list_records(None, asOf=TODAY, **query)
+        return documents.list_records(None, **query)
 
 
 def test_accountant_counts_only_owned_or_assigned_documents(company):
@@ -243,13 +246,21 @@ def test_bills_and_invoices_use_the_unpaid_amount_as_decimal_strings(company):
 def test_each_tile_opens_a_list_of_the_same_length(company):
     connect, ids = company
     for user in (_as(ids['mine'], ids['tenant'], 'accountant'), _as(ids['admin'], ids['tenant'], 'local_admin')):
-        tiles = _summary(connect, user)['tiles']
-        for key, lane in (('toReview', 'to-review'), ('readyToApprove', 'ready'), ('needsFixing', 'needs-fixing'),
-                          ('waitingApproval', 'waiting-approval')):
-            assert len(_documents(connect, user, lane)) == tiles[key]['count'], key
-        for key in ('billsDueSoon', 'billsOverdue', 'invoicesOverdue', 'journalsToPost'):
-            query = dict(part.split('=') for part in tiles[key]['link']['query'].split('&'))
-            assert len(_records(connect, user, **query)) == tiles[key]['count'], key
+        # Also a summary dated 10 days later: the due lists it links to must be dated the same way.
+        for as_of in (TODAY, TODAY + timedelta(days=10)):
+            tiles = _summary(connect, user, as_of)['tiles']
+            # Needs fixing opens the documents list, which shares its visibility rule (Exceptions does not).
+            assert tiles['needsFixing']['link'] == {'page': 'documents', 'query': 'lane=needs-fixing'}
+            for key, lane in (('toReview', 'to-review'), ('readyToApprove', 'ready'), ('needsFixing', 'needs-fixing'),
+                              ('waitingApproval', 'waiting-approval')):
+                assert len(_documents(connect, user, lane)) == tiles[key]['count'], key
+            for key in ('billsDueSoon', 'billsOverdue', 'invoicesOverdue', 'journalsToPost'):
+                link = tiles[key]['link']
+                assert link['page'] == 'records'
+                query = dict(part.split('=') for part in link['query'].split('&'))
+                if key != 'journalsToPost':
+                    assert query['asOf'] == as_of.isoformat(), key
+                assert len(_records(connect, user, **query)) == tiles[key]['count'], (key, as_of)
 
 
 def test_month_end_progress_and_reconciliation_null_until_a_period_exists(company):

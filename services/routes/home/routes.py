@@ -67,7 +67,9 @@ def document_tiles(db, user) -> dict:
         'readyToApprove': {'available': True, 'scope': 'yours', 'count': counts['ready'], 'link': _link('documents', 'lane=ready')},
         'needsFixing': {'available': True, 'scope': 'yours', 'count': counts['needs_fixing'],
                         'topReasons': [{'code': r['code'], 'documents': r['documents']} for r in reasons],
-                        'link': _link('exceptions', 'show=open')},
+                        # The documents list uses the same visibility and predicate as this count; the Exceptions
+                        # page does not show enabled benchmark-demo documents, so it could show less than the tile.
+                        'link': _link('documents', 'lane=needs-fixing')},
         'waitingApproval': {'available': True, 'scope': 'yours', 'count': counts['waiting_approval'], 'link': approvals_page},
     }
 
@@ -96,12 +98,14 @@ def bank_tile(db, user) -> dict:
 
 def open_item_tiles(db, user, category: str, today: date) -> dict:
     """Due soon and overdue for one side (payables or receivables) in one query."""
+    # The list carries the same date the tile was counted on, so a summary for another day opens that day's list.
     category_query = 'category=' + category.upper()
+    due_query = lambda window: f"{category_query}&due={window}&asOf={today.isoformat()}"  # noqa: E731
     missing = [name for name in OPEN_ITEM_TABLES if not _table_exists(db, name)]
     if missing:
         reason = 'Approved records and payments are not set up on this server yet, so open bills and invoices cannot be counted.'
-        return {'soon': unavailable(reason, _link('records', category_query + '&due=next-7-days')),
-                'overdue': unavailable(reason, _link('records', category_query + '&due=overdue'))}
+        return {'soon': unavailable(reason, _link('records', due_query('next-7-days'))),
+                'overdue': unavailable(reason, _link('records', due_query('overdue')))}
     base, params = open_item_base(category)
     soon_sql, soon_params = due_window('next-7-days', today)
     late_sql, late_params = due_window('overdue', today)
@@ -121,10 +125,10 @@ def open_item_tiles(db, user, category: str, today: date) -> dict:
     return {
         'soon': {'available': True, 'scope': 'company', 'count': row['soon_count'], 'amount': _money(row['soon_amount']),
                  'currency': HOME_CURRENCY, 'otherCurrencyCount': row['soon_other'], 'days': DUE_SOON_DAYS,
-                 'noDueDate': row['no_due_date'], 'link': _link('records', category_query + '&due=next-7-days')},
+                 'noDueDate': row['no_due_date'], 'link': _link('records', due_query('next-7-days'))},
         'overdue': {'available': True, 'scope': 'company', 'count': row['late_count'], 'amount': _money(row['late_amount']),
                     'currency': HOME_CURRENCY, 'otherCurrencyCount': row['late_other'], 'noDueDate': row['no_due_date'],
-                    'link': _link('records', category_query + '&due=overdue')},
+                    'link': _link('records', due_query('overdue'))},
     }
 
 

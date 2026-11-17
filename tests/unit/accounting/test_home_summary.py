@@ -123,11 +123,14 @@ def test_tiles_link_to_the_lists_they_count_and_carry_the_top_reasons():
     assert tiles["toReview"] == {"available": True, "scope": "yours", "count": 5,
                                  "link": {"page": "documents", "query": "lane=to-review"}}
     assert tiles["readyToApprove"]["link"]["query"] == "lane=ready"
-    assert tiles["needsFixing"]["link"] == {"page": "exceptions", "query": "show=open"}
+    assert tiles["needsFixing"]["link"] == {"page": "documents", "query": "lane=needs-fixing"}
     assert tiles["needsFixing"]["topReasons"] == [{"code": "EX-008", "documents": 2}, {"code": "TOTAL", "documents": 1}]
     assert tiles["waitingApproval"]["link"] == {"page": "documents", "query": "lane=waiting-approval"}
-    assert tiles["billsDueSoon"]["link"]["query"] == "category=ACCOUNTS_PAYABLE&due=next-7-days"
-    assert tiles["invoicesOverdue"]["link"]["query"] == "category=ACCOUNTS_RECEIVABLE&due=overdue"
+    # Due lists carry the summary's date, so an asOf summary opens the list for that same day.
+    assert tiles["billsDueSoon"]["link"]["query"] == "category=ACCOUNTS_PAYABLE&due=next-7-days&asOf=2026-11-16"
+    assert tiles["invoicesOverdue"]["link"]["query"] == "category=ACCOUNTS_RECEIVABLE&due=overdue&asOf=2026-11-16"
+    other_day = summary(ACCOUNTANT, FakeDb(), asOf=date(2026, 12, 1))["tiles"]
+    assert other_day["billsOverdue"]["link"]["query"].endswith("&asOf=2026-12-01")
     assert tiles["journalsToPost"]["link"] == {"page": "records", "query": "posting=to-post"}
     assert tiles["bankToMatch"]["scope"] == "company"
     for tile in tiles.values():  # Every lane the summary links to is accepted by the documents list.
