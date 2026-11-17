@@ -417,9 +417,10 @@ Planner from here: an Opus session following `docs/PLANNER_PLAYBOOK.md`. Section
 |---|---|
 | Backend #4 slim backend, #5 company packs | Merged into `features` |
 | Frontend #3 plain language + navigation | Merged into `features` |
-| Backend #8 `fix/inline-queue-full-requeue` | Open, not merged |
-| Backend #7 A2+A3 CSV imports + demo company seed | Open, not merged |
-| Backend #6 + Frontend #4 B3 Today (API + page) | Open, not merged |
+| Backend #8 `fix/inline-queue-full-requeue` | Z1 ready to merge (planner, 2026-11-17): head `ffecfb4`, 0 behind `features`; full suite 66 failed / 56 unique names identical to `features` `04b7a21`, +3 passed; queue tests 81 passed on local Postgres; diff reviewed (one caller; deferred reply matches the frontend retry contract) |
+| Backend #7 A2+A3 CSV imports + demo company seed | Z1 ready to merge: head `8647247`, 0 behind; full suite same 56 names, +39 passed; `test_csv_imports_postgres.py` 4/4 on local Postgres; import routes local admin only, tenant-bound preview token |
+| Backend #6 B3 Today API | Z1 ready after #7: head `0f1c943`; full suite same 56 names, +12 passed; `test_home_summary_postgres.py` 6/6. Conflicts with #7 in `services/routes/registry.py` (both append one line): update from `features` after #7 merges. Local merge of #8+#7+#6: 1395 passed, 0 new failures |
+| Frontend #4 B3 Today page | Z1 gates partly met: head `735bc33`, 0 behind; typecheck clean, `npm test` 107/0 fail/3 skipped, lint errors only in untouched `tests/browser/resource.spec.ts`. Missing: browser check at desktop and phone width (needs #6 merged and E1's local login) |
 | Frontend #2 draft `integration/v3.1-plus-20261103` | Stale, conflicts; owner decides close or re-apply |
 | Accuracy | Tuning set 97.24% (not evidence: tuned on it). Hold-out not run. |
 | Not verified | Hosted Render deploy after #4; Brevo login code end to end; full walkthrough on a local database |
@@ -513,3 +514,4 @@ C1 -> I2, I6     I1 any time after Z1     I3 -> I4, I5     all -> U1 -> U2 -> U3
 ### 10.6 Handoff log
 
 - 2026-11-17 (Fable): Plan v3 and `docs/PLANNER_PLAYBOOK.md` written. Open PRs: backend #6, #7, #8; frontend #4, #2 (draft, stale). Next: Z1 merge queue, starting with backend #8. Blockers on Jonathan: week 12 date in 10.1, merge approvals, Docker Desktop running for E1, secret rotation before U1.
+- 2026-11-17 (Opus planner): Opened backend #9 (this plan) into `features`. Z1 verified #8, #7, #6 (ready; #6 needs a one-line `registry.py` update after #7) and frontend #4 (unit gates pass; browser check waits for E1). Evidence in 10.2. Frontend #2 is Jonathan's own draft: close or re-apply. Running sessions: none. Blockers on Jonathan: "merge #8", then "merge #7"; UAT date for 10.1; optional Codex review of #7 (largest diff). Next: after #7 merges, owner b3-today updates #6; start E1 (Docker is running).
