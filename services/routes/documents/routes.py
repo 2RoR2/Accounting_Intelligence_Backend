@@ -396,8 +396,13 @@ def support_view(record_id: str, data: CompanyReviewInput, request: Request):
 
 async def upload_document(request: Request, file: UploadFile = File(...), kind: str = "invoice", category: str = "accounts_payable"):
     user = require_workspace_user(request, {"local_admin", "accountant"})
-    if kind not in {"invoice", "bill", "receipt", "credit_note", "debit_note"} or category not in {"accounts_payable", "accounts_receivable"}:
+    from services.extraction.persistence.auto_kind import AUTO_KIND, PLACEHOLDER_KIND, pending_document_code
+    if kind not in {"invoice", "bill", "receipt", "credit_note", "debit_note", AUTO_KIND} or category not in {"accounts_payable", "accounts_receivable"}:
         raise HTTPException(422, "Invalid document kind or category.")
+    # kind=auto: the type is detected during reading. Until then the row keeps an
+    # allowed placeholder kind and a neutral DOC_ code, which marks it as not yet typed.
+    auto_kind = kind == AUTO_KIND
+    stored_kind = PLACEHOLDER_KIND if auto_kind else kind
     data = await file.read()
     if len(data) > 20 * 1024 * 1024:
         raise HTTPException(413, "This file exceeds the 20 MB limit. Choose a smaller file.")
@@ -434,9 +439,11 @@ async def upload_document(request: Request, file: UploadFile = File(...), kind: 
             duplicate = db.execute("SELECT id,document_code,original_filename FROM documents WHERE tenant_id=%s AND file_hash_sha256=%s ORDER BY uploaded_at,id LIMIT 1", (tenant_id, file_hash)).fetchone()
             if duplicate:
                 raise HTTPException(409, {"message": "This document is already uploaded.", "existingDocumentId": str(duplicate["id"]), "existingDocumentCode": duplicate["document_code"], "existingFilename": duplicate["original_filename"]})
-            row = db.execute("""INSERT INTO documents(id,tenant_id,owner_id,original_filename,kind,category,storage_path,mime_type,file_size_bytes,file_hash_sha256,status)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'queued') RETURNING *""",
-                (upload_id, tenant_id, user["id"], original_filename, kind, category, storage_value, file.content_type or "application/octet-stream", len(data), file_hash)).fetchone()
+            # An empty document_code lets the trigger assign KIND_100001; auto uploads pass DOC_ instead.
+            row = db.execute("""INSERT INTO documents(id,tenant_id,owner_id,original_filename,kind,category,storage_path,mime_type,file_size_bytes,file_hash_sha256,status,document_code)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'queued',%s) RETURNING *""",
+                (upload_id, tenant_id, user["id"], original_filename, stored_kind, category, storage_value, file.content_type or "application/octet-stream", len(data), file_hash,
+                 pending_document_code(upload_id) if auto_kind else '')).fetchone()
             # Upload and durable scheduling commit together. Dispatch only when
             # worker capacity is available; waiting is not active extraction.
             job = attempts.schedule_document(db,str(row['id']),str(tenant_id))
@@ -458,7 +465,7 @@ async def upload_document(request: Request, file: UploadFile = File(...), kind: 
         _processing_error(exc,row['id'],job['id'])
     return {"id":str(row["id"]),"code":row["document_code"],"name":row["original_filename"],
             "tenantId":str(row["tenant_id"]),"ownerId":str(row["owner_id"]),
-            "kind":kind.upper(),"category":category.upper(),**queued}
+            "kind":kind.upper(),"category":category.upper(),"kindDetected":not auto_kind,**queued}
 
 def standardise_document(document_id: str, request: Request):
     user = require_workspace_user(request, {"local_admin", "accountant"})

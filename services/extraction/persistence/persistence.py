@@ -163,14 +163,18 @@ def persist_extraction_result(document_id: str, result: dict[str, Any], *, claim
             )
 
         db.execute('SELECT switch_current_extraction(%s)',(extraction_id,))
+        from services.extraction.persistence.auto_kind import apply_classified_kind, kind_pending
+        classification = mapped['document_kind']
+        auto_kind = kind_pending(document.get('document_code'))
+        # A kind=auto upload takes its detected kind and KIND_<number> code before the
+        # rename, so the processed filename follows the detected type.
+        named = apply_classified_kind(db, {**document, 'tenant_id': job['tenant_id']}, classification) if auto_kind else document
         from services.queue.scope import replay_document_ids
         if document_id not in replay_document_ids():
-            _rename_after_extraction(db, document, mapped['fields'])
+            _rename_after_extraction(db, named, mapped['fields'])
         db.execute("UPDATE documents SET status='extracted', content_revision=content_revision+1, processing_seconds=EXTRACT(EPOCH FROM (clock_timestamp() - COALESCE(processing_started_at,clock_timestamp()))), processing_completed_at=clock_timestamp(), updated_at=clock_timestamp() WHERE id=%s", (document_id,))
-        classification = mapped['document_kind']
-        if classification.get('status') == 'classified' and classification.get('value') in {'invoice', 'bill', 'receipt', 'credit_note', 'debit_note'}:
-            db.execute('UPDATE documents SET kind=%s WHERE id=%s AND tenant_id=%s',
-                       (classification['value'], document_id, job['tenant_id']))
+        if not auto_kind:
+            apply_classified_kind(db, {**document, 'tenant_id': job['tenant_id']}, classification)
         from validation.documents.document_validation import validate_document
         validate_document(db, document_id)
         attempts.complete(db,claim,document)
