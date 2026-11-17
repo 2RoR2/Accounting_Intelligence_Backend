@@ -16,8 +16,8 @@ from decimal import Decimal
 from main import *  # noqa: F401,F403  (require_workspace_user, connect, HTTPException, Request)
 
 from services.routes.home.lanes import (
-    ACCOUNTANT_DOCUMENT_VISIBILITY, APPROVED_RECORD, DOCUMENT_LANES, OUTSTANDING, POSTED_JOURNAL_FOR_RECORD,
-    company_today, due_window, open_item_base, records_to_post,
+    ACCOUNTANT_DOCUMENT_VISIBILITY, APPROVED_RECORD, BANK_LINE_CLASSIFIED, BANK_LINE_TO_MATCH, DOCUMENT_LANES,
+    OPEN_ITEM_TABLES, OUTSTANDING, POSTED_JOURNAL_FOR_RECORD, company_today, due_window, open_item_base, records_to_post,
 )
 
 ROLES = {'accountant', 'local_admin'}
@@ -72,15 +72,23 @@ def document_tiles(db, user) -> dict:
     }
 
 
+def _bank_predicates(db) -> tuple[str, str]:
+    """(still to match, explained) for alias t. Without the bank-coding tables nothing can be classified yet."""
+    if _table_exists(db, 'current_bank_coding'):
+        return BANK_LINE_TO_MATCH, f"(t.status IN ('matched','ignored') OR {BANK_LINE_CLASSIFIED})"
+    return "t.status IN ('imported','needs_review','proposed')", "t.status IN ('matched','ignored')"
+
+
 def bank_tile(db, user) -> dict:
     link = _link('reconciliation', 'status=unmatched')
     if not _table_exists(db, 'bank_transactions'):
         return unavailable('Bank statements are not set up on this server yet.', link)
-    row = db.execute("""SELECT count(*) AS lines,
+    to_match, _ = _bank_predicates(db)
+    row = db.execute(f"""SELECT count(*) AS lines,
             count(*) FILTER (WHERE t.direction='money_in') AS money_in,
             count(*) FILTER (WHERE t.direction='money_out') AS money_out
         FROM bank_transactions t JOIN bank_imports i ON i.id=t.import_id AND i.tenant_id=t.tenant_id
-        WHERE i.status='confirmed' AND t.tenant_id=%s AND t.status IN ('imported','needs_review','proposed')""",
+        WHERE i.status='confirmed' AND t.tenant_id=%s AND {to_match}""",
                      (user['tenant_id'],)).fetchone()
     return {'available': True, 'scope': 'company', 'count': row['lines'], 'moneyIn': row['money_in'],
             'moneyOut': row['money_out'], 'link': link}
@@ -88,6 +96,12 @@ def bank_tile(db, user) -> dict:
 
 def open_item_tiles(db, user, category: str, today: date) -> dict:
     """Due soon and overdue for one side (payables or receivables) in one query."""
+    category_query = 'category=' + category.upper()
+    missing = [name for name in OPEN_ITEM_TABLES if not _table_exists(db, name)]
+    if missing:
+        reason = 'Approved records and payments are not set up on this server yet, so open bills and invoices cannot be counted.'
+        return {'soon': unavailable(reason, _link('records', category_query + '&due=next-7-days')),
+                'overdue': unavailable(reason, _link('records', category_query + '&due=overdue'))}
     base, params = open_item_base(category)
     soon_sql, soon_params = due_window('next-7-days', today)
     late_sql, late_params = due_window('overdue', today)
@@ -104,7 +118,6 @@ def open_item_tiles(db, user, category: str, today: date) -> dict:
                      [*soon_params, *soon_params, HOME_CURRENCY, *soon_params, HOME_CURRENCY,
                       *late_params, *late_params, HOME_CURRENCY, *late_params, HOME_CURRENCY,
                       user['tenant_id'], *params]).fetchone()
-    category_query = 'category=' + category.upper()
     return {
         'soon': {'available': True, 'scope': 'company', 'count': row['soon_count'], 'amount': _money(row['soon_amount']),
                  'currency': HOME_CURRENCY, 'otherCurrencyCount': row['soon_other'], 'days': DUE_SOON_DAYS,
@@ -154,11 +167,12 @@ def month_end(db, user, today: date) -> dict:
     steps.append(_step('reviewed', docs['done'], docs['total'], _link('documents', 'lane=to-review'),
                        'Documents uploaded in this period that were checked and submitted or approved.'))
     if _table_exists(db, 'bank_transactions'):
-        bank = db.execute("""SELECT count(*) AS total, count(*) FILTER (WHERE t.status IN ('matched','ignored')) AS done
+        _, explained = _bank_predicates(db)
+        bank = db.execute(f"""SELECT count(*) AS total, count(*) FILTER (WHERE {explained}) AS done
             FROM bank_transactions t JOIN bank_imports i ON i.id=t.import_id AND i.tenant_id=t.tenant_id
             WHERE i.status='confirmed' AND t.tenant_id=%s AND t.posted_date BETWEEN %s AND %s""", (tenant, start, end)).fetchone()
         steps.append(_step('matched', bank['done'], bank['total'], _link('reconciliation', 'status=unmatched'),
-                           'Bank lines dated in this period that are matched or marked as explained.'))
+                           'Bank lines dated in this period that are matched, classified (fees, interest) or ignored.'))
     else:
         steps.append({'key': 'matched', **unavailable('Bank statements are not set up on this server yet.', _link('reconciliation'))})
     if _table_exists(db, 'journal_headers'):

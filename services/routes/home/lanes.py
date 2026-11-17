@@ -38,9 +38,18 @@ DOCUMENT_LANES = {
 }
 
 # A record still to be paid or received: the printed amount due when there is one (as bank matching and
-# settlement allocation use it), otherwise the total, less active allocations.
+# settlement allocation use it), otherwise the total, less allocations still in force. Allocations are append-only:
+# undoing one (reverse_allocation, or undoing a bank match) adds a 'reversed' row pointing at the original, which
+# itself stays 'active', so an active allocation with a reversal row no longer counts.
 OUTSTANDING = ("(COALESCE(r.amount_due, r.total_amount) - COALESCE((SELECT SUM(a.amount) FROM settlement_allocations a "
-               "WHERE a.record_id=r.id AND a.tenant_id=r.tenant_id AND a.status='active'), 0))")
+               "WHERE a.record_id=r.id AND a.tenant_id=r.tenant_id AND a.status='active' "
+               "AND NOT EXISTS (SELECT 1 FROM settlement_allocations x WHERE x.reverses_allocation_id=a.id "
+               "AND x.tenant_id=a.tenant_id)), 0))")
+
+# Bank lines (alias t) still waiting for a person: not matched, not ignored and not classified (a fee, interest or
+# owner top-up coded to an account), as the schema's unmatched_bank_transactions view and _period_result define it.
+BANK_LINE_CLASSIFIED = "EXISTS (SELECT 1 FROM current_bank_coding c WHERE c.bank_transaction_id=t.id AND c.tenant_id=t.tenant_id)"
+BANK_LINE_TO_MATCH = f"t.status IN ('imported','needs_review','proposed') AND NOT {BANK_LINE_CLASSIFIED}"
 
 # Receipts are already paid and credit / debit notes adjust another document, so only invoices and bills are open items.
 OPEN_ITEM_KINDS = {'accounts_payable': ('invoice', 'bill'), 'accounts_receivable': ('invoice',)}
@@ -50,8 +59,13 @@ DUE_WINDOWS = {
     'overdue': "r.due_date < %s::date",
 }
 
-POSTED_JOURNAL_FOR_RECORD = ("EXISTS (SELECT 1 FROM journal_headers j WHERE j.tenant_id=r.tenant_id AND j.source_type='document' "
-                             "AND j.source_id=r.document_id AND j.status='posted')")
+# Supplier bills and customer invoices post with source_type 'document'; credit and debit notes post through
+# post_document_adjustment with source_type 'adjustment'. Both carry the record's document id.
+POSTED_JOURNAL_FOR_RECORD = ("EXISTS (SELECT 1 FROM journal_headers j WHERE j.tenant_id=r.tenant_id "
+                             "AND j.source_type IN ('document','adjustment') AND j.source_id=r.document_id AND j.status='posted')")
+
+# Tables each open-item query reads; without them the tiles are unavailable rather than an error.
+OPEN_ITEM_TABLES = ('standardised_records', 'settlement_allocations')
 
 APPROVED_RECORD = "r.is_current AND r.validation_status='passed'"
 

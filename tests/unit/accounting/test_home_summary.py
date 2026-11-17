@@ -147,8 +147,11 @@ def test_amounts_are_decimal_strings_in_rm_with_other_currencies_counted_separat
 
 
 def test_missing_tables_give_null_with_a_reason_never_a_number():
-    result = summary(ADMIN, FakeDb(tables=False))
-    for key in ("bankToMatch", "journalsToPost"):
+    db = FakeDb(tables=False)
+    result = summary(ADMIN, db)
+    # The open-item query reads settlement_allocations, so it must not run at all without those tables.
+    assert not any("settlement_allocations" in sql for sql, _ in db.queries)
+    for key in ("bankToMatch", "journalsToPost", "billsDueSoon", "billsOverdue", "invoicesOverdue"):
         tile = result["tiles"][key]
         assert tile["available"] is False and tile["reason"] and "count" not in tile
     steps = {step["key"]: step for step in result["monthEnd"]["steps"]}

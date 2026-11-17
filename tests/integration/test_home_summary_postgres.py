@@ -104,8 +104,14 @@ def _seed(connect):
             settlement = db.execute("""INSERT INTO settlements(tenant_id,settlement_ref,settlement_date,direction,amount,currency,source_type,created_by)
                 VALUES (%s,%s,%s,'money_out',%s,'MYR','manual_record',%s) RETURNING id""",
                                     (tenant_id, 'SET-' + uuid4().hex[:8], TODAY, amount, admin)).fetchone()['id']
-            db.execute("INSERT INTO settlement_allocations(tenant_id,settlement_id,record_id,amount,created_by) VALUES (%s,%s,%s,%s,%s)",
-                       (tenant_id, settlement, record_row['id'], amount, admin))
+            return db.execute("INSERT INTO settlement_allocations(tenant_id,settlement_id,record_id,amount,created_by) VALUES (%s,%s,%s,%s,%s) RETURNING *",
+                              (tenant_id, settlement, record_row['id'], amount, admin)).fetchone()
+
+        def undo(allocation):
+            # As reverse_allocation does: a new 'reversed' row; the original stays 'active' (append-only).
+            db.execute("""INSERT INTO settlement_allocations(tenant_id,settlement_id,record_id,amount,status,created_by,reversed_at,reversal_reason,reverses_allocation_id)
+                VALUES (%s,%s,%s,%s,'reversed',%s,now(),'Allocation undone',%s)""",
+                       (allocation['tenant_id'], allocation['settlement_id'], allocation['record_id'], allocation['amount'], admin, allocation['id']))
 
         # Documents waiting in tenant A.
         ready = document(a, mine, 'extracted'); checks(ready, a)
@@ -123,27 +129,31 @@ def _seed(connect):
         record(a, mine, 'receipt', 'accounts_payable', '30.00', TODAY - timedelta(days=10))
         record(a, mine, 'bill', 'accounts_payable', '40.00', None)
         record(a, mine, 'bill', 'accounts_payable', '60.00', TODAY + timedelta(days=8))
+        undone = record(a, mine, 'bill', 'accounts_payable', '150.00', TODAY - timedelta(days=4)); undo(pay(a, undone, '150.00'))
         record(a, mine, 'invoice', 'accounts_receivable', '1200.00', TODAY - timedelta(days=2))
         posted = record(a, mine, 'invoice', 'accounts_receivable', '300.00', TODAY + timedelta(days=20))
+        credit_note = record(a, mine, 'credit_note', 'accounts_payable', '25.00', None)
 
         # Tenant B: must never reach tenant A's figures.
         b_doc = document(b, admin_b, 'exception'); exception(b_doc, b, 'EX-008')
         record(b, admin_b, 'bill', 'accounts_payable', '999.00', TODAY - timedelta(days=3))
 
-        # Ledger: one posted journal for `posted`, one draft.
+        # Ledger: a posted journal for `posted`, a posted adjustment for the credit note, and one draft.
         period = db.execute("INSERT INTO accounting_periods(tenant_id,period_code,starts_on,ends_on) VALUES (%s,'FY26-11',%s,%s) RETURNING id",
                             (a, date(2026, 11, 1), date(2026, 11, 30))).fetchone()['id']
         receivable, revenue = (db.execute("INSERT INTO ledger_accounts(tenant_id,code,name,account_type) VALUES (%s,%s,%s,%s) RETURNING id",
                                           (a, code, name, kind)).fetchone()['id']
                                for code, name, kind in (('1200', 'Trade receivables', 'asset'), ('4000', 'Sales', 'income')))
-        for key in ('posted', 'draft'):
+        for source_type, source_id, final in (('document', posted['document_id'], 'posted'),
+                                              ('adjustment', credit_note['document_id'], 'posted'),
+                                              ('manual', None, 'draft')):
             journal = db.execute("""INSERT INTO journal_headers(tenant_id,period_id,idempotency_key,source_type,source_id,status,journal_date,description)
-                VALUES (%s,%s,%s,'document',%s,'draft',%s,'synthetic') RETURNING id""",
-                                 (a, period, key + uuid4().hex, posted['document_id'] if key == 'posted' else None, TODAY)).fetchone()['id']
+                VALUES (%s,%s,%s,%s,%s,'draft',%s,'synthetic') RETURNING id""",
+                                 (a, period, source_type + uuid4().hex, source_type, source_id, TODAY)).fetchone()['id']
             for n, (account, debit, credit) in enumerate(((receivable, 300, 0), (revenue, 0, 300)), 1):
                 db.execute("INSERT INTO journal_lines(tenant_id,journal_id,account_id,line_number,debit,credit) VALUES (%s,%s,%s,%s,%s,%s)",
                            (a, journal, account, n, debit, credit))
-            if key == 'posted':
+            if final == 'posted':
                 db.execute("UPDATE journal_headers SET status='posted',posted_at=now(),posted_by=%s WHERE id=%s", (admin, journal))
 
         # Bank: confirmed rows (two still to match, one matched), a preview row, and tenant B's row.
@@ -159,6 +169,13 @@ def _seed(connect):
 
         confirmed = bank_import(a, admin, 'confirmed')
         bank_row(a, confirmed, 1, -120, 'imported'); bank_row(a, confirmed, 2, 300, 'proposed'); bank_row(a, confirmed, 3, -50, 'matched')
+        # A bank fee classified to an account: still 'imported', but explained, so not "to match".
+        bank_row(a, confirmed, 4, -15, 'imported')
+        fees = db.execute("INSERT INTO coa_accounts(tenant_id,code,name,account_class) VALUES (%s,'6100','Bank charges','expense') RETURNING id",
+                          (a,)).fetchone()['id']
+        fee_row = db.execute("SELECT id FROM bank_transactions WHERE import_id=%s AND source_row=4", (confirmed,)).fetchone()['id']
+        db.execute("""INSERT INTO bank_coding_decisions(tenant_id,bank_transaction_id,account_id,user_id,decision,reason)
+            VALUES (%s,%s,%s,%s,'manual','Monthly bank fee')""", (a, fee_row, fees, admin))
         bank_row(a, bank_import(a, admin, 'previewed'), 1, -10, 'imported')
         bank_row(b, bank_import(b, admin_b, 'confirmed'), 1, -10, 'imported')
     return ids
@@ -200,6 +217,7 @@ def test_local_admin_sees_the_whole_company_and_never_another_company(company):
     assert tiles['toReview']['count'] == 5
     assert tiles['needsFixing']['count'] == 3
     assert {r['code'] for r in tiles['needsFixing']['topReasons']} == {'EX-008', 'TOTAL', 'BR-001'}
+    # Imported + proposed rows; the matched row, the classified fee and the preview row are not to match.
     assert tiles['bankToMatch'] == {'available': True, 'scope': 'company', 'count': 2, 'moneyIn': 1, 'moneyOut': 1,
                                     'link': {'page': 'reconciliation', 'query': 'status=unmatched'}}
     other = _summary(connect, _as(ids['admin_b'], ids['tenant_b'], 'local_admin'))['tiles']
@@ -213,10 +231,12 @@ def test_bills_and_invoices_use_the_unpaid_amount_as_decimal_strings(company):
     soon, overdue, receivable = tiles['billsDueSoon'], tiles['billsOverdue'], tiles['invoicesOverdue']
     # 500 less a 200 part payment; the USD bill is counted but not added to the RM total; day 8 is outside the window.
     assert (soon['count'], soon['amount'], soon['otherCurrencyCount'], soon['noDueDate']) == (2, '300.00', 1, 1)
-    # The printed amount due (800.25) wins over the total; the fully paid bill and the receipt are not open items.
-    assert (overdue['count'], overdue['amount'], overdue['otherCurrencyCount']) == (1, '800.25', 0)
+    # The printed amount due (800.25) wins over the total; the fully paid bill and the receipt are not open items;
+    # the 150.00 bill whose payment was undone is unpaid again.
+    assert (overdue['count'], overdue['amount'], overdue['otherCurrencyCount']) == (2, '950.25', 0)
     assert (receivable['count'], receivable['amount']) == (1, '1200.00')
-    assert tiles['journalsToPost'] == {'available': True, 'scope': 'company', 'count': 8, 'draftJournals': 1,
+    # 11 approved records; the invoice (document journal) and the credit note (adjustment journal) are posted.
+    assert tiles['journalsToPost'] == {'available': True, 'scope': 'company', 'count': 9, 'draftJournals': 1,
                                        'link': {'page': 'records', 'query': 'posting=to-post'}}
 
 
@@ -239,10 +259,12 @@ def test_month_end_progress_and_reconciliation_null_until_a_period_exists(compan
     assert month['period'] == {'code': 'FY26-11', 'startsOn': '2026-11-01', 'endsOn': '2026-11-30', 'status': 'open',
                                'source': 'accounting_period'}
     steps = {s['key']: s for s in month['steps']}
-    # 6 waiting documents + 9 approved ones uploaded today; submitted + approved count as reviewed.
-    assert (steps['reviewed']['done'], steps['reviewed']['total']) == (10, 15)
-    assert (steps['matched']['done'], steps['matched']['total']) == (1, 3)
-    assert (steps['posted']['done'], steps['posted']['total']) == (1, 9)
+    # 6 waiting documents + 11 approved ones uploaded today; submitted + approved count as reviewed.
+    assert (steps['reviewed']['done'], steps['reviewed']['total']) == (12, 17)
+    # Four confirmed lines: one matched and one classified fee are explained.
+    assert (steps['matched']['done'], steps['matched']['total']) == (2, 4)
+    # Invoice posted as a document journal, credit note as an adjustment journal.
+    assert (steps['posted']['done'], steps['posted']['total']) == (2, 11)
     assert steps['reconciled']['available'] is False and steps['reconciled']['reason']
     with connect() as db:
         db.execute("""INSERT INTO bank_reconciliation_periods(tenant_id,bank_account_ref,starts_on,ends_on,opening_balance,closing_balance,book_balance)
