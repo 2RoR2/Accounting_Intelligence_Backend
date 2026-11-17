@@ -1,7 +1,9 @@
 # Accounting Intelligence — Master Plan
 
-Written 2026-11-12. Planner: Fable. Executor: Opus sessions, one task per session.
+Written 2026-11-12. Planner: Fable until 2026-11-17, then an Opus planner session (see `docs/PLANNER_PLAYBOOK.md`). Executor: Opus sessions, one task per session.
 This file is the single source of truth for what to build, in what order, and how to know it is done.
+
+**Current plan: section 10 (Plan v3, A to Z to UAT).** Sections 5-9 are history and task detail that section 10 refers to.
 
 ---
 
@@ -388,3 +390,126 @@ First UAT cut = A1-A3, B1-B3, C3, C5, D1-D3. Second cut = the rest.
 ### 9.5 Done means (whole plan)
 
 An accountant can log in, see Today, review and approve a month of documents for the demo company, post them, import the bank statement, reconcile it, close the month and download the month pack, without reading a rule code or a model name, and every number in the pack traces back to an approved document or a bank line.
+
+---
+
+## 10. Plan v3 — A to Z to UAT (added 2026-11-17, current)
+
+Planner from here: an Opus session following `docs/PLANNER_PLAYBOOK.md`. Section 9's phase letters (A-E) and earlier task IDs (P0-P7) are kept as references; this section decides order and status.
+
+### 10.1 Target
+
+- **UAT handover:** end of semester week 12. Date: `____` (Jonathan fills this in; the planner plans backwards from it).
+- **Focus:** the accountant's user interface and daily/monthly workflow first, built on the teammates' existing design system (`src/styles/*.css`, `src/components/common/ui`) and existing functions. Change flows and wording, not the look.
+- **Testing accounts:** real team emails receive login codes through Brevo (`EMAIL_PROVIDER=brevo`, `BREVO_*` in `.env`). Emails live only in `.env` or the database, never in the repository.
+
+| Success criterion (brief) | Evidence the plan produces | Task |
+|---|---|---|
+| Extraction accuracy >= 95% on the pilot set | Hold-out and public-set runs with the chosen provider; SAIC pilot set when supplied | I1, I2 |
+| Manual data entry reduced >= 70% | Timed study, manual vs system, same documents; touchless-field rate | I3, I4 |
+| <= 20 s per document | p95 `processing_seconds` on localhost and the hosted UAT environment | I3, I5 |
+| Exception rate < 10%, all exceptions routed | Exception rate on the demo month; every exception visible with a suggested fix | B5, I3 |
+| High-volume concurrent submissions | 50-document concurrent load test | I5 |
+
+### 10.2 Status on 2026-11-17
+
+| Item | State |
+|---|---|
+| Backend #4 slim backend, #5 company packs | Merged into `features` |
+| Frontend #3 plain language + navigation | Merged into `features` |
+| Backend #8 `fix/inline-queue-full-requeue` | Open, not merged |
+| Backend #7 A2+A3 CSV imports + demo company seed | Open, not merged |
+| Backend #6 + Frontend #4 B3 Today (API + page) | Open, not merged |
+| Frontend #2 draft `integration/v3.1-plus-20261103` | Stale, conflicts; owner decides close or re-apply |
+| Accuracy | Tuning set 97.24% (not evidence: tuned on it). Hold-out not run. |
+| Not verified | Hosted Render deploy after #4; Brevo login code end to end; full walkthrough on a local database |
+
+### 10.3 The UAT walkthrough (acceptance script for the whole system)
+
+Every task names the steps it changes; E2 automates this script and it is the final gate.
+
+**Daily (accountant)**
+1. Log in with email and the code sent by Brevo.
+2. Today shows: to review, ready to approve, needs fixing (top reasons), bank lines to match, bills due in 7 days, customers overdue, journals waiting to post.
+3. Inbox: drop a day's documents (PDFs, phone photos), or use the camera. Type is detected; each file shows its progress.
+4. Review: document on the left, fields on the right; only "Please check" fields need attention; click a field to see where it was read; keyboard to accept and move on.
+5. Ready lane: select all, approve. Needs-fixing lane: each item shows the reason and a one-click suggested fix.
+6. Post: approved documents become proposed journals (supplier default account, printed tax, payables); post one by one or in bulk.
+7. Bank: import the statement (saved column mapping), confirm suggested matches including partial and combined payments, create expenses for fees.
+8. Contacts: supplier page shows defaults, open items, documents, learned corrections.
+
+**Monthly (accountant / local admin)**
+9. Month-end checklist: every item green or linked to what is left.
+10. Reconciliation statement for the period; lock the period.
+11. Reports: profit and loss, balance sheet, trial balance, general ledger, payables and receivables ageing, recorded tax summary (printed tax only, labelled "not a tax return").
+12. Month pack: one Excel workbook with all reports and open exceptions.
+
+**Admin**
+13. Users and roles, company settings, System page (processing health), evaluation page.
+
+### 10.4 Tasks A to Z, in order
+
+Two lanes run in parallel: one backend executor and one frontend executor. "->" marks a dependency. Section references point to the full spec.
+
+**M0 — Integrate what is open (planner + Jonathan, now)**
+
+- **Z1 Merge queue.** Backend #8 -> #7 -> #6, then frontend #4. For each: update from `features`, run the playbook section 5 gates, Codex review, Jonathan merges. Frontend #2: ask its owner to close it or re-apply wanted parts on top of `features` in a new PR.
+- **Z2 Hosted health check (Jonathan, read-only).** Confirm the Render backend is healthy after #4 changed `render.yaml` to one service; if not, note it for U1.
+
+**M1 — Test foundation**
+
+- **E1 Local full stack with real login codes** (backend lane). `docker compose up -d db`; schema + `manage.py seed-demo-company --pack trading` (from #7); create team test users from an env list (`UAT_TEST_EMAILS`, comma separated, never committed); confirm Brevo delivers the login code; document how privileged roles set up MFA. Update `docs/LOCALHOST.md`. Done when each teammate logs in on localhost with their own email.
+- **E2 Walkthrough automation** (frontend lane, -> E1). Playwright script of the 10.3 steps that already exist, against the seeded demo company; extend it as tasks land. Done when it runs green on current `features` for existing steps and reports missing ones as skipped.
+
+**M2 — Daily workflow, UI first**
+
+- **B4a Inbox** (frontend + small backend `kind=auto`; spec P2.1). -> E1.
+- **B4b Review side by side** (frontend; uses `reviewSignal` from P2.2; spec P2.3). -> B4a.
+- **B5a Lanes API and bulk submit/approve** (backend; spec P3.1, P3.2). Parallel with B4a.
+- **B5b Lanes UI and suggested fixes** (frontend + backend suggestion payloads; spec P3.3, P3.4). -> B5a, B4b.
+- **C1 Contacts hub and supplier memory** (both lanes; specs 9.3 C1, P4.1-P4.3). Supplier defaults (expense account, tax code, terms), learned corrections, account suggestion on each document. -> B5a.
+- **C3 Posting** (both lanes; spec 9.3 C3 / P5.2). Proposed journal on approval, edit, post, bulk post; period locks respected. -> C1.
+
+**M3 — Bank and month-end**
+
+- **C5 Bank reconciliation flow** (both lanes; spec 9.3 C5 / P5.3). Report match precision and recall against the company pack's `expected_matches.csv`. -> C3.
+- **C4 Payables and receivables** (both lanes; spec 9.3 C4). Open items, settlements from bank matches, ageing. -> C5.
+- **C2 Chart of accounts page** (frontend; import comes from #7). Parallel with C5.
+- **D1 Month-end checklist and period lock** (both lanes). -> C5.
+- **D2 Reports** (both lanes; spec 9.3 D2). P&L, BS, TB, GL, ageing and recorded tax summary first; statements and cost-centre views after. -> C3.
+- **D3 Month pack** (backend + one button). -> D2.
+- **D4 Exports and import templates** (spec P6.1, P6.2). Generic Excel/CSV first; vendor templates only if Jonathan supplies them.
+
+**M4 — Intelligence and evidence** (alongside M2-M3 when a lane is free)
+
+- **I1 Accuracy evidence.** Hold-out set and public 35 with each available provider; choose the default; record in `docs/ACCURACY_LOG.md`. Spend limits from section 5A apply.
+- **I2 Accuracy improvements** (only if I1 < 95%). Supplier-memory examples in the prompt (from C1), JSON schema mode, opt-in image fallback (P1.3; Groq `qwen/qwen3.8-27b` accepts images).
+- **I3 Evaluation page** (spec P6.3): the five criteria from real data, "Not measured" until measured.
+- **I4 Effort study.** Two testers, 20 documents, timed manual entry vs system review; touchless-field rate. Result on the evaluation page and in the report.
+- **I5 Load test** (spec P7.2): 50 concurrent documents; throughput, failures, p95 seconds, provider limit events.
+- **I6 Intelligent checks on Today:** duplicates, totals outside a supplier's usual range, unusual bank lines (existing anomaly code), bills due soon, approved documents not yet posted. Each check links to its fix. -> B3 (#6/#4), C1.
+
+**M5 — UAT readiness**
+
+- **U1 Hosted UAT environment** (Jonathan approves each step): separate database (a Neon branch, not the team database), Render backend from `render.yaml`, Vercel frontend `BACKEND_URL`, Brevo sender, AI provider and whether a paid key is used for real documents, keep-alive during UAT hours.
+- **U2 Hardening** (spec P7.4): security review of the full diff since `main`, tenant isolation tests on every new route, rate limits on login and code requests, no document text or secrets in logs. Jonathan rotates the secrets exposed in chat on 2026-11-13 before U1.
+- **U3 Tester guide and feedback form** (spec P7.3), rewritten around 10.3.
+- **U4 Release:** PR `features` -> `main`, tag `uat-1` (Jonathan merges).
+- **U5 UAT support:** triage SAIC feedback into new section 10 tasks.
+
+**Minimum for UAT (cut line).** If time runs short, keep Z1, E1, E2, B4a, B4b, B5a, B5b, C1 (defaults and suggestions only), C3, C5, D1, D2 (P&L, BS, TB, recorded tax), D3, I1, I3, I4, I5, U1-U4. Defer C4 ageing detail, D4 vendor templates, I2 image fallback, and I6 beyond duplicates and due bills.
+
+### 10.5 Dependencies at a glance
+
+```
+Z1 -> E1 -> E2 (gate for everything after)
+E1 -> B4a -> B4b --+
+      B5a ---------+-> B5b
+      B5a -> C1 -> C3 -> C5 -> C4, D1
+                    C3 -> D2 -> D3
+C1 -> I2, I6     I1 any time after Z1     I3 -> I4, I5     all -> U1 -> U2 -> U3 -> U4
+```
+
+### 10.6 Handoff log
+
+- 2026-11-17 (Fable): Plan v3 and `docs/PLANNER_PLAYBOOK.md` written. Open PRs: backend #6, #7, #8; frontend #4, #2 (draft, stale). Next: Z1 merge queue, starting with backend #8. Blockers on Jonathan: week 12 date in 10.1, merge approvals, Docker Desktop running for E1, secret rotation before U1.
