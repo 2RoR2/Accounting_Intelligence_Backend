@@ -177,6 +177,7 @@ def test_bulk_approve_of_ten_approves_eight_and_names_the_other_two(workspace):
     documents = [ws['add_receipt'](accountant, f'R-{n:02d}') for n in range(10)]
     revisions = {d: make_passing(ws, d) for d in documents}
     foreign = ws['add_receipt'](ws['outsider'], 'R-OTHER')
+    revisions[foreign] = 3  # Another company's document, at its real revision.
 
     with Acting(accountant):
         submit = lanes.bulk_submit(lanes.BulkReviewInput(items=[
