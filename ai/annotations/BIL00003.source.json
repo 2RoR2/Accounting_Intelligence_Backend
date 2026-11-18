@@ -1,0 +1,237 @@
+{
+  "source_row_index": 63,
+  "row": {
+    "file_name": "synth_0065_6144286e.png",
+    "supplier_name": "EnerGov Utilities Ltd",
+    "supplier_address": "12 Grid Street\nLondon\nSW1A 2AA\nUnited Kingdom",
+    "supplier_phone": "+44 20 7946 0123",
+    "supplier_email": "billing@energov.uk",
+    "supplier_website": "https://www.energov.uk",
+    "supplier_company_registrations": "GB 12345678",
+    "customer_name": "John Smith",
+    "customer_id": "CUST0012345",
+    "customer_address": null,
+    "billing_address": "34 Elm Lane\nManchester\nM1 2AB\nUnited Kingdom",
+    "shipping_address": null,
+    "customer_company_registrations": null,
+    "document_type_extended": null,
+    "document_number": "INV-2023-000123",
+    "invoice_number": "INV-2023-000123",
+    "receipt_number": null,
+    "reference_numbers": null,
+    "po_number": null,
+    "document_date": "2023-06-15",
+    "document_time": null,
+    "due_date": "2023-07-15",
+    "payment_date": null,
+    "document_currency": "GBP",
+    "document_total_amount": "153.15",
+    "document_total_net": "153.15",
+    "document_total_tax": "0.0",
+    "document_category": "utilities",
+    "subcategory": "electricity",
+    "locale": "en",
+    "notes": "Please settle by the due date to avoid late fees.",
+    "_template_used": "utility_bill",
+    "_font_info": "Open Sans",
+    "line_items": [
+      {
+        "description": "Electricity Supply Charge",
+        "quantity": "1.0",
+        "unit_price": "45.6",
+        "amount": "45.6",
+        "tax_rate": "0%",
+        "tax_amount": "0.0"
+      },
+      {
+        "description": "Gas Supply Charge",
+        "quantity": "1.0",
+        "unit_price": "30.25",
+        "amount": "30.25",
+        "tax_rate": "0%",
+        "tax_amount": "0.0"
+      },
+      {
+        "description": "Water Usage Charge",
+        "quantity": "1.0",
+        "unit_price": "12.8",
+        "amount": "12.8",
+        "tax_rate": "0%",
+        "tax_amount": "0.0"
+      },
+      {
+        "description": "Monthly Service Charge",
+        "quantity": "1.0",
+        "unit_price": "20.0",
+        "amount": "20.0",
+        "tax_rate": "0%",
+        "tax_amount": "0.0"
+      },
+      {
+        "description": "Environmental Levy",
+        "quantity": "1.0",
+        "unit_price": "8.0",
+        "amount": "8.0",
+        "tax_rate": "0%",
+        "tax_amount": "0.0"
+      },
+      {
+        "description": "Broadband Provisioning",
+        "quantity": "1.0",
+        "unit_price": "25.5",
+        "amount": "25.5",
+        "tax_rate": "0%",
+        "tax_amount": "0.0"
+      },
+      {
+        "description": "Waste Management Charge",
+        "quantity": "1.0",
+        "unit_price": "6.75",
+        "amount": "6.75",
+        "tax_rate": "0%",
+        "tax_amount": "0.0"
+      },
+      {
+        "description": "Meter Rent",
+        "quantity": "1.0",
+        "unit_price": "4.25",
+        "amount": "4.25",
+        "tax_rate": "0%",
+        "tax_amount": "0.0"
+      }
+    ],
+    "taxes": [
+      {
+        "base": "153.15",
+        "rate": "0%",
+        "code": "VAT",
+        "value": "0.0"
+      }
+    ],
+    "image": {
+      "src": "https://datasets-server.huggingface.co/cached-assets/alamgirqazi/invoice-ocr-synthetic/--/673ff85be462eb7f3715ec188a295dd17ca11115/--/default/train/63/image/image.jpg",
+      "height": 2339,
+      "width": 1654
+    },
+    "quality": "clean"
+  },
+  "released_record_index": 63,
+  "released_record_decimal_strings": {
+    "file_name": "synth_0065_6144286e.png",
+    "supplier_name": "EnerGov Utilities Ltd",
+    "document_date": "2023-06-15",
+    "document_time": null,
+    "document_currency": "GBP",
+    "document_total_amount": "153.15",
+    "document_total_net": "153.15",
+    "document_total_tax": "0.0",
+    "document_category": "utilities",
+    "subcategory": "electricity",
+    "due_date": "2023-07-15",
+    "payment_date": null,
+    "document_type_extended": null,
+    "document_number": "INV-2023-000123",
+    "receipt_number": null,
+    "invoice_number": "INV-2023-000123",
+    "reference_numbers": null,
+    "po_number": null,
+    "locale": "en",
+    "customer_name": "John Smith",
+    "customer_id": "CUST0012345",
+    "customer_address": null,
+    "billing_address": "34 Elm Lane\nManchester\nM1 2AB\nUnited Kingdom",
+    "shipping_address": null,
+    "customer_company_registrations": null,
+    "supplier_address": "12 Grid Street\nLondon\nSW1A 2AA\nUnited Kingdom",
+    "supplier_phone": "+44 20 7946 0123",
+    "supplier_email": "billing@energov.uk",
+    "supplier_website": "https://www.energov.uk",
+    "supplier_company_registrations": "GB 12345678",
+    "line_items": [
+      {
+        "description": "Electricity Supply Charge",
+        "quantity": "1.0",
+        "unit_price": "45.6",
+        "amount": "45.6",
+        "tax_rate": "0%",
+        "tax_amount": "0.0"
+      },
+      {
+        "description": "Gas Supply Charge",
+        "quantity": "1.0",
+        "unit_price": "30.25",
+        "amount": "30.25",
+        "tax_rate": "0%",
+        "tax_amount": "0.0"
+      },
+      {
+        "description": "Water Usage Charge",
+        "quantity": "1.0",
+        "unit_price": "12.8",
+        "amount": "12.8",
+        "tax_rate": "0%",
+        "tax_amount": "0.0"
+      },
+      {
+        "description": "Monthly Service Charge",
+        "quantity": "1.0",
+        "unit_price": "20.0",
+        "amount": "20.0",
+        "tax_rate": "0%",
+        "tax_amount": "0.0"
+      },
+      {
+        "description": "Environmental Levy",
+        "quantity": "1.0",
+        "unit_price": "8.0",
+        "amount": "8.0",
+        "tax_rate": "0%",
+        "tax_amount": "0.0"
+      },
+      {
+        "description": "Broadband Provisioning",
+        "quantity": "1.0",
+        "unit_price": "25.5",
+        "amount": "25.5",
+        "tax_rate": "0%",
+        "tax_amount": "0.0"
+      },
+      {
+        "description": "Waste Management Charge",
+        "quantity": "1.0",
+        "unit_price": "6.75",
+        "amount": "6.75",
+        "tax_rate": "0%",
+        "tax_amount": "0.0"
+      },
+      {
+        "description": "Meter Rent",
+        "quantity": "1.0",
+        "unit_price": "4.25",
+        "amount": "4.25",
+        "tax_rate": "0%",
+        "tax_amount": "0.0"
+      }
+    ],
+    "taxes": [
+      {
+        "base": "153.15",
+        "rate": "0%",
+        "code": "VAT",
+        "value": "0.0"
+      }
+    ],
+    "notes": "Please settle by the due date to avoid late fees.",
+    "mime_type": "image/png",
+    "labeled_at": "2026-03-16T07:58:28.312134",
+    "_template_used": "utility_bill",
+    "_synthetic": true,
+    "_font_info": "Open Sans",
+    "degradation_variants": {
+      "clean": "synth_0065_6144286e.png",
+      "bad_scan": "synth_0065_6144286e.png",
+      "faded": "synth_0065_6144286e.png"
+    }
+  },
+  "representation": "Publisher-hosted full-size JPEG viewer asset of original embedded PNG; no local conversion."
+}

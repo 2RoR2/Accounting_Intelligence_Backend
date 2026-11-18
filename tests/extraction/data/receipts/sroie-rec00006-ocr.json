@@ -1,0 +1,1405 @@
+{
+  "schema_name": "DoclingDocument",
+  "pages": {
+    "1": {
+      "size": {
+        "width": 363.84,
+        "height": 748.32
+      },
+      "page_no": 1
+    }
+  },
+  "m2_text_lines": [
+    {
+      "self_ref": "#/m2_text_lines/0",
+      "text": "99 SPEED MART S/B (S19537-X)",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.97606,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 64.5,
+            "t": 133.0,
+            "r": 261.5,
+            "b": 151.0,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/1",
+      "text": "LOT P.T. 2811, JALAN ANGSA,",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.98326,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 70.5,
+            "t": 150.5,
+            "r": 262.5,
+            "b": 171.5,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/2",
+      "text": "TAMAN BERKELEY",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.99976,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 115.0,
+            "t": 171.0,
+            "r": 216.0,
+            "b": 187.5,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/3",
+      "text": "41150 KLANG, SELANGOR",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.97948,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 94.5,
+            "t": 189.5,
+            "r": 245.0,
+            "b": 207.0,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/4",
+      "text": "1413-SETIA ALAM 2",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.99261,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 109.5,
+            "t": 209.0,
+            "r": 231.0,
+            "b": 224.5,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/5",
+      "text": "GST ID. NO: 000181747712",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.96474,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 82.0,
+            "t": 228.0,
+            "r": 260.0,
+            "b": 243.0,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/6",
+      "text": "INVOICE NO: 10222/102/T0341",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.97533,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 76.5,
+            "t": 266.0,
+            "r": 273.0,
+            "b": 280.0,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/7",
+      "text": "20-11-17",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.99974,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 257.0,
+            "t": 297.5,
+            "r": 317.5,
+            "b": 315.0,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/8",
+      "text": "03PM",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.68645,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 36.5,
+            "t": 305.5,
+            "r": 92.5,
+            "b": 324.0,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/9",
+      "text": "562936",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.99974,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 154.0,
+            "t": 303.0,
+            "r": 201.5,
+            "b": 320.5,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/10",
+      "text": "RM117.90 s",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.95255,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 244.5,
+            "t": 335.5,
+            "r": 320.5,
+            "b": 353.0,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/11",
+      "text": "2973 PEDIASURE COMPLETE S3S",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.98962,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 39.0,
+            "t": 344.0,
+            "r": 231.5,
+            "b": 357.5,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/12",
+      "text": "RM34.90 s",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.99612,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 252.5,
+            "t": 354.5,
+            "r": 320.5,
+            "b": 371.0,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/13",
+      "text": "069 MILO 2KG",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.85385,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 40.0,
+            "t": 363.5,
+            "r": 129.5,
+            "b": 380.0,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/14",
+      "text": "RM4.10 s",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.93034,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 260.5,
+            "t": 373.5,
+            "r": 322.0,
+            "b": 390.5,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/15",
+      "text": "2709 ZING HEING OAT & WHEAT",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.99208,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 41.5,
+            "t": 383.5,
+            "r": 231.5,
+            "b": 395.0,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/16",
+      "text": "RM5.89 s",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.9289,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 261.0,
+            "t": 391.5,
+            "r": 323.0,
+            "b": 409.5,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/17",
+      "text": "2093 DISNEY DS112 WIDE NECK",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.9944,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 42.0,
+            "t": 403.0,
+            "r": 233.0,
+            "b": 414.0,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/18",
+      "text": "RM6.99 s",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.98578,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 262.5,
+            "t": 410.5,
+            "r": 324.5,
+            "b": 428.5,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/19",
+      "text": "4385 JOHNSONS PH5.5 2IN1 BO",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.95075,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 43.0,
+            "t": 421.5,
+            "r": 234.5,
+            "b": 432.5,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/20",
+      "text": "169.78",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.99818,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 265.0,
+            "t": 448.5,
+            "r": 311.5,
+            "b": 466.0,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/21",
+      "text": "Total Sales (Inclusive GST) RM",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.9863,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 45.5,
+            "t": 459.5,
+            "r": 258.0,
+            "b": 469.5,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/22",
+      "text": ".02",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.99934,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 287.5,
+            "t": 466.5,
+            "r": 312.0,
+            "b": 485.0,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/23",
+      "text": "Rounding Adjustment RM",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.97426,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 99.5,
+            "t": 475.5,
+            "r": 260.0,
+            "b": 490.0,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/24",
+      "text": "169.80",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.99647,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 267.0,
+            "t": 486.0,
+            "r": 314.5,
+            "b": 503.5,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/25",
+      "text": "Rounding RM",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.95754,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 176.5,
+            "t": 491.5,
+            "r": 262.5,
+            "b": 508.0,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/26",
+      "text": "CASH RM",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.93538,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 205.5,
+            "t": 508.0,
+            "r": 262.0,
+            "b": 526.0,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/27",
+      "text": "200.00",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.9999,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 267.5,
+            "t": 504.5,
+            "r": 315.5,
+            "b": 523.0,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/28",
+      "text": "CHANGE RM",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.97765,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 193.5,
+            "t": 528.0,
+            "r": 263.5,
+            "b": 545.5,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/29",
+      "text": "30.20",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.99971,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 276.5,
+            "t": 523.5,
+            "r": 316.5,
+            "b": 541.5,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/30",
+      "text": "Tax(RH)",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.91478,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 272.0,
+            "t": 561.0,
+            "r": 324.0,
+            "b": 579.0,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/31",
+      "text": "Amount(RH)",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.96335,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 162.5,
+            "t": 568.0,
+            "r": 236.0,
+            "b": 585.5,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/32",
+      "text": "GST Summary",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.9947,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 52.0,
+            "t": 575.5,
+            "r": 135.5,
+            "b": 593.5,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/33",
+      "text": "9.61",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.9915,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 292.0,
+            "t": 579.5,
+            "r": 325.0,
+            "b": 597.0,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/34",
+      "text": "160.17",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.99972,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 190.5,
+            "t": 585.5,
+            "r": 238.0,
+            "b": 604.0,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/35",
+      "text": "\u00e4\u00b8\u2030 = h%",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.73,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 50.5,
+            "t": 596.5,
+            "r": 102.5,
+            "b": 611.5,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/36",
+      "text": "Thank You, Please come again",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.95742,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 92.5,
+            "t": 649.5,
+            "r": 290.5,
+            "b": 658.0,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/37",
+      "text": "Keep the invoice for applicable returns",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.99818,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 55.0,
+            "t": 672.5,
+            "r": 332.0,
+            "b": 674.0,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    }
+  ],
+  "test_source": {
+    "dataset": "ICDAR2019 SROIE",
+    "source": "ai/assets/receipt/REC00006.jpg",
+    "license": "CC-BY-4.0",
+    "kind": "Native Docling/RapidOCR result"
+  },
+  "texts": [
+    {
+      "self_ref": "#/texts/0",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 64.5,
+            "t": 615.32,
+            "r": 262.5,
+            "b": 505.32000000000005,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            136
+          ]
+        }
+      ],
+      "orig": "99 SPEED MART S/B (S19537-X) LOT P.T. 2811, JALAN ANGSA, TAMAN BERKELEY 41150 KLANG, SELANGOR 1413-SETIA ALAM 2 GST ID. NO: 000181747712",
+      "text": "99 SPEED MART S/B (S19537-X) LOT P.T. 2811, JALAN ANGSA, TAMAN BERKELEY 41150 KLANG, SELANGOR 1413-SETIA ALAM 2 GST ID. NO: 000181747712"
+    },
+    {
+      "self_ref": "#/texts/1",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "section_header",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 76.5,
+            "t": 482.32000000000005,
+            "r": 273.0,
+            "b": 468.32000000000005,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            27
+          ]
+        }
+      ],
+      "orig": "INVOICE NO: 10222/102/T0341",
+      "text": "INVOICE NO: 10222/102/T0341",
+      "level": 1
+    },
+    {
+      "self_ref": "#/texts/2",
+      "parent": {
+        "$ref": "#/groups/0"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 36.5,
+            "t": 442.82000000000005,
+            "r": 92.5,
+            "b": 424.32000000000005,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            4
+          ]
+        }
+      ],
+      "orig": "03PM",
+      "text": "03PM"
+    },
+    {
+      "self_ref": "#/texts/3",
+      "parent": {
+        "$ref": "#/groups/0"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 154.0,
+            "t": 445.32000000000005,
+            "r": 201.5,
+            "b": 427.82000000000005,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            6
+          ]
+        }
+      ],
+      "orig": "562936",
+      "text": "562936"
+    },
+    {
+      "self_ref": "#/texts/4",
+      "parent": {
+        "$ref": "#/groups/0"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 39.0,
+            "t": 404.32000000000005,
+            "r": 234.5,
+            "b": 315.82000000000005,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            124
+          ]
+        }
+      ],
+      "orig": "2973 PEDIASURE COMPLETE S3S 069 MILO 2KG 2709 ZING HEING OAT & WHEAT 2093 DISNEY DS112 WIDE NECK 4385 JOHNSONS PH5.5 2IN1 BO",
+      "text": "2973 PEDIASURE COMPLETE S3S 069 MILO 2KG 2709 ZING HEING OAT & WHEAT 2093 DISNEY DS112 WIDE NECK 4385 JOHNSONS PH5.5 2IN1 BO"
+    },
+    {
+      "self_ref": "#/texts/5",
+      "parent": {
+        "$ref": "#/groups/0"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 45.5,
+            "t": 288.82000000000005,
+            "r": 258.0,
+            "b": 278.82000000000005,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            30
+          ]
+        }
+      ],
+      "orig": "Total Sales (Inclusive GST) RM",
+      "text": "Total Sales (Inclusive GST) RM"
+    },
+    {
+      "self_ref": "#/texts/6",
+      "parent": {
+        "$ref": "#/groups/0"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 99.5,
+            "t": 272.82000000000005,
+            "r": 260.0,
+            "b": 258.32000000000005,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            22
+          ]
+        }
+      ],
+      "orig": "Rounding Adjustment RM",
+      "text": "Rounding Adjustment RM"
+    },
+    {
+      "self_ref": "#/texts/7",
+      "parent": {
+        "$ref": "#/groups/0"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 257.0,
+            "t": 450.82000000000005,
+            "r": 317.5,
+            "b": 433.32000000000005,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            8
+          ]
+        }
+      ],
+      "orig": "20-11-17",
+      "text": "20-11-17"
+    },
+    {
+      "self_ref": "#/texts/8",
+      "parent": {
+        "$ref": "#/groups/0"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 244.5,
+            "t": 412.82000000000005,
+            "r": 320.5,
+            "b": 395.32000000000005,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            10
+          ]
+        }
+      ],
+      "orig": "RM117.90 s",
+      "text": "RM117.90 s"
+    },
+    {
+      "self_ref": "#/texts/9",
+      "parent": {
+        "$ref": "#/groups/0"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 252.5,
+            "t": 393.82000000000005,
+            "r": 320.5,
+            "b": 377.32000000000005,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            9
+          ]
+        }
+      ],
+      "orig": "RM34.90 s",
+      "text": "RM34.90 s"
+    },
+    {
+      "self_ref": "#/texts/10",
+      "parent": {
+        "$ref": "#/groups/0"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 260.5,
+            "t": 374.82000000000005,
+            "r": 322.0,
+            "b": 357.82000000000005,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            8
+          ]
+        }
+      ],
+      "orig": "RM4.10 s",
+      "text": "RM4.10 s"
+    },
+    {
+      "self_ref": "#/texts/11",
+      "parent": {
+        "$ref": "#/groups/0"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 261.0,
+            "t": 356.82000000000005,
+            "r": 323.0,
+            "b": 338.82000000000005,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            8
+          ]
+        }
+      ],
+      "orig": "RM5.89 s",
+      "text": "RM5.89 s"
+    },
+    {
+      "self_ref": "#/texts/12",
+      "parent": {
+        "$ref": "#/groups/0"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 262.5,
+            "t": 337.82000000000005,
+            "r": 324.5,
+            "b": 319.82000000000005,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            8
+          ]
+        }
+      ],
+      "orig": "RM6.99 s",
+      "text": "RM6.99 s"
+    },
+    {
+      "self_ref": "#/texts/13",
+      "parent": {
+        "$ref": "#/groups/0"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 265.0,
+            "t": 299.82000000000005,
+            "r": 311.5,
+            "b": 282.32000000000005,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            6
+          ]
+        }
+      ],
+      "orig": "169.78",
+      "text": "169.78"
+    },
+    {
+      "self_ref": "#/texts/14",
+      "parent": {
+        "$ref": "#/groups/0"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 287.5,
+            "t": 281.82000000000005,
+            "r": 312.0,
+            "b": 263.32000000000005,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            3
+          ]
+        }
+      ],
+      "orig": ".02",
+      "text": ".02"
+    },
+    {
+      "self_ref": "#/texts/15",
+      "parent": {
+        "$ref": "#/groups/0"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 176.5,
+            "t": 262.32000000000005,
+            "r": 314.5,
+            "b": 240.32000000000005,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            18
+          ]
+        }
+      ],
+      "orig": "169.80 Rounding RM",
+      "text": "169.80 Rounding RM"
+    },
+    {
+      "self_ref": "#/texts/16",
+      "parent": {
+        "$ref": "#/groups/0"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 193.5,
+            "t": 224.82000000000005,
+            "r": 316.5,
+            "b": 202.82000000000005,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            15
+          ]
+        }
+      ],
+      "orig": "CHANGE RM 30.20",
+      "text": "CHANGE RM 30.20"
+    },
+    {
+      "self_ref": "#/texts/17",
+      "parent": {
+        "$ref": "#/groups/0"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 205.5,
+            "t": 243.82000000000005,
+            "r": 315.5,
+            "b": 222.32000000000005,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            14
+          ]
+        }
+      ],
+      "orig": "CASH RM 200.00",
+      "text": "CASH RM 200.00"
+    },
+    {
+      "self_ref": "#/texts/18",
+      "parent": {
+        "$ref": "#/groups/0"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 162.5,
+            "t": 180.32000000000005,
+            "r": 238.0,
+            "b": 144.32000000000005,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            17
+          ]
+        }
+      ],
+      "orig": "Amount(RH) 160.17",
+      "text": "Amount(RH) 160.17"
+    },
+    {
+      "self_ref": "#/texts/19",
+      "parent": {
+        "$ref": "#/groups/0"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 272.0,
+            "t": 187.32000000000005,
+            "r": 324.0,
+            "b": 169.32000000000005,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            7
+          ]
+        }
+      ],
+      "orig": "Tax(RH)",
+      "text": "Tax(RH)"
+    },
+    {
+      "self_ref": "#/texts/20",
+      "parent": {
+        "$ref": "#/groups/0"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 292.0,
+            "t": 168.82000000000005,
+            "r": 325.0,
+            "b": 151.32000000000005,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            4
+          ]
+        }
+      ],
+      "orig": "9.61",
+      "text": "9.61"
+    },
+    {
+      "self_ref": "#/texts/21",
+      "parent": {
+        "$ref": "#/groups/0"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 50.5,
+            "t": 172.82000000000005,
+            "r": 135.5,
+            "b": 136.82000000000005,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            18
+          ]
+        }
+      ],
+      "orig": "GST Summary \u00e4\u00b8\u2030 = h%",
+      "text": "GST Summary \u00e4\u00b8\u2030 = h%"
+    },
+    {
+      "self_ref": "#/texts/22",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 55.0,
+            "t": 98.82000000000005,
+            "r": 332.0,
+            "b": 74.32000000000005,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            68
+          ]
+        }
+      ],
+      "orig": "Thank You, Please come again Keep the invoice for applicable returns",
+      "text": "Thank You, Please come again Keep the invoice for applicable returns"
+    }
+  ],
+  "tables": []
+}

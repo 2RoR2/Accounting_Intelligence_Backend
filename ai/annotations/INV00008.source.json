@@ -1,0 +1,40 @@
+{
+  "original_id": "6984bad10f763d83586fdd9e",
+  "original_filepath": "data/batch1-0009.jpg",
+  "json_annotation": {
+    "invoice": {
+      "client_name": "Johnson Ltd",
+      "client_address": "86731 Ryan Throughway Suite 743\nWest Jason, CT 15849",
+      "seller_name": "Padilla-Miller",
+      "seller_address": "53017 Lopez Locks\nAlecborough, OH 49620",
+      "invoice_number": "81978187",
+      "invoice_date": "01/17/2013",
+      "due_date": ""
+    },
+    "items": [
+      {
+        "description": "Wine Bottle Holder",
+        "quantity": "5,00",
+        "total_price": "59,13"
+      },
+      {
+        "description": "Cuisinart Stainless Steel Electric\nWine Opener - CWO-25 - Brand\nNew in the Box",
+        "quantity": "3,00",
+        "total_price": "65,67"
+      }
+    ],
+    "subtotal": {
+      "tax": "11,34",
+      "discount": "",
+      "total": "124,79"
+    },
+    "payment_instructions": {
+      "due_date": "",
+      "bank_name": "",
+      "account_number": "",
+      "payment_method": ""
+    }
+  },
+  "original_json_annotation_text": "{\n  \"invoice\": {\n    \"client_name\": \"Johnson Ltd\",\n    \"client_address\": \"86731 Ryan Throughway Suite 743\\nWest Jason, CT 15849\",\n    \"seller_name\": \"Padilla-Miller\",\n    \"seller_address\": \"53017 Lopez Locks\\nAlecborough, OH 49620\",\n    \"invoice_number\": \"81978187\",\n    \"invoice_date\": \"01/17/2013\",\n    \"due_date\": \"\"\n  },\n  \"items\": [\n    {\n      \"description\": \"Wine Bottle Holder\",\n      \"quantity\": \"5,00\",\n      \"total_price\": \"59,13\"\n    },\n    {\n      \"description\": \"Cuisinart Stainless Steel Electric\\nWine Opener - CWO-25 - Brand\\nNew in the Box\",\n      \"quantity\": \"3,00\",\n      \"total_price\": \"65,67\"\n    }\n  ],\n  \"subtotal\": {\n    \"tax\": \"11,34\",\n    \"discount\": \"\",\n    \"total\": \"124,79\"\n  },\n  \"payment_instructions\": {\n    \"due_date\": \"\",\n    \"bank_name\": \"\",\n    \"account_number\": \"\",\n    \"payment_method\": \"\"\n  }\n}",
+  "ocr_text": "Invoice no: 81978187 Date of issue: 01/17/2013 Seller: Client: Padilla-Miller Johnson Ltd 53017 Lopez Locks 86731 Ryan Throughway Suite 743 Alecborough, OH 49620 West Jason, CT 15849 Tax Id: 957-92-5322 Tax Id: 922-87-4664 IBAN: GB9IVPMR74805066714957 ITEMS No. Description Qty UM Net price Net worth VAT [%] Gross worth 1 Wine Bottle Holder 5,00 each 10,75 53,75 10% 59,13 2 Cuisinart Stainless Steel Electric 3,00 each 19,90 59,70 10% 65,67 Wine Opener CWO-25 Brand New in the Box SUMMARY VAT [%] Net worth VAT Gross worth 10% 113,45 11,34 124,79 Total $ 113,45 $ 11,34 $ 124,79"
+}

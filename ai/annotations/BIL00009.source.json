@@ -1,0 +1,125 @@
+{
+  "source_row_index": 139,
+  "row": {
+    "file_name": "synth_0147_df606e31.png",
+    "supplier_name": "Green City Power",
+    "supplier_address": "1234 Oak Avenue, Springfield, IL, 62704",
+    "supplier_phone": null,
+    "supplier_email": null,
+    "supplier_website": null,
+    "supplier_company_registrations": "US 12-3456789",
+    "customer_name": null,
+    "customer_id": null,
+    "customer_address": "5678 Pine Road, Shelbyville, IL, 62565",
+    "billing_address": null,
+    "shipping_address": null,
+    "customer_company_registrations": null,
+    "document_type_extended": null,
+    "document_number": "U-20230715-001",
+    "invoice_number": "INV-20230715-001",
+    "receipt_number": null,
+    "reference_numbers": null,
+    "po_number": null,
+    "document_date": "2023-07-15",
+    "document_time": null,
+    "due_date": "2023-08-15",
+    "payment_date": null,
+    "document_currency": "USD",
+    "document_total_amount": "128.88",
+    "document_total_net": "120.45",
+    "document_total_tax": "8.43",
+    "document_category": "utilities",
+    "subcategory": "electricity",
+    "locale": "en",
+    "notes": null,
+    "_template_used": "utility_bill",
+    "_font_info": "Lato",
+    "line_items": [
+      {
+        "description": "Electricity usage for July 2023",
+        "quantity": "1.0",
+        "unit_price": "120.45",
+        "amount": "120.45",
+        "tax_rate": "7%",
+        "tax_amount": "8.43"
+      }
+    ],
+    "taxes": [
+      {
+        "base": "120.45",
+        "rate": "7%",
+        "code": "US_SALES_TAX",
+        "value": "8.43"
+      }
+    ],
+    "image": {
+      "src": "https://datasets-server.huggingface.co/cached-assets/alamgirqazi/invoice-ocr-synthetic/--/673ff85be462eb7f3715ec188a295dd17ca11115/--/default/train/139/image/image.jpg",
+      "height": 2339,
+      "width": 1654
+    },
+    "quality": "clean"
+  },
+  "released_record_index": 139,
+  "released_record_decimal_strings": {
+    "file_name": "synth_0147_df606e31.png",
+    "supplier_name": "Green City Power",
+    "document_date": "2023-07-15",
+    "document_time": null,
+    "document_currency": "USD",
+    "document_total_amount": "128.88",
+    "document_total_net": "120.45",
+    "document_total_tax": "8.43",
+    "document_category": "utilities",
+    "subcategory": "electricity",
+    "due_date": "2023-08-15",
+    "payment_date": null,
+    "document_type_extended": null,
+    "document_number": "U-20230715-001",
+    "receipt_number": null,
+    "invoice_number": "INV-20230715-001",
+    "reference_numbers": null,
+    "po_number": null,
+    "locale": "en",
+    "customer_name": null,
+    "customer_id": null,
+    "customer_address": "5678 Pine Road, Shelbyville, IL, 62565",
+    "billing_address": null,
+    "shipping_address": null,
+    "customer_company_registrations": null,
+    "supplier_address": "1234 Oak Avenue, Springfield, IL, 62704",
+    "supplier_phone": null,
+    "supplier_email": null,
+    "supplier_website": null,
+    "supplier_company_registrations": "US 12-3456789",
+    "line_items": [
+      {
+        "description": "Electricity usage for July 2023",
+        "quantity": "1.0",
+        "unit_price": "120.45",
+        "amount": "120.45",
+        "tax_rate": "7%",
+        "tax_amount": "8.43"
+      }
+    ],
+    "taxes": [
+      {
+        "base": "120.45",
+        "rate": "7%",
+        "code": "US_SALES_TAX",
+        "value": "8.43"
+      }
+    ],
+    "notes": null,
+    "mime_type": "image/png",
+    "labeled_at": "2026-03-16T08:01:58.123390",
+    "_template_used": "utility_bill",
+    "_synthetic": true,
+    "_font_info": "Lato",
+    "degradation_variants": {
+      "clean": "synth_0147_df606e31.png",
+      "bad_scan": "synth_0147_df606e31.png",
+      "faded": "synth_0147_df606e31.png"
+    }
+  },
+  "representation": "Publisher-hosted full-size JPEG viewer asset of original embedded PNG; no local conversion."
+}

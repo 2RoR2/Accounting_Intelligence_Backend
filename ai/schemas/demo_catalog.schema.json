@@ -1,0 +1,299 @@
+{
+  "$defs": {
+    "Cohort": {
+      "additionalProperties": false,
+      "properties": {
+        "original_split": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Original Split"
+        },
+        "evaluation_split": {
+          "enum": [
+            "development",
+            "calibration",
+            "held_out"
+          ],
+          "title": "Evaluation Split",
+          "type": "string"
+        },
+        "related_source_group": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Related Source Group",
+          "type": "string"
+        },
+        "base_document_group_id": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Base Document Group Id",
+          "type": "string"
+        },
+        "template_group_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Template Group Id"
+        },
+        "quality_variant": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Quality Variant"
+        }
+      },
+      "required": [
+        "original_split",
+        "evaluation_split",
+        "related_source_group",
+        "base_document_group_id",
+        "template_group_id",
+        "quality_variant"
+      ],
+      "title": "Cohort",
+      "type": "object"
+    },
+    "DemoEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "demo_code": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Demo Code",
+          "type": "string"
+        },
+        "sample_id": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Sample Id",
+          "type": "string"
+        },
+        "document_type": {
+          "enum": [
+            "invoice",
+            "bill",
+            "receipt"
+          ],
+          "title": "Document Type",
+          "type": "string"
+        },
+        "source_dataset": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Source Dataset",
+          "type": "string"
+        },
+        "source_revision": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Source Revision",
+          "type": "string"
+        },
+        "origin": {
+          "enum": [
+            "REAL",
+            "SYNTHETIC"
+          ],
+          "title": "Origin",
+          "type": "string"
+        },
+        "original_source_filename": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Original Source Filename"
+        },
+        "downloaded_source_filename": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Downloaded Source Filename",
+          "type": "string"
+        },
+        "relative_asset_path": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Relative Asset Path",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "mime_type": {
+          "enum": [
+            "image/jpeg",
+            "image/png",
+            "application/pdf"
+          ],
+          "title": "Mime Type",
+          "type": "string"
+        },
+        "source_document_format": {
+          "enum": [
+            "jpg",
+            "png",
+            "pdf"
+          ],
+          "title": "Source Document Format",
+          "type": "string"
+        },
+        "source_annotation_version": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Source Annotation Version",
+          "type": "string"
+        },
+        "ground_truth_manifest_reference": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Ground Truth Manifest Reference",
+          "type": "string"
+        },
+        "source_annotation_path": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Source Annotation Path",
+          "type": "string"
+        },
+        "cohort": {
+          "$ref": "#/$defs/Cohort"
+        },
+        "licence": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Licence",
+          "type": "string"
+        },
+        "licence_reference": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Licence Reference",
+          "type": "string"
+        },
+        "sharing_status": {
+          "enum": [
+            "SHAREABLE_WITH_NOTICES",
+            "BLOCKED_REACQUIRE"
+          ],
+          "title": "Sharing Status",
+          "type": "string"
+        },
+        "processing_state": {
+          "const": "NOT_RUN",
+          "title": "Processing State",
+          "type": "string"
+        },
+        "document_id": {
+          "title": "Document Id",
+          "type": "null"
+        },
+        "document_code": {
+          "title": "Document Code",
+          "type": "null"
+        },
+        "extraction_run_id": {
+          "title": "Extraction Run Id",
+          "type": "null"
+        }
+      },
+      "required": [
+        "demo_code",
+        "sample_id",
+        "document_type",
+        "source_dataset",
+        "source_revision",
+        "origin",
+        "original_source_filename",
+        "downloaded_source_filename",
+        "relative_asset_path",
+        "sha256",
+        "mime_type",
+        "source_document_format",
+        "source_annotation_version",
+        "ground_truth_manifest_reference",
+        "source_annotation_path",
+        "cohort",
+        "licence",
+        "licence_reference",
+        "sharing_status",
+        "processing_state",
+        "document_id",
+        "document_code",
+        "extraction_run_id"
+      ],
+      "title": "DemoEntry",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "catalog_version": {
+      "const": "1.0.0",
+      "title": "Catalog Version",
+      "type": "string"
+    },
+    "dataset_id": {
+      "const": "cos40005-module2-shared-v1",
+      "title": "Dataset Id",
+      "type": "string"
+    },
+    "benchmark_revision": {
+      "const": "1",
+      "title": "Benchmark Revision",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "samples": {
+      "items": {
+        "$ref": "#/$defs/DemoEntry"
+      },
+      "maxItems": 35,
+      "minItems": 35,
+      "title": "Samples",
+      "type": "array"
+    }
+  },
+  "required": [
+    "catalog_version",
+    "dataset_id",
+    "benchmark_revision",
+    "schema_version",
+    "samples"
+  ],
+  "title": "DemoCatalog",
+  "type": "object"
+}

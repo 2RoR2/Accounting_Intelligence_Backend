@@ -1,0 +1,6 @@
+# Legacy local-model parser. Install only where EXTRACTION_ENGINE=docling is used
+# (benchmark baseline, or a machine with several GB of RAM). Pulls in PyTorch.
+-r requirements.txt
+docling>=2.141,<3
+langgraph==1.2.20
+pandas>=2.2,<3

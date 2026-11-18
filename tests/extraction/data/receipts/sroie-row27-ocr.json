@@ -1,0 +1,1920 @@
+{
+  "schema_name": "DoclingDocument",
+  "pages": {
+    "1": {
+      "size": {
+        "width": 518.4,
+        "height": 733.44
+      },
+      "page_no": 1
+    }
+  },
+  "m2_text_lines": [
+    {
+      "self_ref": "#/m2_text_lines/0",
+      "text": "A03103",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.9232,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 297.0,
+            "t": 167.5,
+            "r": 340.0,
+            "b": 195.0,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/1",
+      "text": "Triple Six Point Enterprise 666",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.99242,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 212.5,
+            "t": 211.0,
+            "r": 330.5,
+            "b": 225.0,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/2",
+      "text": "No 14&16 Jalan Permas 4/3 Bandar Baru Permas Jay",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.97625,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 184.0,
+            "t": 220.0,
+            "r": 355.0,
+            "b": 234.5,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/3",
+      "text": "Tel:016-7574666",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.99968,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 241.5,
+            "t": 230.5,
+            "r": 301.0,
+            "b": 241.0,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/4",
+      "text": "Receipt no: REC-0014888",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.99639,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 234.0,
+            "t": 239.0,
+            "r": 307.5,
+            "b": 249.5,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/5",
+      "text": "Date: 22-03-2018 04:01:20 PM",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.9921,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 221.0,
+            "t": 246.5,
+            "r": 320.0,
+            "b": 258.0,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/6",
+      "text": "Payment Type: Cash",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.99285,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 236.5,
+            "t": 255.0,
+            "r": 304.0,
+            "b": 267.5,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/7",
+      "text": "Receipt",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.99994,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 251.0,
+            "t": 265.0,
+            "r": 289.0,
+            "b": 279.5,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/8",
+      "text": "(Receipt No.: REC-0014888)",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.99469,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 229.5,
+            "t": 276.5,
+            "r": 310.0,
+            "b": 288.0,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/9",
+      "text": "QTY ITEM",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.95487,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 175.5,
+            "t": 282.5,
+            "r": 209.5,
+            "b": 293.0,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/10",
+      "text": "PRICE",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.99983,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 271.0,
+            "t": 286.0,
+            "r": 291.5,
+            "b": 294.0,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/11",
+      "text": "TOTAL",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.99981,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 300.0,
+            "t": 286.0,
+            "r": 322.0,
+            "b": 295.0,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/12",
+      "text": "(RM)",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.99977,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 275.0,
+            "t": 292.5,
+            "r": 291.5,
+            "b": 301.5,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/13",
+      "text": "(RM)",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.99937,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 305.0,
+            "t": 292.0,
+            "r": 322.0,
+            "b": 302.5,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/14",
+      "text": "1x",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.78891,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 177.5,
+            "t": 302.5,
+            "r": 189.0,
+            "b": 311.5,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/15",
+      "text": "VS FUJI500ml",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.97831,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 192.0,
+            "t": 301.0,
+            "r": 251.0,
+            "b": 313.0,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/16",
+      "text": "10.00",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.99985,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 267.0,
+            "t": 303.0,
+            "r": 290.5,
+            "b": 313.5,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/17",
+      "text": "10.00",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.99989,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 296.5,
+            "t": 302.5,
+            "r": 321.0,
+            "b": 314.5,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/18",
+      "text": "1x",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.99138,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 176.5,
+            "t": 315.0,
+            "r": 188.5,
+            "b": 325.5,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/19",
+      "text": "Apollo cake",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.99988,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 191.5,
+            "t": 314.5,
+            "r": 238.5,
+            "b": 327.5,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/20",
+      "text": "6.80",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.99998,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 269.5,
+            "t": 316.0,
+            "r": 290.0,
+            "b": 327.5,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/21",
+      "text": "6.50",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.99992,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 300.0,
+            "t": 316.5,
+            "r": 320.5,
+            "b": 328.0,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/22",
+      "text": "original 30s",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.99958,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 191.5,
+            "t": 324.5,
+            "r": 238.5,
+            "b": 337.5,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/23",
+      "text": "(Diso: 0.3000)",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.97329,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 191.0,
+            "t": 335.5,
+            "r": 248.0,
+            "b": 349.5,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/24",
+      "text": "1x",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.95201,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 175.5,
+            "t": 350.0,
+            "r": 187.5,
+            "b": 360.0,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/25",
+      "text": "TG Cashew",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.95527,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 190.5,
+            "t": 349.0,
+            "r": 238.5,
+            "b": 361.5,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/26",
+      "text": "4.20",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.99996,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 269.0,
+            "t": 351.0,
+            "r": 289.0,
+            "b": 362.0,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/27",
+      "text": "4.20",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.99991,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 299.5,
+            "t": 352.0,
+            "r": 319.5,
+            "b": 362.0,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/28",
+      "text": "nuts mixwd",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.99954,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 190.5,
+            "t": 359.5,
+            "r": 239.0,
+            "b": 371.0,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/29",
+      "text": "Almond smoke",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.99942,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 190.5,
+            "t": 369.5,
+            "r": 252.5,
+            "b": 381.5,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/30",
+      "text": "1x",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.88528,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 174.5,
+            "t": 384.0,
+            "r": 187.5,
+            "b": 394.0,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/31",
+      "text": "TG Coated",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.9977,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 189.5,
+            "t": 383.0,
+            "r": 237.0,
+            "b": 395.0,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/32",
+      "text": "1.90",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.99997,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 268.0,
+            "t": 385.5,
+            "r": 288.5,
+            "b": 396.5,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/33",
+      "text": "1.90",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.99995,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 298.5,
+            "t": 385.5,
+            "r": 319.0,
+            "b": 396.5,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/34",
+      "text": "coconut",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.99986,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 189.5,
+            "t": 393.5,
+            "r": 223.0,
+            "b": 405.0,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/35",
+      "text": "peanuts",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.9999,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 188.5,
+            "t": 402.5,
+            "r": 223.5,
+            "b": 416.5,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/36",
+      "text": "Discount",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.99913,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 189.0,
+            "t": 420.0,
+            "r": 219.0,
+            "b": 430.0,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/37",
+      "text": "0.30",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.99999,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 302.0,
+            "t": 422.5,
+            "r": 318.0,
+            "b": 431.0,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/38",
+      "text": "Total Amount",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.98713,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 188.5,
+            "t": 431.0,
+            "r": 242.0,
+            "b": 443.0,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/39",
+      "text": "22.60",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.99996,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 292.5,
+            "t": 432.5,
+            "r": 317.5,
+            "b": 444.5,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/40",
+      "text": "Tendered",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.99998,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 188.0,
+            "t": 441.5,
+            "r": 227.5,
+            "b": 453.5,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    },
+    {
+      "self_ref": "#/m2_text_lines/41",
+      "text": "22.60",
+      "label": "text",
+      "content_layer": "body",
+      "from_ocr": true,
+      "ocr_score": 0.99998,
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 292.0,
+            "t": 443.5,
+            "r": 317.5,
+            "b": 455.0,
+            "coord_origin": "TOPLEFT"
+          }
+        }
+      ]
+    }
+  ],
+  "tables": [
+    {
+      "self_ref": "#/tables/0",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "table",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 169.96555782604767,
+            "t": 453.5827857310116,
+            "r": 352.5333205382948,
+            "b": 275.0681462342473,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            0
+          ]
+        }
+      ],
+      "captions": [],
+      "references": [],
+      "footnotes": [],
+      "data": {
+        "table_cells": [
+          {
+            "bbox": {
+              "l": 175.5,
+              "t": 282.5,
+              "r": 209.5,
+              "b": 293.0,
+              "coord_origin": "TOPLEFT"
+            },
+            "row_span": 1,
+            "col_span": 2,
+            "start_row_offset_idx": 0,
+            "end_row_offset_idx": 1,
+            "start_col_offset_idx": 0,
+            "end_col_offset_idx": 2,
+            "text": "QTY ITEM",
+            "column_header": false,
+            "row_header": false,
+            "row_section": false,
+            "fillable": false
+          },
+          {
+            "bbox": {
+              "l": 271.0,
+              "t": 286.0,
+              "r": 322.0,
+              "b": 302.5,
+              "coord_origin": "TOPLEFT"
+            },
+            "row_span": 1,
+            "col_span": 2,
+            "start_row_offset_idx": 0,
+            "end_row_offset_idx": 1,
+            "start_col_offset_idx": 2,
+            "end_col_offset_idx": 4,
+            "text": "PRICE TOTAL (RM) (RM)",
+            "column_header": false,
+            "row_header": false,
+            "row_section": false,
+            "fillable": false
+          },
+          {
+            "bbox": {
+              "l": 177.5,
+              "t": 302.5,
+              "r": 189.0,
+              "b": 311.5,
+              "coord_origin": "TOPLEFT"
+            },
+            "row_span": 1,
+            "col_span": 1,
+            "start_row_offset_idx": 1,
+            "end_row_offset_idx": 2,
+            "start_col_offset_idx": 0,
+            "end_col_offset_idx": 1,
+            "text": "1x",
+            "column_header": false,
+            "row_header": false,
+            "row_section": false,
+            "fillable": false
+          },
+          {
+            "bbox": {
+              "l": 192.0,
+              "t": 301.0,
+              "r": 251.0,
+              "b": 313.0,
+              "coord_origin": "TOPLEFT"
+            },
+            "row_span": 1,
+            "col_span": 1,
+            "start_row_offset_idx": 1,
+            "end_row_offset_idx": 2,
+            "start_col_offset_idx": 1,
+            "end_col_offset_idx": 2,
+            "text": "VS FUJI500ml",
+            "column_header": false,
+            "row_header": false,
+            "row_section": false,
+            "fillable": false
+          },
+          {
+            "bbox": {
+              "l": 267.0,
+              "t": 303.0,
+              "r": 290.5,
+              "b": 313.5,
+              "coord_origin": "TOPLEFT"
+            },
+            "row_span": 1,
+            "col_span": 1,
+            "start_row_offset_idx": 1,
+            "end_row_offset_idx": 2,
+            "start_col_offset_idx": 2,
+            "end_col_offset_idx": 3,
+            "text": "10.00",
+            "column_header": false,
+            "row_header": false,
+            "row_section": false,
+            "fillable": false
+          },
+          {
+            "bbox": {
+              "l": 296.5,
+              "t": 302.5,
+              "r": 321.0,
+              "b": 314.5,
+              "coord_origin": "TOPLEFT"
+            },
+            "row_span": 1,
+            "col_span": 1,
+            "start_row_offset_idx": 1,
+            "end_row_offset_idx": 2,
+            "start_col_offset_idx": 3,
+            "end_col_offset_idx": 4,
+            "text": "10.00",
+            "column_header": false,
+            "row_header": false,
+            "row_section": false,
+            "fillable": false
+          },
+          {
+            "bbox": {
+              "l": 176.5,
+              "t": 315.0,
+              "r": 188.5,
+              "b": 325.5,
+              "coord_origin": "TOPLEFT"
+            },
+            "row_span": 1,
+            "col_span": 1,
+            "start_row_offset_idx": 2,
+            "end_row_offset_idx": 3,
+            "start_col_offset_idx": 0,
+            "end_col_offset_idx": 1,
+            "text": "1x",
+            "column_header": false,
+            "row_header": false,
+            "row_section": false,
+            "fillable": false
+          },
+          {
+            "bbox": {
+              "l": 191.0,
+              "t": 314.5,
+              "r": 248.0,
+              "b": 349.5,
+              "coord_origin": "TOPLEFT"
+            },
+            "row_span": 1,
+            "col_span": 1,
+            "start_row_offset_idx": 2,
+            "end_row_offset_idx": 3,
+            "start_col_offset_idx": 1,
+            "end_col_offset_idx": 2,
+            "text": "Apollo cake original 30s (Diso: 0.3000)",
+            "column_header": false,
+            "row_header": false,
+            "row_section": false,
+            "fillable": false
+          },
+          {
+            "bbox": {
+              "l": 269.5,
+              "t": 316.0,
+              "r": 290.0,
+              "b": 327.5,
+              "coord_origin": "TOPLEFT"
+            },
+            "row_span": 1,
+            "col_span": 1,
+            "start_row_offset_idx": 2,
+            "end_row_offset_idx": 3,
+            "start_col_offset_idx": 2,
+            "end_col_offset_idx": 3,
+            "text": "6.80",
+            "column_header": false,
+            "row_header": false,
+            "row_section": false,
+            "fillable": false
+          },
+          {
+            "bbox": {
+              "l": 300.0,
+              "t": 316.5,
+              "r": 320.5,
+              "b": 328.0,
+              "coord_origin": "TOPLEFT"
+            },
+            "row_span": 1,
+            "col_span": 1,
+            "start_row_offset_idx": 2,
+            "end_row_offset_idx": 3,
+            "start_col_offset_idx": 3,
+            "end_col_offset_idx": 4,
+            "text": "6.50",
+            "column_header": false,
+            "row_header": false,
+            "row_section": false,
+            "fillable": false
+          },
+          {
+            "bbox": {
+              "l": 175.5,
+              "t": 350.0,
+              "r": 187.5,
+              "b": 360.0,
+              "coord_origin": "TOPLEFT"
+            },
+            "row_span": 1,
+            "col_span": 1,
+            "start_row_offset_idx": 3,
+            "end_row_offset_idx": 4,
+            "start_col_offset_idx": 0,
+            "end_col_offset_idx": 1,
+            "text": "1x",
+            "column_header": false,
+            "row_header": false,
+            "row_section": false,
+            "fillable": false
+          },
+          {
+            "bbox": {
+              "l": 190.5,
+              "t": 349.0,
+              "r": 252.5,
+              "b": 381.5,
+              "coord_origin": "TOPLEFT"
+            },
+            "row_span": 1,
+            "col_span": 1,
+            "start_row_offset_idx": 3,
+            "end_row_offset_idx": 4,
+            "start_col_offset_idx": 1,
+            "end_col_offset_idx": 2,
+            "text": "TG Cashew nuts mixwd Almond smoke",
+            "column_header": false,
+            "row_header": false,
+            "row_section": false,
+            "fillable": false
+          },
+          {
+            "bbox": {
+              "l": 269.0,
+              "t": 351.0,
+              "r": 289.0,
+              "b": 362.0,
+              "coord_origin": "TOPLEFT"
+            },
+            "row_span": 1,
+            "col_span": 1,
+            "start_row_offset_idx": 3,
+            "end_row_offset_idx": 4,
+            "start_col_offset_idx": 2,
+            "end_col_offset_idx": 3,
+            "text": "4.20",
+            "column_header": false,
+            "row_header": false,
+            "row_section": false,
+            "fillable": false
+          },
+          {
+            "bbox": {
+              "l": 299.5,
+              "t": 352.0,
+              "r": 319.5,
+              "b": 362.0,
+              "coord_origin": "TOPLEFT"
+            },
+            "row_span": 1,
+            "col_span": 1,
+            "start_row_offset_idx": 3,
+            "end_row_offset_idx": 4,
+            "start_col_offset_idx": 3,
+            "end_col_offset_idx": 4,
+            "text": "4.20",
+            "column_header": false,
+            "row_header": false,
+            "row_section": false,
+            "fillable": false
+          },
+          {
+            "bbox": {
+              "l": 174.5,
+              "t": 384.0,
+              "r": 187.5,
+              "b": 394.0,
+              "coord_origin": "TOPLEFT"
+            },
+            "row_span": 1,
+            "col_span": 1,
+            "start_row_offset_idx": 4,
+            "end_row_offset_idx": 5,
+            "start_col_offset_idx": 0,
+            "end_col_offset_idx": 1,
+            "text": "1x",
+            "column_header": false,
+            "row_header": false,
+            "row_section": false,
+            "fillable": false
+          },
+          {
+            "bbox": {
+              "l": 188.5,
+              "t": 383.0,
+              "r": 237.0,
+              "b": 416.5,
+              "coord_origin": "TOPLEFT"
+            },
+            "row_span": 1,
+            "col_span": 1,
+            "start_row_offset_idx": 4,
+            "end_row_offset_idx": 5,
+            "start_col_offset_idx": 1,
+            "end_col_offset_idx": 2,
+            "text": "TG Coated coconut peanuts",
+            "column_header": false,
+            "row_header": false,
+            "row_section": false,
+            "fillable": false
+          },
+          {
+            "bbox": {
+              "l": 268.0,
+              "t": 385.5,
+              "r": 288.5,
+              "b": 396.5,
+              "coord_origin": "TOPLEFT"
+            },
+            "row_span": 1,
+            "col_span": 1,
+            "start_row_offset_idx": 4,
+            "end_row_offset_idx": 5,
+            "start_col_offset_idx": 2,
+            "end_col_offset_idx": 3,
+            "text": "1.90",
+            "column_header": false,
+            "row_header": false,
+            "row_section": false,
+            "fillable": false
+          },
+          {
+            "bbox": {
+              "l": 298.5,
+              "t": 385.5,
+              "r": 319.0,
+              "b": 396.5,
+              "coord_origin": "TOPLEFT"
+            },
+            "row_span": 1,
+            "col_span": 1,
+            "start_row_offset_idx": 4,
+            "end_row_offset_idx": 5,
+            "start_col_offset_idx": 3,
+            "end_col_offset_idx": 4,
+            "text": "1.90",
+            "column_header": false,
+            "row_header": false,
+            "row_section": false,
+            "fillable": false
+          },
+          {
+            "bbox": {
+              "l": 189.0,
+              "t": 420.0,
+              "r": 219.0,
+              "b": 430.0,
+              "coord_origin": "TOPLEFT"
+            },
+            "row_span": 1,
+            "col_span": 3,
+            "start_row_offset_idx": 5,
+            "end_row_offset_idx": 6,
+            "start_col_offset_idx": 0,
+            "end_col_offset_idx": 3,
+            "text": "Discount",
+            "column_header": false,
+            "row_header": false,
+            "row_section": false,
+            "fillable": false
+          },
+          {
+            "bbox": {
+              "l": 302.0,
+              "t": 422.5,
+              "r": 318.0,
+              "b": 431.0,
+              "coord_origin": "TOPLEFT"
+            },
+            "row_span": 1,
+            "col_span": 1,
+            "start_row_offset_idx": 5,
+            "end_row_offset_idx": 6,
+            "start_col_offset_idx": 3,
+            "end_col_offset_idx": 4,
+            "text": "0.30",
+            "column_header": false,
+            "row_header": false,
+            "row_section": false,
+            "fillable": false
+          },
+          {
+            "bbox": {
+              "l": 188.0,
+              "t": 431.0,
+              "r": 242.0,
+              "b": 453.5,
+              "coord_origin": "TOPLEFT"
+            },
+            "row_span": 1,
+            "col_span": 3,
+            "start_row_offset_idx": 6,
+            "end_row_offset_idx": 7,
+            "start_col_offset_idx": 0,
+            "end_col_offset_idx": 3,
+            "text": "Total Amount Tendered",
+            "column_header": false,
+            "row_header": false,
+            "row_section": false,
+            "fillable": false
+          },
+          {
+            "bbox": {
+              "l": 292.0,
+              "t": 432.5,
+              "r": 317.5,
+              "b": 455.0,
+              "coord_origin": "TOPLEFT"
+            },
+            "row_span": 1,
+            "col_span": 1,
+            "start_row_offset_idx": 6,
+            "end_row_offset_idx": 7,
+            "start_col_offset_idx": 3,
+            "end_col_offset_idx": 4,
+            "text": "22.60 22.60",
+            "column_header": false,
+            "row_header": false,
+            "row_section": false,
+            "fillable": false
+          }
+        ],
+        "num_rows": 7,
+        "num_cols": 4,
+        "orientation": "rot_0",
+        "grid": [
+          [
+            {
+              "bbox": {
+                "l": 175.5,
+                "t": 282.5,
+                "r": 209.5,
+                "b": 293.0,
+                "coord_origin": "TOPLEFT"
+              },
+              "row_span": 1,
+              "col_span": 2,
+              "start_row_offset_idx": 0,
+              "end_row_offset_idx": 1,
+              "start_col_offset_idx": 0,
+              "end_col_offset_idx": 2,
+              "text": "QTY ITEM",
+              "column_header": false,
+              "row_header": false,
+              "row_section": false,
+              "fillable": false
+            },
+            {
+              "bbox": {
+                "l": 175.5,
+                "t": 282.5,
+                "r": 209.5,
+                "b": 293.0,
+                "coord_origin": "TOPLEFT"
+              },
+              "row_span": 1,
+              "col_span": 2,
+              "start_row_offset_idx": 0,
+              "end_row_offset_idx": 1,
+              "start_col_offset_idx": 0,
+              "end_col_offset_idx": 2,
+              "text": "QTY ITEM",
+              "column_header": false,
+              "row_header": false,
+              "row_section": false,
+              "fillable": false
+            },
+            {
+              "bbox": {
+                "l": 271.0,
+                "t": 286.0,
+                "r": 322.0,
+                "b": 302.5,
+                "coord_origin": "TOPLEFT"
+              },
+              "row_span": 1,
+              "col_span": 2,
+              "start_row_offset_idx": 0,
+              "end_row_offset_idx": 1,
+              "start_col_offset_idx": 2,
+              "end_col_offset_idx": 4,
+              "text": "PRICE TOTAL (RM) (RM)",
+              "column_header": false,
+              "row_header": false,
+              "row_section": false,
+              "fillable": false
+            },
+            {
+              "bbox": {
+                "l": 271.0,
+                "t": 286.0,
+                "r": 322.0,
+                "b": 302.5,
+                "coord_origin": "TOPLEFT"
+              },
+              "row_span": 1,
+              "col_span": 2,
+              "start_row_offset_idx": 0,
+              "end_row_offset_idx": 1,
+              "start_col_offset_idx": 2,
+              "end_col_offset_idx": 4,
+              "text": "PRICE TOTAL (RM) (RM)",
+              "column_header": false,
+              "row_header": false,
+              "row_section": false,
+              "fillable": false
+            }
+          ],
+          [
+            {
+              "bbox": {
+                "l": 177.5,
+                "t": 302.5,
+                "r": 189.0,
+                "b": 311.5,
+                "coord_origin": "TOPLEFT"
+              },
+              "row_span": 1,
+              "col_span": 1,
+              "start_row_offset_idx": 1,
+              "end_row_offset_idx": 2,
+              "start_col_offset_idx": 0,
+              "end_col_offset_idx": 1,
+              "text": "1x",
+              "column_header": false,
+              "row_header": false,
+              "row_section": false,
+              "fillable": false
+            },
+            {
+              "bbox": {
+                "l": 192.0,
+                "t": 301.0,
+                "r": 251.0,
+                "b": 313.0,
+                "coord_origin": "TOPLEFT"
+              },
+              "row_span": 1,
+              "col_span": 1,
+              "start_row_offset_idx": 1,
+              "end_row_offset_idx": 2,
+              "start_col_offset_idx": 1,
+              "end_col_offset_idx": 2,
+              "text": "VS FUJI500ml",
+              "column_header": false,
+              "row_header": false,
+              "row_section": false,
+              "fillable": false
+            },
+            {
+              "bbox": {
+                "l": 267.0,
+                "t": 303.0,
+                "r": 290.5,
+                "b": 313.5,
+                "coord_origin": "TOPLEFT"
+              },
+              "row_span": 1,
+              "col_span": 1,
+              "start_row_offset_idx": 1,
+              "end_row_offset_idx": 2,
+              "start_col_offset_idx": 2,
+              "end_col_offset_idx": 3,
+              "text": "10.00",
+              "column_header": false,
+              "row_header": false,
+              "row_section": false,
+              "fillable": false
+            },
+            {
+              "bbox": {
+                "l": 296.5,
+                "t": 302.5,
+                "r": 321.0,
+                "b": 314.5,
+                "coord_origin": "TOPLEFT"
+              },
+              "row_span": 1,
+              "col_span": 1,
+              "start_row_offset_idx": 1,
+              "end_row_offset_idx": 2,
+              "start_col_offset_idx": 3,
+              "end_col_offset_idx": 4,
+              "text": "10.00",
+              "column_header": false,
+              "row_header": false,
+              "row_section": false,
+              "fillable": false
+            }
+          ],
+          [
+            {
+              "bbox": {
+                "l": 176.5,
+                "t": 315.0,
+                "r": 188.5,
+                "b": 325.5,
+                "coord_origin": "TOPLEFT"
+              },
+              "row_span": 1,
+              "col_span": 1,
+              "start_row_offset_idx": 2,
+              "end_row_offset_idx": 3,
+              "start_col_offset_idx": 0,
+              "end_col_offset_idx": 1,
+              "text": "1x",
+              "column_header": false,
+              "row_header": false,
+              "row_section": false,
+              "fillable": false
+            },
+            {
+              "bbox": {
+                "l": 191.0,
+                "t": 314.5,
+                "r": 248.0,
+                "b": 349.5,
+                "coord_origin": "TOPLEFT"
+              },
+              "row_span": 1,
+              "col_span": 1,
+              "start_row_offset_idx": 2,
+              "end_row_offset_idx": 3,
+              "start_col_offset_idx": 1,
+              "end_col_offset_idx": 2,
+              "text": "Apollo cake original 30s (Diso: 0.3000)",
+              "column_header": false,
+              "row_header": false,
+              "row_section": false,
+              "fillable": false
+            },
+            {
+              "bbox": {
+                "l": 269.5,
+                "t": 316.0,
+                "r": 290.0,
+                "b": 327.5,
+                "coord_origin": "TOPLEFT"
+              },
+              "row_span": 1,
+              "col_span": 1,
+              "start_row_offset_idx": 2,
+              "end_row_offset_idx": 3,
+              "start_col_offset_idx": 2,
+              "end_col_offset_idx": 3,
+              "text": "6.80",
+              "column_header": false,
+              "row_header": false,
+              "row_section": false,
+              "fillable": false
+            },
+            {
+              "bbox": {
+                "l": 300.0,
+                "t": 316.5,
+                "r": 320.5,
+                "b": 328.0,
+                "coord_origin": "TOPLEFT"
+              },
+              "row_span": 1,
+              "col_span": 1,
+              "start_row_offset_idx": 2,
+              "end_row_offset_idx": 3,
+              "start_col_offset_idx": 3,
+              "end_col_offset_idx": 4,
+              "text": "6.50",
+              "column_header": false,
+              "row_header": false,
+              "row_section": false,
+              "fillable": false
+            }
+          ],
+          [
+            {
+              "bbox": {
+                "l": 175.5,
+                "t": 350.0,
+                "r": 187.5,
+                "b": 360.0,
+                "coord_origin": "TOPLEFT"
+              },
+              "row_span": 1,
+              "col_span": 1,
+              "start_row_offset_idx": 3,
+              "end_row_offset_idx": 4,
+              "start_col_offset_idx": 0,
+              "end_col_offset_idx": 1,
+              "text": "1x",
+              "column_header": false,
+              "row_header": false,
+              "row_section": false,
+              "fillable": false
+            },
+            {
+              "bbox": {
+                "l": 190.5,
+                "t": 349.0,
+                "r": 252.5,
+                "b": 381.5,
+                "coord_origin": "TOPLEFT"
+              },
+              "row_span": 1,
+              "col_span": 1,
+              "start_row_offset_idx": 3,
+              "end_row_offset_idx": 4,
+              "start_col_offset_idx": 1,
+              "end_col_offset_idx": 2,
+              "text": "TG Cashew nuts mixwd Almond smoke",
+              "column_header": false,
+              "row_header": false,
+              "row_section": false,
+              "fillable": false
+            },
+            {
+              "bbox": {
+                "l": 269.0,
+                "t": 351.0,
+                "r": 289.0,
+                "b": 362.0,
+                "coord_origin": "TOPLEFT"
+              },
+              "row_span": 1,
+              "col_span": 1,
+              "start_row_offset_idx": 3,
+              "end_row_offset_idx": 4,
+              "start_col_offset_idx": 2,
+              "end_col_offset_idx": 3,
+              "text": "4.20",
+              "column_header": false,
+              "row_header": false,
+              "row_section": false,
+              "fillable": false
+            },
+            {
+              "bbox": {
+                "l": 299.5,
+                "t": 352.0,
+                "r": 319.5,
+                "b": 362.0,
+                "coord_origin": "TOPLEFT"
+              },
+              "row_span": 1,
+              "col_span": 1,
+              "start_row_offset_idx": 3,
+              "end_row_offset_idx": 4,
+              "start_col_offset_idx": 3,
+              "end_col_offset_idx": 4,
+              "text": "4.20",
+              "column_header": false,
+              "row_header": false,
+              "row_section": false,
+              "fillable": false
+            }
+          ],
+          [
+            {
+              "bbox": {
+                "l": 174.5,
+                "t": 384.0,
+                "r": 187.5,
+                "b": 394.0,
+                "coord_origin": "TOPLEFT"
+              },
+              "row_span": 1,
+              "col_span": 1,
+              "start_row_offset_idx": 4,
+              "end_row_offset_idx": 5,
+              "start_col_offset_idx": 0,
+              "end_col_offset_idx": 1,
+              "text": "1x",
+              "column_header": false,
+              "row_header": false,
+              "row_section": false,
+              "fillable": false
+            },
+            {
+              "bbox": {
+                "l": 188.5,
+                "t": 383.0,
+                "r": 237.0,
+                "b": 416.5,
+                "coord_origin": "TOPLEFT"
+              },
+              "row_span": 1,
+              "col_span": 1,
+              "start_row_offset_idx": 4,
+              "end_row_offset_idx": 5,
+              "start_col_offset_idx": 1,
+              "end_col_offset_idx": 2,
+              "text": "TG Coated coconut peanuts",
+              "column_header": false,
+              "row_header": false,
+              "row_section": false,
+              "fillable": false
+            },
+            {
+              "bbox": {
+                "l": 268.0,
+                "t": 385.5,
+                "r": 288.5,
+                "b": 396.5,
+                "coord_origin": "TOPLEFT"
+              },
+              "row_span": 1,
+              "col_span": 1,
+              "start_row_offset_idx": 4,
+              "end_row_offset_idx": 5,
+              "start_col_offset_idx": 2,
+              "end_col_offset_idx": 3,
+              "text": "1.90",
+              "column_header": false,
+              "row_header": false,
+              "row_section": false,
+              "fillable": false
+            },
+            {
+              "bbox": {
+                "l": 298.5,
+                "t": 385.5,
+                "r": 319.0,
+                "b": 396.5,
+                "coord_origin": "TOPLEFT"
+              },
+              "row_span": 1,
+              "col_span": 1,
+              "start_row_offset_idx": 4,
+              "end_row_offset_idx": 5,
+              "start_col_offset_idx": 3,
+              "end_col_offset_idx": 4,
+              "text": "1.90",
+              "column_header": false,
+              "row_header": false,
+              "row_section": false,
+              "fillable": false
+            }
+          ],
+          [
+            {
+              "bbox": {
+                "l": 189.0,
+                "t": 420.0,
+                "r": 219.0,
+                "b": 430.0,
+                "coord_origin": "TOPLEFT"
+              },
+              "row_span": 1,
+              "col_span": 3,
+              "start_row_offset_idx": 5,
+              "end_row_offset_idx": 6,
+              "start_col_offset_idx": 0,
+              "end_col_offset_idx": 3,
+              "text": "Discount",
+              "column_header": false,
+              "row_header": false,
+              "row_section": false,
+              "fillable": false
+            },
+            {
+              "bbox": {
+                "l": 189.0,
+                "t": 420.0,
+                "r": 219.0,
+                "b": 430.0,
+                "coord_origin": "TOPLEFT"
+              },
+              "row_span": 1,
+              "col_span": 3,
+              "start_row_offset_idx": 5,
+              "end_row_offset_idx": 6,
+              "start_col_offset_idx": 0,
+              "end_col_offset_idx": 3,
+              "text": "Discount",
+              "column_header": false,
+              "row_header": false,
+              "row_section": false,
+              "fillable": false
+            },
+            {
+              "bbox": {
+                "l": 189.0,
+                "t": 420.0,
+                "r": 219.0,
+                "b": 430.0,
+                "coord_origin": "TOPLEFT"
+              },
+              "row_span": 1,
+              "col_span": 3,
+              "start_row_offset_idx": 5,
+              "end_row_offset_idx": 6,
+              "start_col_offset_idx": 0,
+              "end_col_offset_idx": 3,
+              "text": "Discount",
+              "column_header": false,
+              "row_header": false,
+              "row_section": false,
+              "fillable": false
+            },
+            {
+              "bbox": {
+                "l": 302.0,
+                "t": 422.5,
+                "r": 318.0,
+                "b": 431.0,
+                "coord_origin": "TOPLEFT"
+              },
+              "row_span": 1,
+              "col_span": 1,
+              "start_row_offset_idx": 5,
+              "end_row_offset_idx": 6,
+              "start_col_offset_idx": 3,
+              "end_col_offset_idx": 4,
+              "text": "0.30",
+              "column_header": false,
+              "row_header": false,
+              "row_section": false,
+              "fillable": false
+            }
+          ],
+          [
+            {
+              "bbox": {
+                "l": 188.0,
+                "t": 431.0,
+                "r": 242.0,
+                "b": 453.5,
+                "coord_origin": "TOPLEFT"
+              },
+              "row_span": 1,
+              "col_span": 3,
+              "start_row_offset_idx": 6,
+              "end_row_offset_idx": 7,
+              "start_col_offset_idx": 0,
+              "end_col_offset_idx": 3,
+              "text": "Total Amount Tendered",
+              "column_header": false,
+              "row_header": false,
+              "row_section": false,
+              "fillable": false
+            },
+            {
+              "bbox": {
+                "l": 188.0,
+                "t": 431.0,
+                "r": 242.0,
+                "b": 453.5,
+                "coord_origin": "TOPLEFT"
+              },
+              "row_span": 1,
+              "col_span": 3,
+              "start_row_offset_idx": 6,
+              "end_row_offset_idx": 7,
+              "start_col_offset_idx": 0,
+              "end_col_offset_idx": 3,
+              "text": "Total Amount Tendered",
+              "column_header": false,
+              "row_header": false,
+              "row_section": false,
+              "fillable": false
+            },
+            {
+              "bbox": {
+                "l": 188.0,
+                "t": 431.0,
+                "r": 242.0,
+                "b": 453.5,
+                "coord_origin": "TOPLEFT"
+              },
+              "row_span": 1,
+              "col_span": 3,
+              "start_row_offset_idx": 6,
+              "end_row_offset_idx": 7,
+              "start_col_offset_idx": 0,
+              "end_col_offset_idx": 3,
+              "text": "Total Amount Tendered",
+              "column_header": false,
+              "row_header": false,
+              "row_section": false,
+              "fillable": false
+            },
+            {
+              "bbox": {
+                "l": 292.0,
+                "t": 432.5,
+                "r": 317.5,
+                "b": 455.0,
+                "coord_origin": "TOPLEFT"
+              },
+              "row_span": 1,
+              "col_span": 1,
+              "start_row_offset_idx": 6,
+              "end_row_offset_idx": 7,
+              "start_col_offset_idx": 3,
+              "end_col_offset_idx": 4,
+              "text": "22.60 22.60",
+              "column_header": false,
+              "row_header": false,
+              "row_section": false,
+              "fillable": false
+            }
+          ]
+        ]
+      },
+      "annotations": []
+    }
+  ],
+  "name": "public-sroie-row27",
+  "origin": {
+    "filename": "public-sroie-row27.jpg"
+  },
+  "test_source": {
+    "dataset": "ICDAR2019 SROIE",
+    "split": "test",
+    "row": 27,
+    "license": "CC-BY-4.0",
+    "image_sha256": "292c193f067a4689762cabfbcb3af599f6c04709ed7c32e80085a60a82b1592a",
+    "kind": "retained Docling/RapidOCR output; not ground-truth labels"
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "original_id": "6984bad10f763d83586fdef2",
+  "original_filepath": "data/batch1-0005.jpg",
+  "json_annotation": {
+    "invoice": {
+      "client_name": "Deleon, Davila and Allen",
+      "client_address": "355 King Lake Suite 071\nSouth Haleyshire, KY 55765",
+      "seller_name": "Johnson-Martin",
+      "seller_address": "3836 Moore Ports\nNorth Michael, MO 01844",
+      "invoice_number": "89969473",
+      "invoice_date": "10/29/2016",
+      "due_date": ""
+    },
+    "items": [
+      {
+        "description": "Wild West Wine",
+        "quantity": "2.00",
+        "total_price": "59.40"
+      },
+      {
+        "description": "Press Wine 15L Fruit Cider\nApple Crusher Juice Grape\nStainless Maker Grapes New",
+        "quantity": "2.00",
+        "total_price": "613.80"
+      },
+      {
+        "description": "Wine Rack Holder Iron Art\nHanging Racks Glass Cup\nStemware Shelf Mounted 2\nColor",
+        "quantity": "3.00",
+        "total_price": "61.87"
+      },
+      {
+        "description": "Rust Proof Three Rows Tool\nWine Glass Holder Simple Iron\nWire Home Hanging Rack",
+        "quantity": "2.00",
+        "total_price": "25.43"
+      },
+      {
+        "description": "VTG 1970s MCM Brown Steel\nTube Wall or Desk Mounted\n12-Wine Rack Bottle Holder",
+        "quantity": "1.00",
+        "total_price": "37.40"
+      }
+    ],
+    "subtotal": {
+      "tax": "72.54",
+      "discount": "",
+      "total": "797.91"
+    },
+    "payment_instructions": {
+      "due_date": "",
+      "bank_name": "",
+      "account_number": "",
+      "payment_method": ""
+    }
+  },
+  "original_json_annotation_text": "{\n  \"invoice\": {\n    \"client_name\": \"Deleon, Davila and Allen\",\n    \"client_address\": \"355 King Lake Suite 071\\nSouth Haleyshire, KY 55765\",\n    \"seller_name\": \"Johnson-Martin\",\n    \"seller_address\": \"3836 Moore Ports\\nNorth Michael, MO 01844\",\n    \"invoice_number\": \"89969473\",\n    \"invoice_date\": \"10/29/2016\",\n    \"due_date\": \"\"\n  },\n  \"items\": [\n    {\n      \"description\": \"Wild West Wine\",\n      \"quantity\": \"2.00\",\n      \"total_price\": \"59.40\"\n    },\n    {\n      \"description\": \"Press Wine 15L Fruit Cider\\nApple Crusher Juice Grape\\nStainless Maker Grapes New\",\n      \"quantity\": \"2.00\",\n      \"total_price\": \"613.80\"\n    },\n    {\n      \"description\": \"Wine Rack Holder Iron Art\\nHanging Racks Glass Cup\\nStemware Shelf Mounted 2\\nColor\",\n      \"quantity\": \"3.00\",\n      \"total_price\": \"61.87\"\n    },\n    {\n      \"description\": \"Rust Proof Three Rows Tool\\nWine Glass Holder Simple Iron\\nWire Home Hanging Rack\",\n      \"quantity\": \"2.00\",\n      \"total_price\": \"25.43\"\n    },\n    {\n      \"description\": \"VTG 1970s MCM Brown Steel\\nTube Wall or Desk Mounted\\n12-Wine Rack Bottle Holder\",\n      \"quantity\": \"1.00\",\n      \"total_price\": \"37.40\"\n    }\n  ],\n  \"subtotal\": {\n    \"tax\": \"72.54\",\n    \"discount\": \"\",\n    \"total\": \"797.91\"\n  },\n  \"payment_instructions\": {\n    \"due_date\": \"\",\n    \"bank_name\": \"\",\n    \"account_number\": \"\",\n    \"payment_method\": \"\"\n  }\n}",
+  "ocr_text": "Invoice no: 89969473 Date of issue: 10/29/2016 Seller: Client: Johnson-Martin Deleon, Davila and Allen 3836 Moore Ports 355 King Lake Suite 071 North Michael, MO 01844 South Haleyshire, KY 55765 Tax Id: 972-82-0713 Tax Id: 944-77-3882 IBAN: GB71GBDG68039919194335 ITEMS No. Description Qty UM Net price Net worth VAT [%] Gross worth 1 Wild West Wine 2,00 each 27,00 54,00 10% 59,40 2 Press Wine 15L Fruit Cider 2,00 each 279,00 558,00 10% 613,80 Apple Crusher Juice Grape Stainless Maker Grapes New 3 Wine Rack Holder Iron Art 3,00 each 18,75 56,25 10% 61,87 Hanging Racks Glass Cup Stemware Shelf Mounted 2 Color Rust Proof Three Rows Tool 2,00 each 11,56 23,12 10% 25,43 Wine Glass Holder Simple Iron Wire Home Hanging Rack 5 VTG 1970s MCM Brown Steel 1,00 each 34,00 34,00 10% 37,40 Tube Wall or Desk Mounted 12-Wine Rack Bottle Holder SUMMARY VAT [%] Net worth VAT Gross worth 10% 725,37 72,54 797,91 Total $ 725,37 $ 72,54 $ 797,91"
+}

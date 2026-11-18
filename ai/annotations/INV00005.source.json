@@ -1,0 +1,111 @@
+{
+  "filename": "invoice_51109313.pdf",
+  "json_data": {
+    "invoice_no": "51109313",
+    "date_of_issue": "13/12/2023",
+    "seller": {
+      "name": "TechVision Distributors Pvt Ltd",
+      "address": "Plot 14, MIDC Industrial Area, Andheri East, Mumbai, Maharashtra - 400093",
+      "tax_id": "27AABCT1234F1Z5",
+      "gstin": "27AABCT1234F1Z5"
+    },
+    "client": {
+      "name": "Bhopal Smart Tech",
+      "address": "78 MP Nagar, Bhopal, Madhya Pradesh - 462011",
+      "tax_id": "574-71-6635"
+    },
+    "items": [
+      {
+        "item_no": "1.",
+        "description": "Keychron K8 Pro Mechanical Keyboard",
+        "quantity": "6.00",
+        "unit_measure": "pcs",
+        "net_price": "13,958.00",
+        "net_worth": "83,748.00",
+        "vat_pct": "10%",
+        "gross_worth": "92,122.80"
+      },
+      {
+        "item_no": "2.",
+        "description": "LG 43 inch 4K UHD Smart WebOS TV",
+        "quantity": "6.00",
+        "unit_measure": "pcs",
+        "net_price": "42,382.00",
+        "net_worth": "254,292.00",
+        "vat_pct": "10%",
+        "gross_worth": "279,721.20"
+      },
+      {
+        "item_no": "3.",
+        "description": "Vivo X100 Pro 256GB Asteroid Black",
+        "quantity": "7.00",
+        "unit_measure": "pcs",
+        "net_price": "94,096.00",
+        "net_worth": "658,672.00",
+        "vat_pct": "10%",
+        "gross_worth": "724,539.20"
+      },
+      {
+        "item_no": "4.",
+        "description": "Samsung Galaxy Tab S9 256GB Graphite",
+        "quantity": "1.00",
+        "unit_measure": "pcs",
+        "net_price": "84,832.00",
+        "net_worth": "84,832.00",
+        "vat_pct": "10%",
+        "gross_worth": "93,315.20"
+      },
+      {
+        "item_no": "5.",
+        "description": "Lenovo Tab P12 Pro 256GB Storm Grey",
+        "quantity": "3.00",
+        "unit_measure": "pcs",
+        "net_price": "39,690.00",
+        "net_worth": "119,070.00",
+        "vat_pct": "10%",
+        "gross_worth": "130,977.00"
+      },
+      {
+        "item_no": "6.",
+        "description": "Apple MacBook Air M2 8GB 256GB Silver",
+        "quantity": "4.00",
+        "unit_measure": "pcs",
+        "net_price": "99,128.00",
+        "net_worth": "396,512.00",
+        "vat_pct": "10%",
+        "gross_worth": "436,163.20"
+      },
+      {
+        "item_no": "7.",
+        "description": "Asus VivoBook 16 Ryzen 7 16GB 512GB",
+        "quantity": "10.00",
+        "unit_measure": "pcs",
+        "net_price": "68,635.00",
+        "net_worth": "686,350.00",
+        "vat_pct": "10%",
+        "gross_worth": "754,985.00"
+      },
+      {
+        "item_no": "8.",
+        "description": "Realme GT 5 Pro 256GB Navigator Beige",
+        "quantity": "5.00",
+        "unit_measure": "pcs",
+        "net_price": "37,533.00",
+        "net_worth": "187,665.00",
+        "vat_pct": "10%",
+        "gross_worth": "206,431.50"
+      }
+    ],
+    "summary": {
+      "vat_pct": "10%",
+      "net_worth": "2,471,141.00",
+      "vat_amount": "247,114.10",
+      "gross_worth": "2,718,255.10",
+      "total_net_worth": "INR 2,471,141.00",
+      "total_vat": "INR 247,114.10",
+      "total_gross_worth": "INR 2,718,255.10"
+    }
+  },
+  "original_json_annotation_text": "{\n  \"invoice_no\": \"51109313\",\n  \"date_of_issue\": \"13/12/2023\",\n  \"seller\": {\n    \"name\": \"TechVision Distributors Pvt Ltd\",\n    \"address\": \"Plot 14, MIDC Industrial Area, Andheri East, Mumbai, Maharashtra - 400093\",\n    \"tax_id\": \"27AABCT1234F1Z5\",\n    \"gstin\": \"27AABCT1234F1Z5\"\n  },\n  \"client\": {\n    \"name\": \"Bhopal Smart Tech\",\n    \"address\": \"78 MP Nagar, Bhopal, Madhya Pradesh - 462011\",\n    \"tax_id\": \"574-71-6635\"\n  },\n  \"items\": [\n    {\n      \"item_no\": \"1.\",\n      \"description\": \"Keychron K8 Pro Mechanical Keyboard\",\n      \"quantity\": \"6.00\",\n      \"unit_measure\": \"pcs\",\n      \"net_price\": \"13,958.00\",\n      \"net_worth\": \"83,748.00\",\n      \"vat_pct\": \"10%\",\n      \"gross_worth\": \"92,122.80\"\n    },\n    {\n      \"item_no\": \"2.\",\n      \"description\": \"LG 43 inch 4K UHD Smart WebOS TV\",\n      \"quantity\": \"6.00\",\n      \"unit_measure\": \"pcs\",\n      \"net_price\": \"42,382.00\",\n      \"net_worth\": \"254,292.00\",\n      \"vat_pct\": \"10%\",\n      \"gross_worth\": \"279,721.20\"\n    },\n    {\n      \"item_no\": \"3.\",\n      \"description\": \"Vivo X100 Pro 256GB Asteroid Black\",\n      \"quantity\": \"7.00\",\n      \"unit_measure\": \"pcs\",\n      \"net_price\": \"94,096.00\",\n      \"net_worth\": \"658,672.00\",\n      \"vat_pct\": \"10%\",\n      \"gross_worth\": \"724,539.20\"\n    },\n    {\n      \"item_no\": \"4.\",\n      \"description\": \"Samsung Galaxy Tab S9 256GB Graphite\",\n      \"quantity\": \"1.00\",\n      \"unit_measure\": \"pcs\",\n      \"net_price\": \"84,832.00\",\n      \"net_worth\": \"84,832.00\",\n      \"vat_pct\": \"10%\",\n      \"gross_worth\": \"93,315.20\"\n    },\n    {\n      \"item_no\": \"5.\",\n      \"description\": \"Lenovo Tab P12 Pro 256GB Storm Grey\",\n      \"quantity\": \"3.00\",\n      \"unit_measure\": \"pcs\",\n      \"net_price\": \"39,690.00\",\n      \"net_worth\": \"119,070.00\",\n      \"vat_pct\": \"10%\",\n      \"gross_worth\": \"130,977.00\"\n    },\n    {\n      \"item_no\": \"6.\",\n      \"description\": \"Apple MacBook Air M2 8GB 256GB Silver\",\n      \"quantity\": \"4.00\",\n      \"unit_measure\": \"pcs\",\n      \"net_price\": \"99,128.00\",\n      \"net_worth\": \"396,512.00\",\n      \"vat_pct\": \"10%\",\n      \"gross_worth\": \"436,163.20\"\n    },\n    {\n      \"item_no\": \"7.\",\n      \"description\": \"Asus VivoBook 16 Ryzen 7 16GB 512GB\",\n      \"quantity\": \"10.00\",\n      \"unit_measure\": \"pcs\",\n      \"net_price\": \"68,635.00\",\n      \"net_worth\": \"686,350.00\",\n      \"vat_pct\": \"10%\",\n      \"gross_worth\": \"754,985.00\"\n    },\n    {\n      \"item_no\": \"8.\",\n      \"description\": \"Realme GT 5 Pro 256GB Navigator Beige\",\n      \"quantity\": \"5.00\",\n      \"unit_measure\": \"pcs\",\n      \"net_price\": \"37,533.00\",\n      \"net_worth\": \"187,665.00\",\n      \"vat_pct\": \"10%\",\n      \"gross_worth\": \"206,431.50\"\n    }\n  ],\n  \"summary\": {\n    \"vat_pct\": \"10%\",\n    \"net_worth\": \"2,471,141.00\",\n    \"vat_amount\": \"247,114.10\",\n    \"gross_worth\": \"2,718,255.10\",\n    \"total_net_worth\": \"INR 2,471,141.00\",\n    \"total_vat\": \"INR 247,114.10\",\n    \"total_gross_worth\": \"INR 2,718,255.10\"\n  }\n}",
+  "published_ocred_text": "Invoice no: 51109313\nDate of issue: 13/12/2023\nSeller: Client:\nTechVision Distributors Pvt Ltd Bhopal Smart Tech\nPlot 14, MIDC Industrial Area, Andheri East 78 MP Nagar\nMumbai, Maharashtra - 400093 Bhopal, Madhya Pradesh - 462011\nTax Id: 27AABCT1234F1Z5 Tax Id: 574-71-6635\nGSTIN: 27AABCT1234F1Z5\nITEMS\nNo. Description Qty UM Net Price Net Worth VAT % Gross\nWorth\n1. Keychron K8 Pro Mechanical Keyboard 6.00 pcs 13,958.00 83,748.00 10% 92,122.80\n2. LG 43 inch 4K UHD Smart WebOS TV 6.00 pcs 42,382.00 254,292.00 10% 279,721.20\n3. Vivo X100 Pro 256GB Asteroid Black 7.00 pcs 94,096.00 658,672.00 10% 724,539.20\n4. Samsung Galaxy Tab S9 256GB 1.00 pcs 84,832.00 84,832.00 10% 93,315.20\nGraphite\n5. Lenovo Tab P12 Pro 256GB Storm Grey 3.00 pcs 39,690.00 119,070.00 10% 130,977.00\n6. Apple MacBook Air M2 8GB 256GB 4.00 pcs 99,128.00 396,512.00 10% 436,163.20\nSilver\n7. Asus VivoBook 16 Ryzen 7 16GB 512GB 10.00 pcs 68,635.00 686,350.00 10% 754,985.00\n8. Realme GT 5 Pro 256GB Navigator Beige 5.00 pcs 37,533.00 187,665.00 10% 206,431.50\nSUMMARY\nVAT % Net Worth VAT Gross Worth\n10% 2,471,141.00 247,114.10 2,718,255.10\nINR\nTotal INR 2,471,141.00 INR 2,718,255.10\n247,114.10"
+}

@@ -1,0 +1,55 @@
+{
+  "original_id": "6984bad10f763d83586fdd68",
+  "original_filepath": "data/batch1-0006.jpg",
+  "json_annotation": {
+    "invoice": {
+      "client_name": "Duncan-Davis",
+      "client_address": "PSC 2324, Box 6632\nAPO AP 93827",
+      "seller_name": "Obrien Group",
+      "seller_address": "6217 Boyd Ville Apt. 758\nRobbinsberg, AZ 54997",
+      "invoice_number": "72128555",
+      "invoice_date": "12/25/2013",
+      "due_date": ""
+    },
+    "items": [
+      {
+        "description": "Fatawa Islamiyah (Islamic Verdicts) (8 Volume Set)",
+        "quantity": "2.00",
+        "total_price": "219.78"
+      },
+      {
+        "description": "Sasinowski M-Legacy Of Ra BOOK NEW",
+        "quantity": "1.00",
+        "total_price": "21.34"
+      },
+      {
+        "description": "Time Life Books: The Old West Series ~ Complete 26 Volumes + Master Index mn853",
+        "quantity": "3.00",
+        "total_price": "461.83"
+      },
+      {
+        "description": "Tumbling by Caela Carter",
+        "quantity": "3.00",
+        "total_price": "14.82"
+      },
+      {
+        "description": "How to Win Friends & Influence People",
+        "quantity": "2.00",
+        "total_price": "14.56"
+      }
+    ],
+    "subtotal": {
+      "tax": "66.58",
+      "discount": "",
+      "total": "732.34"
+    },
+    "payment_instructions": {
+      "due_date": "",
+      "bank_name": "",
+      "account_number": "",
+      "payment_method": ""
+    }
+  },
+  "original_json_annotation_text": "{\n  \"invoice\": {\n    \"client_name\": \"Duncan-Davis\",\n    \"client_address\": \"PSC 2324, Box 6632\\nAPO AP 93827\",\n    \"seller_name\": \"Obrien Group\",\n    \"seller_address\": \"6217 Boyd Ville Apt. 758\\nRobbinsberg, AZ 54997\",\n    \"invoice_number\": \"72128555\",\n    \"invoice_date\": \"12/25/2013\",\n    \"due_date\": \"\"\n  },\n  \"items\": [\n    {\n      \"description\": \"Fatawa Islamiyah (Islamic Verdicts) (8 Volume Set)\",\n      \"quantity\": \"2.00\",\n      \"total_price\": \"219.78\"\n    },\n    {\n      \"description\": \"Sasinowski M-Legacy Of Ra BOOK NEW\",\n      \"quantity\": \"1.00\",\n      \"total_price\": \"21.34\"\n    },\n    {\n      \"description\": \"Time Life Books: The Old West Series ~ Complete 26 Volumes + Master Index mn853\",\n      \"quantity\": \"3.00\",\n      \"total_price\": \"461.83\"\n    },\n    {\n      \"description\": \"Tumbling by Caela Carter\",\n      \"quantity\": \"3.00\",\n      \"total_price\": \"14.82\"\n    },\n    {\n      \"description\": \"How to Win Friends & Influence People\",\n      \"quantity\": \"2.00\",\n      \"total_price\": \"14.56\"\n    }\n  ],\n  \"subtotal\": {\n    \"tax\": \"66.58\",\n    \"discount\": \"\",\n    \"total\": \"732.34\"\n  },\n  \"payment_instructions\": {\n    \"due_date\": \"\",\n    \"bank_name\": \"\",\n    \"account_number\": \"\",\n    \"payment_method\": \"\"\n  }\n}",
+  "ocr_text": "Invoice no: 72128555 Date of issue: 12/25/2013 Seller: Client: Obrien Group Duncan-Davis 6217 Boyd Ville Apt: 758 PSC 2324, Box 6632 Robbinsberg, AZ 54997 APO AP 93827 Tax Id: 905-82-5399 Tax Id: 917-86-7656 IBAN: GBZIQMAA96406297569205 ITEMS No. Description Qty UM Net price Net worth VAT [%] Gross worth Fatawa Islamiyah (Islamic 2,00 each 99,90 199,80 10% 219,78 Verdicts) (8 Volume Set) 2 Sasinowski M-Legacy Of Ra 1,00 each 19,40 19,40 10% 21,34 BOOK NEW 3 Time Life Books: The Old West 3,00 each 139,95 419,85 10% 461,83 Series Complete 26 Volumes Master Index mn853 Tumbling by Caela Carter 3,00 each 4,49 13,47 10% 14,82 5 How to Win Friends Influence 2,00 each 6,62 13,24 10% 14,56 People SUMMARY VAT [%] Net worth VAT Gross worth 10% 665,76 66,58 732,34 Total $ 665,76 $ 66,58 $ 732,34"
+}

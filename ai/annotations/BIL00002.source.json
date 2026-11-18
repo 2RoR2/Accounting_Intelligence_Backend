@@ -1,0 +1,273 @@
+{
+  "source_row_index": 40,
+  "row": {
+    "file_name": "synth_0042_76a17777.png",
+    "supplier_name": "Murray Energy Solutions Ltd.",
+    "supplier_address": null,
+    "supplier_phone": "01 234 5678",
+    "supplier_email": "billing@murrayenergy.ie",
+    "supplier_website": "https://www.murrayenergy.ie",
+    "supplier_company_registrations": "IE 3298401F",
+    "customer_name": "Eircom Customer Services",
+    "customer_id": null,
+    "customer_address": "123 Dublin Street, D02 AX12, Dublin",
+    "billing_address": null,
+    "shipping_address": null,
+    "customer_company_registrations": null,
+    "document_type_extended": null,
+    "document_number": "20230315/INV-01",
+    "invoice_number": "INV-20230315001",
+    "receipt_number": null,
+    "reference_numbers": null,
+    "po_number": "PO-987654321",
+    "document_date": "2023-03-15",
+    "document_time": null,
+    "due_date": "2023-04-14",
+    "payment_date": null,
+    "document_currency": "EUR",
+    "document_total_amount": "132.18",
+    "document_total_net": "113.4",
+    "document_total_tax": "18.78",
+    "document_category": "utilities",
+    "subcategory": "electricity",
+    "locale": "en",
+    "notes": "",
+    "_template_used": "utility_bill",
+    "_font_info": "Noto Sans",
+    "line_items": [
+      {
+        "description": "Electricity consumption",
+        "quantity": "120.0",
+        "unit_price": "0.12",
+        "amount": "14.4",
+        "tax_rate": "23%",
+        "tax_amount": "3.31"
+      },
+      {
+        "description": "Water consumption",
+        "quantity": "50.0",
+        "unit_price": "0.8",
+        "amount": "40.0",
+        "tax_rate": "13.5%",
+        "tax_amount": "5.4"
+      },
+      {
+        "description": "Gas consumption",
+        "quantity": "30.0",
+        "unit_price": "0.7",
+        "amount": "21.0",
+        "tax_rate": "23%",
+        "tax_amount": "4.83"
+      },
+      {
+        "description": "Fixed service charge",
+        "quantity": "1.0",
+        "unit_price": "10.0",
+        "amount": "10.0",
+        "tax_rate": "23%",
+        "tax_amount": "2.3"
+      },
+      {
+        "description": "Meter installation",
+        "quantity": "1.0",
+        "unit_price": "25.0",
+        "amount": "25.0",
+        "tax_rate": "9%",
+        "tax_amount": "2.25"
+      },
+      {
+        "description": "Late payment fee",
+        "quantity": "1.0",
+        "unit_price": "5.0",
+        "amount": "5.0",
+        "tax_rate": "23%",
+        "tax_amount": "1.15"
+      },
+      {
+        "description": "Discount",
+        "quantity": "1.0",
+        "unit_price": "-2.0",
+        "amount": "-2.0",
+        "tax_rate": "23%",
+        "tax_amount": "-0.46"
+      },
+      {
+        "description": "VAT waiver",
+        "quantity": "1.0",
+        "unit_price": "0.0",
+        "amount": "0.0",
+        "tax_rate": "0%",
+        "tax_amount": "0.0"
+      }
+    ],
+    "taxes": [
+      {
+        "base": "48.4",
+        "rate": "23%",
+        "code": "VAT",
+        "value": "11.13"
+      },
+      {
+        "base": "40.0",
+        "rate": "13.5%",
+        "code": "VAT",
+        "value": "5.4"
+      },
+      {
+        "base": "25.0",
+        "rate": "9%",
+        "code": "VAT",
+        "value": "2.25"
+      },
+      {
+        "base": "0.0",
+        "rate": "0%",
+        "code": "VAT",
+        "value": "0.0"
+      }
+    ],
+    "image": {
+      "src": "https://datasets-server.huggingface.co/cached-assets/alamgirqazi/invoice-ocr-synthetic/--/673ff85be462eb7f3715ec188a295dd17ca11115/--/default/train/40/image/image.jpg",
+      "height": 2339,
+      "width": 1654
+    },
+    "quality": "clean"
+  },
+  "released_record_index": 40,
+  "released_record_decimal_strings": {
+    "file_name": "synth_0042_76a17777.png",
+    "supplier_name": "Murray Energy Solutions Ltd.",
+    "document_date": "2023-03-15",
+    "document_time": null,
+    "document_currency": "EUR",
+    "document_total_amount": "132.18",
+    "document_total_net": "113.4",
+    "document_total_tax": "18.78",
+    "document_category": "utilities",
+    "subcategory": "electricity",
+    "due_date": "2023-04-14",
+    "payment_date": null,
+    "document_type_extended": null,
+    "document_number": "20230315/INV-01",
+    "receipt_number": null,
+    "invoice_number": "INV-20230315001",
+    "reference_numbers": null,
+    "po_number": "PO-987654321",
+    "locale": "en",
+    "customer_name": "Eircom Customer Services",
+    "customer_id": null,
+    "customer_address": "123 Dublin Street, D02 AX12, Dublin",
+    "billing_address": null,
+    "shipping_address": null,
+    "customer_company_registrations": null,
+    "supplier_address": null,
+    "supplier_phone": "01 234 5678",
+    "supplier_email": "billing@murrayenergy.ie",
+    "supplier_website": "https://www.murrayenergy.ie",
+    "supplier_company_registrations": "IE 3298401F",
+    "line_items": [
+      {
+        "description": "Electricity consumption",
+        "quantity": "120.0",
+        "unit_price": "0.12",
+        "amount": "14.4",
+        "tax_rate": "23%",
+        "tax_amount": "3.31"
+      },
+      {
+        "description": "Water consumption",
+        "quantity": "50.0",
+        "unit_price": "0.8",
+        "amount": "40.0",
+        "tax_rate": "13.5%",
+        "tax_amount": "5.4"
+      },
+      {
+        "description": "Gas consumption",
+        "quantity": "30.0",
+        "unit_price": "0.7",
+        "amount": "21.0",
+        "tax_rate": "23%",
+        "tax_amount": "4.83"
+      },
+      {
+        "description": "Fixed service charge",
+        "quantity": "1.0",
+        "unit_price": "10.0",
+        "amount": "10.0",
+        "tax_rate": "23%",
+        "tax_amount": "2.3"
+      },
+      {
+        "description": "Meter installation",
+        "quantity": "1.0",
+        "unit_price": "25.0",
+        "amount": "25.0",
+        "tax_rate": "9%",
+        "tax_amount": "2.25"
+      },
+      {
+        "description": "Late payment fee",
+        "quantity": "1.0",
+        "unit_price": "5.0",
+        "amount": "5.0",
+        "tax_rate": "23%",
+        "tax_amount": "1.15"
+      },
+      {
+        "description": "Discount",
+        "quantity": "1.0",
+        "unit_price": "-2.0",
+        "amount": "-2.0",
+        "tax_rate": "23%",
+        "tax_amount": "-0.46"
+      },
+      {
+        "description": "VAT waiver",
+        "quantity": "1.0",
+        "unit_price": "0.0",
+        "amount": "0.0",
+        "tax_rate": "0%",
+        "tax_amount": "0.0"
+      }
+    ],
+    "taxes": [
+      {
+        "base": "48.4",
+        "rate": "23%",
+        "code": "VAT",
+        "value": "11.13"
+      },
+      {
+        "base": "40.0",
+        "rate": "13.5%",
+        "code": "VAT",
+        "value": "5.4"
+      },
+      {
+        "base": "25.0",
+        "rate": "9%",
+        "code": "VAT",
+        "value": "2.25"
+      },
+      {
+        "base": "0.0",
+        "rate": "0%",
+        "code": "VAT",
+        "value": "0.0"
+      }
+    ],
+    "notes": "",
+    "mime_type": "image/png",
+    "labeled_at": "2026-03-16T07:57:28.519391",
+    "_template_used": "utility_bill",
+    "_synthetic": true,
+    "_font_info": "Noto Sans",
+    "degradation_variants": {
+      "clean": "synth_0042_76a17777.png",
+      "bad_scan": "synth_0042_76a17777.png",
+      "faded": "synth_0042_76a17777.png"
+    }
+  },
+  "representation": "Publisher-hosted full-size JPEG viewer asset of original embedded PNG; no local conversion."
+}

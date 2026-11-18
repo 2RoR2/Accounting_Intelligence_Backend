@@ -1,0 +1,10 @@
+{
+  "tenant_id": null,
+  "owner_id": null,
+  "actor_id": null,
+  "expected_database": null,
+  "expected_bucket": null,
+  "object_prefix": null,
+  "business_category": null,
+  "category_rationale": null
+}

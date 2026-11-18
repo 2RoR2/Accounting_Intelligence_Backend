@@ -1,0 +1,44 @@
+.DS_Store
+.env
+kaggle.json
+.venv/
+.venv-*/
+.python-packages/
+__pycache__/
+.pytest_cache/
+.pytest-tmp/
+.extraction-tmp/
+*.py[cod]
+runs/
+storage/
+*.log
+*.err
+logs/
+
+# Local diagnostics and development runtimes
+.diagnostics/
+.diagnostics_worker_image.py
+.onnx-wheel/
+.python311/
+
+# Private runtime configuration and local artifacts
+.env
+.env.*
+venv/
+venv-*/
+backups/
+*.dump
+*.backup
+*.bak
+*.pem
+*.key
+ai/models/
+models/
+*.onnx
+*.safetensors
+*.pt
+*.pth
+!.env.example
+
+# Generated synthetic documents (the generator ai/synthetic/generate.py is committed)
+ai/synthetic/output/

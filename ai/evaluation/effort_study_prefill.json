@@ -1,0 +1,100 @@
+{
+ "format": "effort-study-prefill/1",
+ "run": "saic-eval-parser",
+ "qwen": "off",
+ "reproduce": "python scripts/saic_evaluate.py run --qwen off --out runs/saic-eval-parser; python scripts/saic_evaluate.py study-snapshot runs/saic-eval-parser",
+ "documents": {
+  "REC00003": {
+   "sourceSha256": "7b6e9ddf9980a450c283fe73c423b7a95835ac3fde344de2520abd05d2ae876c",
+   "dataset": "jsdnrs/ICDAR2019-SROIE",
+   "origin": "REAL",
+   "licence": "CC-BY-4.0",
+   "licenceReference": "https://huggingface.co/datasets/jsdnrs/ICDAR2019-SROIE/blob/bffe40c26759f3376ec2b3ae9031dbba54cd587c/LICENSE",
+   "resultSha256": "eb0f54c38eea163ff2558bbf17e6958553eb704aff85dc88d38f9de9522809fb",
+   "prefill": {
+    "currency": "MYR",
+    "merchant_name": "CROSS CHANNEL NETWORK SDN. BHD.",
+    "merchant_address": "47, JALAN MERANTI 1, SEK. 3,\nBANDAR UTAMA BATANG KALI,\n44300 BATANG KALI, SELANGOR.",
+    "payment_method": null,
+    "receipt_number": "BTG-052332",
+    "rounding": "-0.01",
+    "subtotal": null,
+    "tax": "0.36",
+    "total": "6.35",
+    "transaction_date": "2018-01-29",
+    "transaction_time": "16:40:40"
+   }
+  },
+  "INV00008": {
+   "sourceSha256": "d533e8f3b01f075e38018047706536b1d4da4b2938a80b138ba828ec9399d8ce",
+   "dataset": "Voxel51/high-quality-invoice-images-for-ocr",
+   "origin": "SYNTHETIC",
+   "licence": "Kaggle: Database: Open Database, Contents: Database Contents; Voxel51 card: odbl",
+   "licenceReference": "https://www.kaggle.com/datasets/osamahosamabdellatif/high-quality-invoice-images-for-ocr",
+   "resultSha256": "6e4842c70fb4c8841a72ed36bcf093fc1ee965a71c1992fc1efbb1a7d6765cdd",
+   "prefill": {
+    "customer_name": "Johnson Ltd",
+    "currency": null,
+    "customer_address": "86731 Ryan Throughway Suite 743\nWest Jason, CT 15849",
+    "customer_tax_id": "922-87-4664",
+    "invoice_date": "2013-01-17",
+    "invoice_number": "81978187",
+    "subtotal": null,
+    "supplier_address": "53017 Lopez Locks\nAlecborough, OH 49620",
+    "supplier_name": "Padilla-Miller",
+    "supplier_tax_id": "957-92-5322",
+    "tax": "11.34",
+    "total": "124.79",
+    "tax_exclusive_total": "113.45",
+    "tax_inclusive_total": "124.79",
+    "due_date": null
+   }
+  },
+  "REC00007": {
+   "sourceSha256": "b8c927c483a24633956222386103872c0c14f37675db6f85279e77a0d3bd031e",
+   "dataset": "jsdnrs/ICDAR2019-SROIE",
+   "origin": "REAL",
+   "licence": "CC-BY-4.0",
+   "licenceReference": "https://huggingface.co/datasets/jsdnrs/ICDAR2019-SROIE/blob/bffe40c26759f3376ec2b3ae9031dbba54cd587c/LICENSE",
+   "resultSha256": "a00cf8535ec1d72328613adef38cc35d769a6cd99e4ea1c3a6f4e3ae20277c42",
+   "prefill": {
+    "currency": "MYR",
+    "merchant_name": "UROKO JAPANESE CUISINE SDN BHD",
+    "merchant_address": "22A-1, JALAN 17/54,\nSECTION 17,\n46400 PETALING JAYA,\nSELANGOR.",
+    "payment_method": null,
+    "receipt_number": "01H-25029",
+    "subtotal": null,
+    "tax": "3.00",
+    "total": "53.00",
+    "transaction_date": "2018-03-20",
+    "transaction_time": "18:41:02",
+    "rounding": null
+   }
+  },
+  "INV00011": {
+   "sourceSha256": "862f7d313f1233f3e44a89610a4015d861dc771ad2ba8028ad56e2d4fd37ac71",
+   "dataset": "Voxel51/high-quality-invoice-images-for-ocr",
+   "origin": "SYNTHETIC",
+   "licence": "Kaggle: Database: Open Database, Contents: Database Contents; Voxel51 card: odbl",
+   "licenceReference": "https://www.kaggle.com/datasets/osamahosamabdellatif/high-quality-invoice-images-for-ocr",
+   "resultSha256": "85e479ec5759feb401ae7b7bd4fd79c48ad681b8c78222115bc7fbaabe10f100",
+   "prefill": {
+    "customer_name": "Duncan PLC",
+    "currency": null,
+    "customer_address": "Unit 8799 Box 0703\nDPO AP 81970",
+    "customer_tax_id": "911-82-7132",
+    "invoice_date": "2012-03-03",
+    "invoice_number": "12847181",
+    "subtotal": null,
+    "supplier_address": "00480 Cook Cove\nSpencerport, UT 12036",
+    "supplier_name": "Fitzpatrick and Sons",
+    "supplier_tax_id": "998-99-5253",
+    "tax": "623.68",
+    "total": "6860.45",
+    "tax_exclusive_total": "6236.77",
+    "tax_inclusive_total": "6860.45",
+    "due_date": null
+   }
+  }
+ }
+}

@@ -1,0 +1,1113 @@
+{
+  "$defs": {
+    "Annotation": {
+      "additionalProperties": false,
+      "properties": {
+        "source_kind": {
+          "enum": [
+            "PUBLISHED_ANNOTATION",
+            "INDEPENDENT_HUMAN",
+            "SYNTHETIC_FIXTURE"
+          ],
+          "title": "Source Kind",
+          "type": "string"
+        },
+        "source_reference": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Source Reference",
+          "type": "string"
+        },
+        "revision": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Revision",
+          "type": "string"
+        },
+        "verification_state": {
+          "enum": [
+            "PUBLISHED_AS_IS",
+            "INDEPENDENTLY_VERIFIED",
+            "UNVERIFIED",
+            "SCHEMA_TEST_ONLY"
+          ],
+          "title": "Verification State",
+          "type": "string"
+        },
+        "annotator_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Annotator Id"
+        },
+        "verifier_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Verifier Id"
+        },
+        "verified_at": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Verified At"
+        },
+        "notes": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Notes"
+        }
+      },
+      "required": [
+        "source_kind",
+        "source_reference",
+        "revision",
+        "verification_state",
+        "annotator_id",
+        "verifier_id",
+        "verified_at"
+      ],
+      "title": "Annotation",
+      "type": "object"
+    },
+    "Candidate": {
+      "additionalProperties": false,
+      "properties": {
+        "candidate_id": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Candidate Id",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "boolean"
+            }
+          ],
+          "title": "Value"
+        },
+        "normalized_value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "boolean"
+            }
+          ],
+          "title": "Normalized Value"
+        },
+        "printed_text": {
+          "title": "Printed Text",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          },
+          "minItems": 1,
+          "title": "Evidence",
+          "type": "array"
+        },
+        "annotation": {
+          "$ref": "#/$defs/Annotation"
+        }
+      },
+      "required": [
+        "candidate_id",
+        "value",
+        "normalized_value",
+        "printed_text",
+        "evidence",
+        "annotation"
+      ],
+      "title": "Candidate",
+      "type": "object"
+    },
+    "Evidence": {
+      "additionalProperties": false,
+      "properties": {
+        "page": {
+          "exclusiveMinimum": 0,
+          "title": "Page",
+          "type": "integer"
+        },
+        "source_reference": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Source Reference",
+          "type": "string"
+        },
+        "printed_text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Printed Text"
+        },
+        "bbox": {
+          "anyOf": [
+            {
+              "items": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "maxItems": 4,
+              "minItems": 4,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Bbox"
+        },
+        "coordinate_convention": {
+          "anyOf": [
+            {
+              "const": "xyxy_top_left",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Coordinate Convention"
+        },
+        "coordinate_units": {
+          "anyOf": [
+            {
+              "enum": [
+                "pixel",
+                "pdf_point",
+                "normalized"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Coordinate Units"
+        },
+        "page_width": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Page Width"
+        },
+        "page_height": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Page Height"
+        }
+      },
+      "required": [
+        "page",
+        "source_reference",
+        "printed_text",
+        "bbox",
+        "coordinate_convention",
+        "coordinate_units",
+        "page_width",
+        "page_height"
+      ],
+      "title": "Evidence",
+      "type": "object"
+    },
+    "GoldLabel": {
+      "additionalProperties": false,
+      "properties": {
+        "field_key": {
+          "enum": [
+            "invoice_number",
+            "invoice_type",
+            "invoice_reference",
+            "supplier_name",
+            "supplier_address",
+            "customer_name",
+            "customer_address",
+            "invoice_date",
+            "due_date",
+            "currency",
+            "subtotal",
+            "tax",
+            "total",
+            "discount",
+            "supplier_registration_id",
+            "supplier_tax_id",
+            "customer_registration_id",
+            "customer_tax_id",
+            "purchase_order_number",
+            "contract_reference",
+            "delivery_reference",
+            "payment_terms",
+            "payment_instructions",
+            "payment_reference",
+            "payment_method",
+            "payment_bank_name",
+            "payment_account_number",
+            "billing_address",
+            "shipping_address",
+            "allowance_total",
+            "charge_total",
+            "tax_exclusive_total",
+            "tax_inclusive_total",
+            "prepaid_amount",
+            "paid_amount",
+            "amount_due",
+            "rounding",
+            "service_start_date",
+            "service_end_date",
+            "delivery_date",
+            "payment_date",
+            "myinvois_uuid",
+            "myinvois_long_id",
+            "myinvois_validation_reference",
+            "myinvois_qr_payload",
+            "supplier_tin",
+            "customer_tin",
+            "supplier_sst_id",
+            "customer_sst_id",
+            "supplier_msic_code",
+            "supplier_business_activity",
+            "credit_note_number",
+            "debit_note_number",
+            "original_invoice_number",
+            "original_invoice_uuid",
+            "note_reason",
+            "industry_reference",
+            "myinvois_validation_datetime",
+            "bill_number",
+            "bill_reference",
+            "provider_name",
+            "provider_address",
+            "bill_date",
+            "customer_account_number",
+            "service_address",
+            "billing_period",
+            "meter_number",
+            "consumption_unit",
+            "tariff_name",
+            "billing_period_start",
+            "billing_period_end",
+            "previous_reading_date",
+            "current_reading_date",
+            "previous_reading",
+            "current_reading",
+            "consumption",
+            "tariff_rate",
+            "previous_balance",
+            "arrears",
+            "current_charges",
+            "adjustment_total",
+            "credit_total",
+            "late_fee",
+            "payment_amount",
+            "service_charge",
+            "tips",
+            "jompay_biller_code",
+            "jompay_reference_1",
+            "jompay_reference_2",
+            "biller_reference",
+            "table_number",
+            "order_number",
+            "merchant_name",
+            "merchant_address",
+            "receipt_number",
+            "receipt_reference",
+            "transaction_date",
+            "transaction_time",
+            "branch_name",
+            "branch_id",
+            "cashier_name",
+            "cashier_id",
+            "terminal_id",
+            "register_id",
+            "original_receipt_reference",
+            "refund_reference",
+            "void_reference",
+            "refund_reason",
+            "customer_id",
+            "loyalty_reference",
+            "total_sales",
+            "amount_paid",
+            "tender",
+            "change",
+            "refund_amount",
+            "refund_indicator",
+            "void_indicator",
+            "refund_date",
+            "void_date",
+            "description",
+            "quantity",
+            "unit_price",
+            "line_total",
+            "item_code",
+            "unit",
+            "tax_category",
+            "line_discount",
+            "line_discount_rate",
+            "line_tax",
+            "line_tax_rate",
+            "line_allowance",
+            "line_charge",
+            "myinvois_item_classification",
+            "tax_exemption_reason",
+            "tax_rate",
+            "taxable_amount",
+            "tax_amount",
+            "charge_category",
+            "charge_amount",
+            "attribute_name",
+            "attribute_value"
+          ],
+          "title": "Field Key",
+          "type": "string"
+        },
+        "value_type": {
+          "enum": [
+            "text",
+            "decimal",
+            "date",
+            "time",
+            "currency",
+            "boolean"
+          ],
+          "title": "Value Type",
+          "type": "string"
+        },
+        "label_state": {
+          "enum": [
+            "PRESENT",
+            "CONFIRMED_ABSENT",
+            "UNLABELLED",
+            "AMBIGUOUS",
+            "UNREADABLE"
+          ],
+          "title": "Label State",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Value"
+        },
+        "printed_text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Printed Text"
+        },
+        "normalized_value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Normalized Value"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "candidates": {
+          "items": {
+            "$ref": "#/$defs/Candidate"
+          },
+          "title": "Candidates",
+          "type": "array"
+        },
+        "annotation": {
+          "$ref": "#/$defs/Annotation"
+        }
+      },
+      "required": [
+        "field_key",
+        "value_type",
+        "label_state",
+        "value",
+        "printed_text",
+        "normalized_value",
+        "evidence",
+        "candidates",
+        "annotation"
+      ],
+      "title": "GoldLabel",
+      "type": "object"
+    },
+    "LineAnnotations": {
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "enum": [
+            "NOT_LABELLED",
+            "CONFIRMED_EMPTY",
+            "LABELLED_ROWS"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "row_coverage": {
+          "enum": [
+            "UNKNOWN",
+            "PARTIAL",
+            "COMPLETE"
+          ],
+          "title": "Row Coverage",
+          "type": "string"
+        },
+        "annotation": {
+          "$ref": "#/$defs/Annotation"
+        },
+        "rows": {
+          "items": {
+            "$ref": "#/$defs/Row"
+          },
+          "title": "Rows",
+          "type": "array"
+        }
+      },
+      "required": [
+        "status",
+        "row_coverage",
+        "annotation",
+        "rows"
+      ],
+      "title": "LineAnnotations",
+      "type": "object"
+    },
+    "Page": {
+      "additionalProperties": false,
+      "properties": {
+        "page": {
+          "exclusiveMinimum": 0,
+          "title": "Page",
+          "type": "integer"
+        },
+        "width": {
+          "exclusiveMinimum": 0,
+          "title": "Width",
+          "type": "number"
+        },
+        "height": {
+          "exclusiveMinimum": 0,
+          "title": "Height",
+          "type": "number"
+        },
+        "units": {
+          "enum": [
+            "pixel",
+            "pdf_point"
+          ],
+          "title": "Units",
+          "type": "string"
+        },
+        "image_width_px": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Image Width Px"
+        },
+        "image_height_px": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Image Height Px"
+        },
+        "dpi_x": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dpi X"
+        },
+        "dpi_y": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dpi Y"
+        }
+      },
+      "required": [
+        "page",
+        "width",
+        "height",
+        "units",
+        "image_width_px",
+        "image_height_px"
+      ],
+      "title": "Page",
+      "type": "object"
+    },
+    "RepeatedGroup": {
+      "additionalProperties": false,
+      "properties": {
+        "group_id": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Group Id",
+          "type": "string"
+        },
+        "scope": {
+          "enum": [
+            "tax_breakdown",
+            "charge_breakdown",
+            "meter_readings",
+            "additional_attributes"
+          ],
+          "title": "Scope",
+          "type": "string"
+        },
+        "printed_order": {
+          "exclusiveMinimum": 0,
+          "title": "Printed Order",
+          "type": "integer"
+        },
+        "labels": {
+          "items": {
+            "$ref": "#/$defs/GoldLabel"
+          },
+          "minItems": 1,
+          "title": "Labels",
+          "type": "array"
+        }
+      },
+      "required": [
+        "group_id",
+        "scope",
+        "printed_order",
+        "labels"
+      ],
+      "title": "RepeatedGroup",
+      "type": "object"
+    },
+    "Row": {
+      "additionalProperties": false,
+      "properties": {
+        "row_id": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Row Id",
+          "type": "string"
+        },
+        "printed_order": {
+          "exclusiveMinimum": 0,
+          "title": "Printed Order",
+          "type": "integer"
+        },
+        "page": {
+          "exclusiveMinimum": 0,
+          "title": "Page",
+          "type": "integer"
+        },
+        "row_evidence": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Evidence"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cells": {
+          "items": {
+            "$ref": "#/$defs/GoldLabel"
+          },
+          "minItems": 1,
+          "title": "Cells",
+          "type": "array"
+        }
+      },
+      "required": [
+        "row_id",
+        "printed_order",
+        "page",
+        "row_evidence",
+        "cells"
+      ],
+      "title": "Row",
+      "type": "object"
+    },
+    "Sample": {
+      "additionalProperties": false,
+      "properties": {
+        "sample_id": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Sample Id",
+          "type": "string"
+        },
+        "document_type": {
+          "enum": [
+            "invoice",
+            "bill",
+            "receipt"
+          ],
+          "title": "Document Type",
+          "type": "string"
+        },
+        "classification_annotation": {
+          "$ref": "#/$defs/Annotation"
+        },
+        "bill_subtype": {
+          "anyOf": [
+            {
+              "enum": [
+                "Electricity",
+                "Water",
+                "Gas",
+                "Telecom",
+                "Internet",
+                "Restaurant",
+                "Service",
+                "Other"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Bill Subtype"
+        },
+        "benchmark_split": {
+          "enum": [
+            "development",
+            "calibration",
+            "held_out"
+          ],
+          "title": "Benchmark Split",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/Source"
+        },
+        "fields": {
+          "items": {
+            "$ref": "#/$defs/GoldLabel"
+          },
+          "title": "Fields",
+          "type": "array"
+        },
+        "line_items": {
+          "$ref": "#/$defs/LineAnnotations"
+        },
+        "repeated_groups": {
+          "items": {
+            "$ref": "#/$defs/RepeatedGroup"
+          },
+          "title": "Repeated Groups",
+          "type": "array"
+        }
+      },
+      "required": [
+        "sample_id",
+        "document_type",
+        "classification_annotation",
+        "bill_subtype",
+        "benchmark_split",
+        "source",
+        "fields",
+        "line_items",
+        "repeated_groups"
+      ],
+      "title": "Sample",
+      "type": "object"
+    },
+    "Source": {
+      "additionalProperties": false,
+      "properties": {
+        "dataset": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Dataset",
+          "type": "string"
+        },
+        "dataset_revision": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Dataset Revision"
+        },
+        "original_split": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Original Split"
+        },
+        "original_sample_id": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Original Sample Id",
+          "type": "string"
+        },
+        "origin": {
+          "enum": [
+            "REAL",
+            "SYNTHETIC"
+          ],
+          "title": "Origin",
+          "type": "string"
+        },
+        "languages": {
+          "anyOf": [
+            {
+              "items": {
+                "minLength": 1,
+                "pattern": "\\S",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Languages"
+        },
+        "country": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Z]{2}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Country"
+        },
+        "file_format": {
+          "enum": [
+            "pdf",
+            "jpg",
+            "png"
+          ],
+          "title": "File Format",
+          "type": "string"
+        },
+        "page_count": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Page Count"
+        },
+        "pages": {
+          "items": {
+            "$ref": "#/$defs/Page"
+          },
+          "title": "Pages",
+          "type": "array"
+        },
+        "relative_path": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Relative Path",
+          "type": "string"
+        },
+        "private_object_key": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Private Object Key"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "licence": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Licence"
+        },
+        "licence_reference": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Licence Reference"
+        },
+        "annotation_provenance": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Annotation Provenance",
+          "type": "string"
+        },
+        "related_source_group": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Related Source Group",
+          "type": "string"
+        },
+        "base_document_group_id": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Base Document Group Id",
+          "type": "string"
+        },
+        "template_group_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Template Group Id"
+        },
+        "quality_variant": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Quality Variant"
+        }
+      },
+      "required": [
+        "dataset",
+        "dataset_revision",
+        "original_split",
+        "original_sample_id",
+        "origin",
+        "languages",
+        "country",
+        "file_format",
+        "page_count",
+        "pages",
+        "relative_path",
+        "private_object_key",
+        "sha256",
+        "licence",
+        "licence_reference",
+        "annotation_provenance",
+        "related_source_group",
+        "base_document_group_id",
+        "template_group_id",
+        "quality_variant"
+      ],
+      "title": "Source",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "artifact_type": {
+      "const": "frozen_ground_truth",
+      "title": "Artifact Type",
+      "type": "string"
+    },
+    "field_dictionary_version": {
+      "const": "1.0.0",
+      "title": "Field Dictionary Version",
+      "type": "string"
+    },
+    "benchmark_id": {
+      "minLength": 1,
+      "pattern": "\\S",
+      "title": "Benchmark Id",
+      "type": "string"
+    },
+    "benchmark_revision": {
+      "minLength": 1,
+      "pattern": "\\S",
+      "title": "Benchmark Revision",
+      "type": "string"
+    },
+    "purpose": {
+      "enum": [
+        "SCHEMA_TEST_ONLY",
+        "BENCHMARK"
+      ],
+      "title": "Purpose",
+      "type": "string"
+    },
+    "document_type": {
+      "enum": [
+        "invoice",
+        "bill",
+        "receipt"
+      ],
+      "title": "Document Type",
+      "type": "string"
+    },
+    "samples": {
+      "items": {
+        "$ref": "#/$defs/Sample"
+      },
+      "title": "Samples",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "artifact_type",
+    "field_dictionary_version",
+    "benchmark_id",
+    "benchmark_revision",
+    "purpose",
+    "document_type",
+    "samples"
+  ],
+  "title": "GroundTruthManifest",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:cos40005:module2:ground_truth:1.0.0",
+  "$comment": "Structural schema. Release validation MUST also use the Pydantic validator for field/type/scope, label semantics, geometry and file integrity."
+}
