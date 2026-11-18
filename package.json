@@ -1,0 +1,40 @@
+{
+  "name": "accounting-intelligence",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --hostname 0.0.0.0",
+    "prebuild": "node -e \"const fs=require('fs'); const d=process.env.NEXT_BUILD_DIR||'.next'; fs.rmSync(d,{recursive:true,force:true});\"",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit --incremental false",
+    "lint": "eslint .",
+    "test": "tsx --test tests/*.test.ts",
+    "test:browser": "playwright test",
+    "format": "prettier --write src tests *.json *.mjs"
+  },
+  "dependencies": {
+    "lucide-react": "^0.468.0",
+    "next": "^15.5.12",
+    "qrcode.react": "^4.2.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@tailwindcss/postcss": "^4.1.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "esbuild": "^0.28.2",
+    "eslint": "^9.0.0",
+    "eslint-config-next": "^15.5.12",
+    "prettier": "^3.9.7",
+    "tailwindcss": "^4.1.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.8.0"
+  },
+  "overrides": {
+    "postcss": "8.5.28"
+  }
+}

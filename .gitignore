@@ -1,18 +1,15 @@
-.env
-kaggle.json
-.venv/
-.venv-*/
-.python-packages/
-__pycache__/
-.pytest_cache/
-.pytest-tmp/
-.extraction-tmp/
-*.py[cod]
-runs/
-storage/
+node_modules/
+.next/
+.next-*/
+*.tsbuildinfo
+playwright-report/
+test-results/
+.env*.local
+.npm-cache/
+.npm-ca.pem
+node_modules.partial/
+node_modules.incomplete*/
 *.log
-*.err
-logs/
 
 # Private runtime configuration and local artifacts
 .env
@@ -25,9 +22,3 @@ backups/
 *.bak
 *.pem
 *.key
-ai/models/
-models/
-*.onnx
-*.safetensors
-*.pt
-*.pth

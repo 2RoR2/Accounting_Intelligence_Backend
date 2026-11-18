@@ -1,0 +1,1081 @@
+{
+ "generated": "11 Nov 2026 04:03",
+ "dataset": [
+  "Benchmark module2-third-party-pilot-v1: 35 public documents (15 invoices, 10 bills, 10 receipts), published labels unchanged.",
+  "Invoices and bills are synthetic; receipts are real ICDAR2019 SROIE scans. All were used during development, so this is not held-out evidence.",
+  "Suspected label errors are left unchanged and count against us: REC00008 labels TED HENG for printed TEO HENG; REC00001 labels B1750 for postcode 81750; REC00002 labels capitals for a mixed-case merchant name.",
+  "Bill numbers: the parser stores a printed 'INVOICE NO.' as bill_reference. The main table scores it as bill_number only when the printed label confirms that role; 'Earlier baseline' shows the original alias-only scoring. No label was changed.",
+  "'Normalized' equals strict here; 'Formatting-tolerant' is the address-normalised figure.",
+  "Run saic-eval-qwen; Qwen mode: live. Reproduce with scripts/saic_evaluate.py run, then score."
+ ],
+ "criteria": [
+  {
+   "name": "SC1 Invoice field accuracy",
+   "target": "At least 95%",
+   "result": "Strict 90.0% (126/140); address-normalised 97.1% (136/140)",
+   "status": "NOT MET",
+   "note": "Strict is the official figure. Address-normalised treats commas and line breaks between address parts as one separator, nothing else. 15 synthetic invoices used during development, so not an independent held-out result."
+  },
+  {
+   "name": "SC2 Manual-effort reduction",
+   "target": "At least 70%",
+   "result": "Not measured",
+   "status": "NOT MEASURED",
+   "note": "No timed manual-only and AI-assisted review sessions exist, so no reduction is claimed."
+  },
+  {
+   "name": "SC3 Processing time per document",
+   "target": "20 s or less",
+   "result": "Mean 21.5 s, median 20.0 s, P95 39.4 s, max 41.4 s; 18/35 within 20 s",
+   "status": "NOT MET",
+   "note": "Warm worker, one document at a time on a CPU laptop; the cold model start (29.42 s) is paid once at worker start. Queue wait is not included. 9 live Qwen calls (13840 input / 524 output tokens, about USD 0.0064); suggestions are review-only."
+  },
+  {
+   "name": "SC4 First-pass exception rate",
+   "target": "Below 10%",
+   "result": "20 of 35 documents (57%) had a failed rule at first validation; 13 of them involve an extraction-related cause",
+   "status": "NOT MET",
+   "note": "Offline validation without the database: supplier-list (EX-008) and duplicate checks do not run here, so the live rate is higher. A bare \"$\" is kept for a person to confirm, which is correct. No exception was suppressed."
+  }
+ ],
+ "classification": {
+  "numerator": 33,
+  "denominator": 35,
+  "value": 0.9428571428571428,
+  "errors": [
+   "REC00004: labelled receipt, classified unknown.",
+   "REC00005: labelled receipt, classified credit_note."
+  ]
+ },
+ "byType": [
+  {
+   "type": "Invoice",
+   "documents": 15,
+   "exact": {
+    "numerator": 126,
+    "denominator": 140,
+    "value": 0.9
+   },
+   "normalized": {
+    "numerator": 126,
+    "denominator": 140,
+    "value": 0.9
+   },
+   "tolerant": {
+    "numerator": 136,
+    "denominator": 140,
+    "value": 0.9714285714285714
+   },
+   "correct": 126,
+   "incorrect": 11,
+   "missing": 3
+  },
+  {
+   "type": "Bill",
+   "documents": 10,
+   "exact": {
+    "numerator": 94,
+    "denominator": 112,
+    "value": 0.8392857142857143
+   },
+   "normalized": {
+    "numerator": 94,
+    "denominator": 112,
+    "value": 0.8392857142857143
+   },
+   "tolerant": {
+    "numerator": 94,
+    "denominator": 112,
+    "value": 0.8392857142857143
+   },
+   "correct": 94,
+   "incorrect": 0,
+   "missing": 18
+  },
+  {
+   "type": "Receipt",
+   "documents": 10,
+   "exact": {
+    "numerator": 20,
+    "denominator": 40,
+    "value": 0.5
+   },
+   "normalized": {
+    "numerator": 20,
+    "denominator": 40,
+    "value": 0.5
+   },
+   "tolerant": {
+    "numerator": 23,
+    "denominator": 40,
+    "value": 0.575
+   },
+   "correct": 20,
+   "incorrect": 9,
+   "missing": 11
+  }
+ ],
+ "baseline": [
+  {
+   "type": "Invoice",
+   "documents": 15,
+   "exact": {
+    "numerator": 126,
+    "denominator": 140,
+    "value": 0.9
+   },
+   "normalized": {
+    "numerator": 126,
+    "denominator": 140,
+    "value": 0.9
+   },
+   "tolerant": {
+    "numerator": 136,
+    "denominator": 140,
+    "value": 0.9714285714285714
+   },
+   "correct": 126,
+   "incorrect": 11,
+   "missing": 3
+  },
+  {
+   "type": "Bill",
+   "documents": 10,
+   "exact": {
+    "numerator": 84,
+    "denominator": 112,
+    "value": 0.75
+   },
+   "normalized": {
+    "numerator": 84,
+    "denominator": 112,
+    "value": 0.75
+   },
+   "tolerant": {
+    "numerator": 84,
+    "denominator": 112,
+    "value": 0.75
+   },
+   "correct": 84,
+   "incorrect": 0,
+   "missing": 28
+  },
+  {
+   "type": "Receipt",
+   "documents": 10,
+   "exact": {
+    "numerator": 20,
+    "denominator": 40,
+    "value": 0.5
+   },
+   "normalized": {
+    "numerator": 20,
+    "denominator": 40,
+    "value": 0.5
+   },
+   "tolerant": {
+    "numerator": 23,
+    "denominator": 40,
+    "value": 0.575
+   },
+   "correct": 20,
+   "incorrect": 9,
+   "missing": 11
+  }
+ ],
+ "lineItems": [],
+ "fields": [
+  {
+   "type": "Bill",
+   "field": "amount_due",
+   "n": 10,
+   "exact": {
+    "numerator": 10,
+    "denominator": 10,
+    "value": 1.0
+   },
+   "normalized": {
+    "numerator": 10,
+    "denominator": 10,
+    "value": 1.0
+   },
+   "tolerant": {
+    "numerator": 10,
+    "denominator": 10,
+    "value": 1.0
+   },
+   "correct": 10,
+   "incorrect": 0,
+   "missing": 0,
+   "errors": []
+  },
+  {
+   "type": "Bill",
+   "field": "bill_date",
+   "n": 10,
+   "exact": {
+    "numerator": 8,
+    "denominator": 10,
+    "value": 0.8
+   },
+   "normalized": {
+    "numerator": 8,
+    "denominator": 10,
+    "value": 0.8
+   },
+   "tolerant": {
+    "numerator": 8,
+    "denominator": 10,
+    "value": 0.8
+   },
+   "correct": 8,
+   "incorrect": 0,
+   "missing": 2,
+   "errors": [
+    "BIL00006",
+    "BIL00010"
+   ]
+  },
+  {
+   "type": "Bill",
+   "field": "bill_number",
+   "n": 10,
+   "exact": {
+    "numerator": 10,
+    "denominator": 10,
+    "value": 1.0
+   },
+   "normalized": {
+    "numerator": 10,
+    "denominator": 10,
+    "value": 1.0
+   },
+   "tolerant": {
+    "numerator": 10,
+    "denominator": 10,
+    "value": 1.0
+   },
+   "correct": 10,
+   "incorrect": 0,
+   "missing": 0,
+   "errors": []
+  },
+  {
+   "type": "Bill",
+   "field": "currency",
+   "n": 10,
+   "exact": {
+    "numerator": 10,
+    "denominator": 10,
+    "value": 1.0
+   },
+   "normalized": {
+    "numerator": 10,
+    "denominator": 10,
+    "value": 1.0
+   },
+   "tolerant": {
+    "numerator": 10,
+    "denominator": 10,
+    "value": 1.0
+   },
+   "correct": 10,
+   "incorrect": 0,
+   "missing": 0,
+   "errors": []
+  },
+  {
+   "type": "Bill",
+   "field": "customer_account_number",
+   "n": 4,
+   "exact": {
+    "numerator": 4,
+    "denominator": 4,
+    "value": 1.0
+   },
+   "normalized": {
+    "numerator": 4,
+    "denominator": 4,
+    "value": 1.0
+   },
+   "tolerant": {
+    "numerator": 4,
+    "denominator": 4,
+    "value": 1.0
+   },
+   "correct": 4,
+   "incorrect": 0,
+   "missing": 0,
+   "errors": []
+  },
+  {
+   "type": "Bill",
+   "field": "customer_address",
+   "n": 7,
+   "exact": {
+    "numerator": 0,
+    "denominator": 7,
+    "value": 0.0
+   },
+   "normalized": {
+    "numerator": 0,
+    "denominator": 7,
+    "value": 0.0
+   },
+   "tolerant": {
+    "numerator": 0,
+    "denominator": 7,
+    "value": 0.0
+   },
+   "correct": 0,
+   "incorrect": 0,
+   "missing": 7,
+   "errors": [
+    "BIL00002",
+    "BIL00004",
+    "BIL00006",
+    "BIL00007",
+    "BIL00008",
+    "BIL00009",
+    "BIL00010"
+   ]
+  },
+  {
+   "type": "Bill",
+   "field": "customer_name",
+   "n": 6,
+   "exact": {
+    "numerator": 5,
+    "denominator": 6,
+    "value": 0.8333333333333334
+   },
+   "normalized": {
+    "numerator": 5,
+    "denominator": 6,
+    "value": 0.8333333333333334
+   },
+   "tolerant": {
+    "numerator": 5,
+    "denominator": 6,
+    "value": 0.8333333333333334
+   },
+   "correct": 5,
+   "incorrect": 0,
+   "missing": 1,
+   "errors": [
+    "BIL00007"
+   ]
+  },
+  {
+   "type": "Bill",
+   "field": "due_date",
+   "n": 8,
+   "exact": {
+    "numerator": 8,
+    "denominator": 8,
+    "value": 1.0
+   },
+   "normalized": {
+    "numerator": 8,
+    "denominator": 8,
+    "value": 1.0
+   },
+   "tolerant": {
+    "numerator": 8,
+    "denominator": 8,
+    "value": 1.0
+   },
+   "correct": 8,
+   "incorrect": 0,
+   "missing": 0,
+   "errors": []
+  },
+  {
+   "type": "Bill",
+   "field": "provider_address",
+   "n": 7,
+   "exact": {
+    "numerator": 0,
+    "denominator": 7,
+    "value": 0.0
+   },
+   "normalized": {
+    "numerator": 0,
+    "denominator": 7,
+    "value": 0.0
+   },
+   "tolerant": {
+    "numerator": 0,
+    "denominator": 7,
+    "value": 0.0
+   },
+   "correct": 0,
+   "incorrect": 0,
+   "missing": 7,
+   "errors": [
+    "BIL00001",
+    "BIL00003",
+    "BIL00004",
+    "BIL00005",
+    "BIL00007",
+    "BIL00009",
+    "BIL00010"
+   ]
+  },
+  {
+   "type": "Bill",
+   "field": "provider_name",
+   "n": 10,
+   "exact": {
+    "numerator": 10,
+    "denominator": 10,
+    "value": 1.0
+   },
+   "normalized": {
+    "numerator": 10,
+    "denominator": 10,
+    "value": 1.0
+   },
+   "tolerant": {
+    "numerator": 10,
+    "denominator": 10,
+    "value": 1.0
+   },
+   "correct": 10,
+   "incorrect": 0,
+   "missing": 0,
+   "errors": []
+  },
+  {
+   "type": "Bill",
+   "field": "subtotal",
+   "n": 10,
+   "exact": {
+    "numerator": 10,
+    "denominator": 10,
+    "value": 1.0
+   },
+   "normalized": {
+    "numerator": 10,
+    "denominator": 10,
+    "value": 1.0
+   },
+   "tolerant": {
+    "numerator": 10,
+    "denominator": 10,
+    "value": 1.0
+   },
+   "correct": 10,
+   "incorrect": 0,
+   "missing": 0,
+   "errors": []
+  },
+  {
+   "type": "Bill",
+   "field": "tax",
+   "n": 10,
+   "exact": {
+    "numerator": 9,
+    "denominator": 10,
+    "value": 0.9
+   },
+   "normalized": {
+    "numerator": 9,
+    "denominator": 10,
+    "value": 0.9
+   },
+   "tolerant": {
+    "numerator": 9,
+    "denominator": 10,
+    "value": 0.9
+   },
+   "correct": 9,
+   "incorrect": 0,
+   "missing": 1,
+   "errors": [
+    "BIL00009"
+   ]
+  },
+  {
+   "type": "Bill",
+   "field": "total",
+   "n": 10,
+   "exact": {
+    "numerator": 10,
+    "denominator": 10,
+    "value": 1.0
+   },
+   "normalized": {
+    "numerator": 10,
+    "denominator": 10,
+    "value": 1.0
+   },
+   "tolerant": {
+    "numerator": 10,
+    "denominator": 10,
+    "value": 1.0
+   },
+   "correct": 10,
+   "incorrect": 0,
+   "missing": 0,
+   "errors": []
+  },
+  {
+   "type": "Invoice",
+   "field": "currency",
+   "n": 5,
+   "exact": {
+    "numerator": 5,
+    "denominator": 5,
+    "value": 1.0
+   },
+   "normalized": {
+    "numerator": 5,
+    "denominator": 5,
+    "value": 1.0
+   },
+   "tolerant": {
+    "numerator": 5,
+    "denominator": 5,
+    "value": 1.0
+   },
+   "correct": 5,
+   "incorrect": 0,
+   "missing": 0,
+   "errors": []
+  },
+  {
+   "type": "Invoice",
+   "field": "customer_address",
+   "n": 15,
+   "exact": {
+    "numerator": 10,
+    "denominator": 15,
+    "value": 0.6666666666666666
+   },
+   "normalized": {
+    "numerator": 10,
+    "denominator": 15,
+    "value": 0.6666666666666666
+   },
+   "tolerant": {
+    "numerator": 15,
+    "denominator": 15,
+    "value": 1.0
+   },
+   "correct": 10,
+   "incorrect": 5,
+   "missing": 0,
+   "errors": [
+    "INV00001",
+    "INV00002",
+    "INV00003",
+    "INV00004",
+    "INV00005"
+   ]
+  },
+  {
+   "type": "Invoice",
+   "field": "customer_name",
+   "n": 15,
+   "exact": {
+    "numerator": 15,
+    "denominator": 15,
+    "value": 1.0
+   },
+   "normalized": {
+    "numerator": 15,
+    "denominator": 15,
+    "value": 1.0
+   },
+   "tolerant": {
+    "numerator": 15,
+    "denominator": 15,
+    "value": 1.0
+   },
+   "correct": 15,
+   "incorrect": 0,
+   "missing": 0,
+   "errors": []
+  },
+  {
+   "type": "Invoice",
+   "field": "customer_tax_id",
+   "n": 5,
+   "exact": {
+    "numerator": 5,
+    "denominator": 5,
+    "value": 1.0
+   },
+   "normalized": {
+    "numerator": 5,
+    "denominator": 5,
+    "value": 1.0
+   },
+   "tolerant": {
+    "numerator": 5,
+    "denominator": 5,
+    "value": 1.0
+   },
+   "correct": 5,
+   "incorrect": 0,
+   "missing": 0,
+   "errors": []
+  },
+  {
+   "type": "Invoice",
+   "field": "invoice_date",
+   "n": 15,
+   "exact": {
+    "numerator": 12,
+    "denominator": 15,
+    "value": 0.8
+   },
+   "normalized": {
+    "numerator": 12,
+    "denominator": 15,
+    "value": 0.8
+   },
+   "tolerant": {
+    "numerator": 12,
+    "denominator": 15,
+    "value": 0.8
+   },
+   "correct": 12,
+   "incorrect": 0,
+   "missing": 3,
+   "errors": [
+    "INV00007",
+    "INV00010",
+    "INV00013"
+   ]
+  },
+  {
+   "type": "Invoice",
+   "field": "invoice_number",
+   "n": 15,
+   "exact": {
+    "numerator": 15,
+    "denominator": 15,
+    "value": 1.0
+   },
+   "normalized": {
+    "numerator": 15,
+    "denominator": 15,
+    "value": 1.0
+   },
+   "tolerant": {
+    "numerator": 15,
+    "denominator": 15,
+    "value": 1.0
+   },
+   "correct": 15,
+   "incorrect": 0,
+   "missing": 0,
+   "errors": []
+  },
+  {
+   "type": "Invoice",
+   "field": "supplier_address",
+   "n": 15,
+   "exact": {
+    "numerator": 9,
+    "denominator": 15,
+    "value": 0.6
+   },
+   "normalized": {
+    "numerator": 9,
+    "denominator": 15,
+    "value": 0.6
+   },
+   "tolerant": {
+    "numerator": 14,
+    "denominator": 15,
+    "value": 0.9333333333333333
+   },
+   "correct": 9,
+   "incorrect": 6,
+   "missing": 0,
+   "errors": [
+    "INV00001",
+    "INV00002",
+    "INV00003",
+    "INV00004",
+    "INV00005",
+    "INV00013"
+   ]
+  },
+  {
+   "type": "Invoice",
+   "field": "supplier_name",
+   "n": 15,
+   "exact": {
+    "numerator": 15,
+    "denominator": 15,
+    "value": 1.0
+   },
+   "normalized": {
+    "numerator": 15,
+    "denominator": 15,
+    "value": 1.0
+   },
+   "tolerant": {
+    "numerator": 15,
+    "denominator": 15,
+    "value": 1.0
+   },
+   "correct": 15,
+   "incorrect": 0,
+   "missing": 0,
+   "errors": []
+  },
+  {
+   "type": "Invoice",
+   "field": "supplier_tax_id",
+   "n": 5,
+   "exact": {
+    "numerator": 5,
+    "denominator": 5,
+    "value": 1.0
+   },
+   "normalized": {
+    "numerator": 5,
+    "denominator": 5,
+    "value": 1.0
+   },
+   "tolerant": {
+    "numerator": 5,
+    "denominator": 5,
+    "value": 1.0
+   },
+   "correct": 5,
+   "incorrect": 0,
+   "missing": 0,
+   "errors": []
+  },
+  {
+   "type": "Invoice",
+   "field": "tax",
+   "n": 15,
+   "exact": {
+    "numerator": 15,
+    "denominator": 15,
+    "value": 1.0
+   },
+   "normalized": {
+    "numerator": 15,
+    "denominator": 15,
+    "value": 1.0
+   },
+   "tolerant": {
+    "numerator": 15,
+    "denominator": 15,
+    "value": 1.0
+   },
+   "correct": 15,
+   "incorrect": 0,
+   "missing": 0,
+   "errors": []
+  },
+  {
+   "type": "Invoice",
+   "field": "tax_exclusive_total",
+   "n": 5,
+   "exact": {
+    "numerator": 5,
+    "denominator": 5,
+    "value": 1.0
+   },
+   "normalized": {
+    "numerator": 5,
+    "denominator": 5,
+    "value": 1.0
+   },
+   "tolerant": {
+    "numerator": 5,
+    "denominator": 5,
+    "value": 1.0
+   },
+   "correct": 5,
+   "incorrect": 0,
+   "missing": 0,
+   "errors": []
+  },
+  {
+   "type": "Invoice",
+   "field": "total",
+   "n": 15,
+   "exact": {
+    "numerator": 15,
+    "denominator": 15,
+    "value": 1.0
+   },
+   "normalized": {
+    "numerator": 15,
+    "denominator": 15,
+    "value": 1.0
+   },
+   "tolerant": {
+    "numerator": 15,
+    "denominator": 15,
+    "value": 1.0
+   },
+   "correct": 15,
+   "incorrect": 0,
+   "missing": 0,
+   "errors": []
+  },
+  {
+   "type": "Receipt",
+   "field": "merchant_address",
+   "n": 10,
+   "exact": {
+    "numerator": 0,
+    "denominator": 10,
+    "value": 0.0
+   },
+   "normalized": {
+    "numerator": 0,
+    "denominator": 10,
+    "value": 0.0
+   },
+   "tolerant": {
+    "numerator": 3,
+    "denominator": 10,
+    "value": 0.3
+   },
+   "correct": 0,
+   "incorrect": 6,
+   "missing": 4,
+   "errors": [
+    "REC00001",
+    "REC00002",
+    "REC00003",
+    "REC00004",
+    "REC00005",
+    "REC00006",
+    "REC00007",
+    "REC00008",
+    "REC00009",
+    "REC00010"
+   ]
+  },
+  {
+   "type": "Receipt",
+   "field": "merchant_name",
+   "n": 10,
+   "exact": {
+    "numerator": 4,
+    "denominator": 10,
+    "value": 0.4
+   },
+   "normalized": {
+    "numerator": 4,
+    "denominator": 10,
+    "value": 0.4
+   },
+   "tolerant": {
+    "numerator": 4,
+    "denominator": 10,
+    "value": 0.4
+   },
+   "correct": 4,
+   "incorrect": 3,
+   "missing": 3,
+   "errors": [
+    "REC00002",
+    "REC00004",
+    "REC00005",
+    "REC00008",
+    "REC00009",
+    "REC00010"
+   ]
+  },
+  {
+   "type": "Receipt",
+   "field": "total",
+   "n": 10,
+   "exact": {
+    "numerator": 8,
+    "denominator": 10,
+    "value": 0.8
+   },
+   "normalized": {
+    "numerator": 8,
+    "denominator": 10,
+    "value": 0.8
+   },
+   "tolerant": {
+    "numerator": 8,
+    "denominator": 10,
+    "value": 0.8
+   },
+   "correct": 8,
+   "incorrect": 0,
+   "missing": 2,
+   "errors": [
+    "REC00004",
+    "REC00005"
+   ]
+  },
+  {
+   "type": "Receipt",
+   "field": "transaction_date",
+   "n": 10,
+   "exact": {
+    "numerator": 8,
+    "denominator": 10,
+    "value": 0.8
+   },
+   "normalized": {
+    "numerator": 8,
+    "denominator": 10,
+    "value": 0.8
+   },
+   "tolerant": {
+    "numerator": 8,
+    "denominator": 10,
+    "value": 0.8
+   },
+   "correct": 8,
+   "incorrect": 0,
+   "missing": 2,
+   "errors": [
+    "REC00004",
+    "REC00005"
+   ]
+  }
+ ],
+ "notEvaluated": [
+  {
+   "field": "Line items",
+   "reason": "Line-item labels are not scored by this evaluator yet."
+  },
+  {
+   "field": "Manual effort",
+   "reason": "Needs timed manual-only and AI-assisted review sessions."
+  }
+ ],
+ "qwen": [
+  {
+   "type": "Invoice",
+   "documents": 0,
+   "requested": 0,
+   "verified": 0,
+   "unverified": 0,
+   "rejected": 0,
+   "labelledCorrect": 0,
+   "labelledDisagree": 0,
+   "unlabelled": 0
+  },
+  {
+   "type": "Bill",
+   "documents": 2,
+   "requested": 4,
+   "verified": 1,
+   "unverified": 1,
+   "rejected": 2,
+   "labelledCorrect": 2,
+   "labelledDisagree": 0,
+   "unlabelled": 0
+  },
+  {
+   "type": "Receipt",
+   "documents": 7,
+   "requested": 15,
+   "verified": 3,
+   "unverified": 2,
+   "rejected": 1,
+   "labelledCorrect": 8,
+   "labelledDisagree": 4,
+   "unlabelled": 3
+  }
+ ],
+ "latency": [
+  {
+   "measure": "End-to-end extraction per document",
+   "n": 35,
+   "median": 20.0,
+   "mean": 21.5,
+   "p95": 39.39,
+   "max": 41.42,
+   "note": "18/35 within 20 s. Warm worker; CPU laptop; queue wait not included."
+  },
+  {
+   "measure": "Same files, parser only (Qwen off)",
+   "n": 35,
+   "median": 20.24,
+   "mean": 21.21,
+   "p95": 41.39,
+   "max": 43.27,
+   "note": "16/35 within 20 s. Separate run (saic-eval-parser); machine load differs between runs."
+  },
+  {
+   "measure": "Cold model start (once per worker start)",
+   "n": 1,
+   "median": 29.42,
+   "mean": 29.42,
+   "p95": 29.42,
+   "max": 29.42,
+   "note": "Paid at worker start-up by the warm-up, not by the first upload."
+  }
+ ],
+ "exceptions": {
+  "documents": 20,
+  "total": 35,
+  "reasons": [
+   {
+    "reason": "UNCERTAIN_SOURCE_VALUE (currency symbol only)",
+    "count": 10
+   },
+   {
+    "reason": "UNCERTAIN_SOURCE_VALUE",
+    "count": 9
+   },
+   {
+    "reason": "MISSING_SOURCE_VALUE",
+    "count": 7
+   },
+   {
+    "reason": "ARITHMETIC_FAILURE",
+    "count": 1
+   },
+   {
+    "reason": "CLASSIFICATION_MISMATCH",
+    "count": 1
+   },
+   {
+    "reason": "POLICY_REQUIREMENT",
+    "count": 1
+   },
+   {
+    "reason": "MODEL_DISAGREEMENT",
+    "count": 1
+   }
+  ]
+ },
+ "corrections": [],
+ "qwenDisagreements": [
+  {
+   "document": "REC00006",
+   "field": "merchant_address",
+   "parser": "LOT P.T. 2811, JALAN ANGSA,\nTAMAN BERKELEY\n41150 KLANG, SELANGOR",
+   "model": "LOT P.T. 2811, JALAN ANGSA,\nTAMAN BERKELEY\n41150 KLANG, SELANGOR\n1413-SETIA ALAM 2",
+   "sourceCheck": "source_role_verified",
+   "shownToReviewer": true,
+   "labelSaysModel": "agree"
+  },
+  {
+   "document": "REC00008",
+   "field": "merchant_address",
+   "parser": "NO. 53, JALAN BESAR, 45600 BATANG BERJUNTAI\nSELANGOR DARULEHSAN",
+   "model": "NO. 58, JALAN BESAR, 43600 BATANG BERJUNTAI\nSELANGOR DARUL EHSAN.",
+   "sourceCheck": "not_found_in_source",
+   "shownToReviewer": false,
+   "labelSaysModel": "disagree"
+  }
+ ],
+ "liveRun": {
+  "statement": "These figures come from a scripted offline run of the real extraction pipeline on public benchmark files, not from documents uploaded to this workspace."
+ }
+}

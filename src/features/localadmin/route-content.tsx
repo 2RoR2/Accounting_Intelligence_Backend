@@ -1,0 +1,70 @@
+import { EvaluationPage } from "@/features/common/reports/evaluation-page";
+import { EffortStudyPage } from "@/features/common/reports/effort-study";
+import { Dashboard } from "@/features/common/dashboard/dashboard";
+import { DocumentReview } from "@/features/common/documents/document-review";
+import { DocumentList, UploadPage } from "@/features/common/documents/documents";
+import { ExceptionsPage } from "@/features/common/exceptions/exceptions";
+import { AuditPage, PerformancePage } from "@/features/common/monitoring/monitoring";
+import { RecordsPage } from "@/features/common/records/records";
+import { RulesPage, SettingsPage } from "@/features/common/settings/settings";
+import { ProfilePage } from "@/features/common/settings/profile-page";
+import { UserManagement } from "@/features/common/users/user-management";
+import { ContactsPage } from "@/features/common/contacts/contacts";
+import { ContactDetailPage } from "@/features/common/contacts/contact-detail";
+import { MoneyFlowPage } from "@/features/common/money/money-flow";
+import { ReconciliationPage } from "@/features/common/money/reconciliation-page";
+import { ApprovalQueuePage } from "@/features/common/documents/approval-queue";
+import { LedgerPage } from "@/features/common/ledger/ledger-page";
+import { ValidationOverviewPage } from "@/features/common/validation/validation-overview";
+import { BankPage } from "@/features/common/bank/bank-page";
+import { AccountingPage } from "@/features/common/accounting/accounting-pages";
+import { CompanyProfilePage } from "@/features/common/settings/company-profile-page";
+import { CompanySettingsPage } from "@/features/common/settings/company-settings-page";
+
+import type { User } from "@/types";
+
+export function LocalAdminRoutes({ path, user }: { path: string[]; user: User }) {
+  const [, page, id] = path;
+  switch (page) {
+    case "dashboard": return <Dashboard user={user} />;
+    case "documents": return id ? <DocumentReview user={user} documentId={id} /> : <DocumentList user={user} />;
+    case "upload": return <UploadPage user={user} />;
+    case "exceptions": return <ExceptionsPage user={user} />;
+    case "contacts": return <ContactsPage user={user} />;
+    case "records": return <RecordsPage user={user} />;
+    case "money-in": return <MoneyFlowPage user={user} direction="money_in" />;
+    case "money-out": return <MoneyFlowPage user={user} direction="money_out" />;
+    case "reconciliation": return <ReconciliationPage user={user} />;
+    case "users": return <UserManagement user={user} />;
+    case "validation-overview": return <ValidationOverviewPage user={user} />;
+    case "invoices": return <DocumentList user={user} initialTab="sales-invoices" />;
+    case "credit-notes": return <DocumentList user={user} initialTab="credit-notes" />;
+    case "debit-notes": return <DocumentList user={user} initialTab="debit-notes" />;
+    case "bills": return <DocumentList user={user} initialTab="purchase-bills" />;
+    case "receipts": return <DocumentList user={user} initialTab="receipts" />;
+    case "purchase-credit-notes": return <DocumentList user={user} initialTab="credit-notes" />;
+    case "purchase-debit-notes": return <DocumentList user={user} initialTab="debit-notes" />;
+    case "bank-money-in": return <BankPage user={user} mode="money-in" />;
+    case "bank-money-out": return <BankPage user={user} mode="money-out" />;
+    case "bank-transfers": return <BankPage user={user} mode="transfers" />;
+    case "bank-accounts": return <BankPage user={user} mode="accounts" />;
+    case "bank-feeds": return <BankPage user={user} mode="feeds" />;
+    case "accounting-deemed-payments": return <AccountingPage user={user} mode="deemed" />;
+    case "accounting-chart": return <AccountingPage user={user} mode="accounts" />;
+    case "accounting-journal-entries": return <AccountingPage user={user} mode="journals" />;
+    case "accounting-trial-balance": return <LedgerPage initialSection="trial" />;
+    case "accounting-contras": return <AccountingPage user={user} mode="contras" />;
+    case "company-profile": return <CompanyProfilePage user={user} />;
+    case "company-settings": return <CompanySettingsPage user={user} />;
+    case "contact-detail": return <ContactDetailPage user={user} />;
+    case "validation-rules": return <RulesPage user={user} />;
+    case "reports": return <PerformancePage user={user} />;
+    case "evaluation": return id === "effort-study" ? <EffortStudyPage /> : <EvaluationPage />;
+    case "approvals": return <ApprovalQueuePage user={user} />;
+    case "ledger": return <LedgerPage />;
+    case "accounting": return <LedgerPage />;
+    case "audit": return <AuditPage user={user} />;
+    case "profile": return <ProfilePage user={user} />;
+    default: return <SettingsPage user={user} />;
+  }
+}

@@ -1,0 +1,8 @@
+import Link from "next/link";
+import Image from "next/image";
+import { CircleHelp } from "lucide-react";
+import accordAiLogo from "@/images/AccordAI_logo.png";
+
+export default function AboutUsPage() {
+  return <div className="home-wash public-info-page"><header className="hp-header"><Link href="/" className="hp-brand"><Image src={accordAiLogo} alt="AccordAI" width={150} height={46} priority /></Link><nav><span className="hp-nav-center"><Link href="/">Home</Link><Link href="/features">Features</Link><Link href="/about-us">About us</Link></span><span className="hp-nav-actions"><Link href="/help" className="hp-help-link" aria-label="Help and support" title="Help and support"><CircleHelp size={18} strokeWidth={2} /><span>Help</span></Link><Link href="/request-access" className="hp-register">Register company</Link><Link href="/login" className="hp-login">Log in</Link></span></nav></header><main className="public-info-main"><p className="hp-eyebrow">About AccordAI</p><h1>Accounting intelligence with <span>people in control.</span></h1><p className="hp-lead">AccordAI helps finance teams move from incoming documents to trusted, standardised records with a workflow that keeps review visible.</p><div className="about-copy"><p>We believe automation should make accounting work clearer, not harder to understand. AccordAI extracts the useful fields, checks the numbers, and makes exceptions easy for a person to review.</p><p>The result is a dependable workspace for document intake, validation, exception handling, and export-ready records.</p></div><Link href="/request-access" className="hp-btn dark">Register your company</Link></main></div>;
+}

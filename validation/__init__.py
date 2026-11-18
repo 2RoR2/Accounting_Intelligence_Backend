@@ -1,1 +1,0 @@
-"""Accounting document validation models."""
