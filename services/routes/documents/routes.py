@@ -120,9 +120,13 @@ def list_documents(
     date: str | None = None,
     amount: float | None = None,
     business: str | None = None,
+    lane: str | None = None,
 ):
     user = require_workspace_user(request)
     scope = tenant_scope(user)
+    from services.routes.home.lanes import DOCUMENT_LANES
+    if lane is not None and lane not in DOCUMENT_LANES:
+        raise HTTPException(422, "Unknown document list: " + ", ".join(sorted(DOCUMENT_LANES)) + " are supported.")
     clauses = ["(%s IS NULL OR d.tenant_id=%s)"]
     params: list[object] = [scope, scope]
     if user["role"] == "accountant":
@@ -160,6 +164,9 @@ def list_documents(
     if status:
         clauses.append("d.status=%s")
         params.append(status.lower())
+    if lane:
+        # Same predicate as the Today tile that links here (services/routes/home/lanes.py).
+        clauses.append(DOCUMENT_LANES[lane])
     if date:
         clauses.append("d.uploaded_at::date=%s")
         params.append(date)
@@ -308,11 +315,31 @@ def delete_document(document_id: str, request: Request):
             raise HTTPException(503, 'Document deleted, but source cleanup failed.')
     return {'deleted': True, 'id': str(document_id)}
 
-def list_records(request: Request):
+def list_records(request: Request, category: str | None = None, due: str | None = None, posting: str | None = None,
+                 asOf: date | None = None):
     user = require_workspace_user(request, {"super_admin", "local_admin", "accountant"})
     scope = tenant_scope(user)
+    # Optional Today-page filters (services/routes/home/lanes.py): unpaid items due in a window, or approved records not yet posted.
+    from services.routes.home.lanes import DUE_WINDOWS, OPEN_ITEM_KINDS, company_today, due_window, open_item_base, records_to_post
+    if due is not None and (due not in DUE_WINDOWS or (category or "").lower() not in OPEN_ITEM_KINDS):
+        raise HTTPException(422, "A due-date list needs due=" + " or ".join(sorted(DUE_WINDOWS)) + " and category=ACCOUNTS_PAYABLE or ACCOUNTS_RECEIVABLE.")
+    if posting is not None and posting != "to-post":
+        raise HTTPException(422, "posting=to-post is the only supported posting list.")
     with connect() as db:
-        rows = db.execute("SELECT * FROM standardised_records WHERE (%s IS NULL OR tenant_id=%s) ORDER BY created_at DESC", (scope, scope)).fetchall()
+        if due or posting:
+            clauses, params = ["(%s IS NULL OR r.tenant_id=%s)"], [scope, scope]
+            if due:
+                base, base_params = open_item_base(category.lower())
+                window, window_params = due_window(due, asOf or company_today(db, user["tenant_id"]))
+                clauses += [base, window]
+                params += base_params + window_params
+            if posting:
+                clauses.append(records_to_post())
+            rows = db.execute(f"""SELECT r.* FROM standardised_records r
+                JOIN documents d ON d.id=r.document_id AND d.tenant_id=r.tenant_id
+                WHERE {' AND '.join(clauses)} ORDER BY r.created_at DESC""", params).fetchall()
+        else:
+            rows = db.execute("SELECT * FROM standardised_records WHERE (%s IS NULL OR tenant_id=%s) ORDER BY created_at DESC", (scope, scope)).fetchall()
         output = []
         for r in rows:
             fields = db.execute("""SELECT fp.* FROM field_predictions fp

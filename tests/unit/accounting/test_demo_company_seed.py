@@ -62,6 +62,22 @@ def test_seed_command_refuses_a_remote_database_before_connecting(capsys):
     assert 'Refusing to seed' in capsys.readouterr().err
 
 
+def test_credentials_are_printed_before_a_later_step_fails(packs, capsys):
+    from unittest.mock import MagicMock
+    args = argparse.Namespace(pack='trading', month=None, pack_root=str(packs['trading'].parent), prompt_password=False,
+                              reset_passwords=False, timeout_minutes=1, report=None)
+    passwords = [('accountant', 'accountant@trading.demo.test', 'Generated-Secret-1a!')]
+    with patch.dict('os.environ', LOCAL, clear=True), \
+         patch('database.connection.connect', return_value=MagicMock()), \
+         patch.object(main, 'check_schema_compatibility'), patch.object(main, 'apply_compatibility_migrations'), \
+         patch.object(demo_company, 'ensure_company', return_value=({'id': 'tenant'}, {}, passwords)), \
+         patch.object(demo_company, 'issue_tokens', side_effect=demo_company.SeedError('sessions failed')):
+        assert demo_company.run(args) == 2
+    out = capsys.readouterr()
+    assert 'Generated-Secret-1a!' in out.out and 'sessions failed' in out.err
+    assert out.out.count('Generated-Secret-1a!') == 1
+
+
 def test_upload_kind_follows_the_pack_manifest():
     row = {'document_id': 'X', 'kind': 'supplier_invoice', 'manifest': 'invoice', 'direction': 'purchase'}
     assert demo_company.upload_kind(row) == ('invoice', 'accounts_payable')
