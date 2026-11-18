@@ -45,7 +45,8 @@ def read_rows(content: bytes, required, label: str):
         text = content.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
         raise ImportFileError("Save the file as CSV UTF-8 and try again.") from exc
-    reader = csv.DictReader(io.StringIO(text, newline=""))
+    # strict: an unclosed quote is an error, not a cell that silently swallows every later row.
+    reader = csv.DictReader(io.StringIO(text, newline=""), strict=True)
     try:
         header = [name.strip() for name in (reader.fieldnames or [])]
     except csv.Error as exc:
