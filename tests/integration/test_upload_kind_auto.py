@@ -172,6 +172,51 @@ def test_get_document_detail_reads_undetected_auto_upload_as_auto_not_invoice():
     assert (response.json()["kind"], response.json()["kindDetected"]) == ("INVOICE", True)
 
 
+class QueryDB(ReadDB):
+    """Answers each query by a substring of its SQL; anything else gets zero counts and no rows."""
+
+    def __init__(self, answers):
+        super().__init__([])
+        self.answers = answers
+
+    def execute(self, query, params=()):
+        result = MagicMock()
+        rows = next((value for key, value in self.answers.items() if key in query), [])
+        result.fetchall.return_value = rows
+        result.fetchone.return_value = rows[0] if rows else {"documents": 0, "total_amount": 0, "items": 0, "amount": 0, "n": 0}
+        return result
+
+
+def test_kind_workflow_reads_undetected_auto_upload_as_auto_not_invoice():
+    doc = {"id": "11111111-1111-1111-1111-111111111111", "kind": "invoice", "document_code": "DOC_1111111111AB", "status": "exception", "updated_at": "2026-11-18"}
+    link = {"id": "33333333-3333-3333-3333-333333333333", "relation_type": "credit_for", "amount": 5, "document_code": "DOC_2222222222CD", "kind": "invoice"}
+    answers = {"SELECT id,kind,document_code,status,updated_at FROM documents": [doc], "document_reconciliations": [link]}
+    with patch.object(document_routes, "require_workspace_user", return_value=USER), \
+         patch.object(document_routes, "connect", return_value=QueryDB(answers)):
+        body = TestClient(app.app).get(f"/api/documents/{doc['id']}/kind-workflow", headers=HEADERS).json()
+    assert (body["kind"], body["kindDetected"]) == ("AUTO", False)
+    assert body["relatedNotes"][0]["kind"] == "auto"
+    answers["SELECT id,kind,document_code,status,updated_at FROM documents"] = [{**doc, "document_code": "BILL_100003", "kind": "bill"}]
+    with patch.object(document_routes, "require_workspace_user", return_value=USER), \
+         patch.object(document_routes, "connect", return_value=QueryDB(answers)):
+        body = TestClient(app.app).get(f"/api/documents/{doc['id']}/kind-workflow", headers=HEADERS).json()
+    assert (body["kind"], body["kindDetected"]) == ("BILL", True)
+
+
+def test_report_register_and_export_read_undetected_auto_upload_as_auto():
+    from services.routes.reporting import routes as reporting_routes
+    register = [{"reference": "DOC_1111111111AB", "kind": "invoice", "status": "queued", "date": "2026-11-18"},
+                {"reference": "RECEIPT_100004", "kind": "receipt", "status": "extracted", "date": "2026-11-18"}]
+    with patch.object(reporting_routes, "require_workspace_user", return_value=USER), \
+         patch.object(reporting_routes, "connect", return_value=QueryDB({"document_code AS reference": register})):
+        body = TestClient(app.app).get("/api/reports/accounting", headers=HEADERS).json()
+    assert [(row["reference"], row["kind"]) for row in body["documents"]] == [("DOC_1111111111AB", "AUTO"), ("RECEIPT_100004", "RECEIPT")]
+    exported = [{"document_code": "DOC_1111111111AB", "kind": "invoice", "original_filename": "a.pdf", "status": "queued"},
+                {"document_code": "BILL_100001", "kind": "bill", "original_filename": "b.pdf", "status": "extracted"}]
+    _headers, values = reporting_routes._export_rows(QueryDB({"SELECT document_code,kind": exported}), USER["tenant_id"], "documents")
+    assert [row[1] for row in values] == ["auto", "bill"]
+
+
 def test_pending_flag_is_only_the_doc_prefix():
     assert auto_kind.kind_pending("DOC_ABCDEF123456")
     assert not auto_kind.kind_pending("INVOICE_100001")

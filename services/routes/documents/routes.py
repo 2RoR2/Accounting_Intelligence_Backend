@@ -88,7 +88,7 @@ from database.object_storage.object_store import local_storage_root, document_ke
 from validation.documents.document_validation import validation_outcome
 from validation.documents.references import accepted_reviews, REVIEW_ACTION
 from services.extraction.contracts.accounting_contract import effective_value, json_safe
-from services.extraction.persistence.auto_kind import read_kind
+from services.extraction.persistence.auto_kind import read_kind, stored_kind_or_auto
 from services.extraction.contracts.currency_review import build_currency_review, decision_details
 from starlette.background import BackgroundTask
 
@@ -1233,7 +1233,7 @@ def download_document_version(document_id: str, version_id: str, request: Reques
 def document_kind_workflow(document_id: str, request: Request):
     user = require_workspace_user(request)
     with connect() as db:
-        doc = db.execute("SELECT id,kind,status,updated_at FROM documents WHERE id=%s AND tenant_id=%s", (document_id, user["tenant_id"])).fetchone()
+        doc = db.execute("SELECT id,kind,document_code,status,updated_at FROM documents WHERE id=%s AND tenant_id=%s", (document_id, user["tenant_id"])).fetchone()
         if not doc: raise HTTPException(404, "Document not found.")
         fields = db.execute("""SELECT field_key,current_value,normalized_value FROM field_predictions
             WHERE document_id=%s ORDER BY created_at DESC""", (document_id,)).fetchall()
@@ -1248,7 +1248,7 @@ def document_kind_workflow(document_id: str, request: Request):
             FROM document_reconciliations r JOIN documents d ON d.id=r.related_document_id
             WHERE r.tenant_id=%s AND r.source_document_id=%s""", (user["tenant_id"], document_id)).fetchall()
     due = values.get("due") or values.get("due_date")
-    return {"kind": doc["kind"].upper(), "fields": values, "overdue": bool(due and str(due) < datetime.now(timezone.utc).date().isoformat()), "duplicates": [{"id": str(r["id"]), "code": r["document_code"], "name": r["original_filename"], "kind": r["kind"]} for r in duplicates], "relatedNotes": [{"id": str(r["id"]), "relationType": r["relation_type"], "amount": r["amount"], "code": r["document_code"], "kind": r["kind"]} for r in links]}
+    return {**read_kind(doc), "fields": values, "overdue": bool(due and str(due) < datetime.now(timezone.utc).date().isoformat()), "duplicates": [{"id": str(r["id"]), "code": r["document_code"], "name": r["original_filename"], "kind": stored_kind_or_auto(r)} for r in duplicates], "relatedNotes": [{"id": str(r["id"]), "relationType": r["relation_type"], "amount": r["amount"], "code": r["document_code"], "kind": stored_kind_or_auto(r)} for r in links]}
 
 def bulk_document_action(data: BulkActionInput, request: Request):
     user = require_workspace_user(request, {"local_admin", "accountant"})

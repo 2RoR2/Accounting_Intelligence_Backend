@@ -23,6 +23,7 @@ from database.schema_compatibility import apply_migrations
 from services.extraction.persistence import auto_kind, persistence
 from services.queue import attempts
 from services.routes.documents import routes as document_routes
+from services.routes.reporting import routes as reporting_routes
 
 pytestmark = pytest.mark.runtime_defaults
 ROOT = Path(__file__).resolve().parents[2]
@@ -62,6 +63,8 @@ def workspace(database, tmp_path):
             VALUES (%s,'B4a accountant',%s,'x','accountant','active') RETURNING id,tenant_id,name,role""",
                           (tenant, key + '@x.test')).fetchone()
     patches = [patch.object(document_routes, 'connect', side_effect=connect),
+               patch.object(reporting_routes, 'connect', side_effect=connect),
+               patch.object(reporting_routes, 'require_workspace_user', return_value=dict(user)),
                patch.object(attempts, 'connect', side_effect=connect),
                patch.object(persistence, 'connect', side_effect=connect),
                patch.object(document_routes, 'require_workspace_user', return_value=dict(user)),
@@ -142,6 +145,29 @@ def test_get_routes_read_undetected_auto_upload_as_auto_until_classified(workspa
                                               'reason': 'EXPLICIT_DOCUMENT_HEADING'}, tmp_path)
     assert read_kind_via_api(classified['id']) == ('INVOICE', True, 'INVOICE', True)
     assert read_kind_via_api(typed['id']) == ('RECEIPT', True, 'RECEIPT', True)
+
+
+def test_kind_workflow_register_and_export_read_undetected_auto_upload_as_auto(workspace, tmp_path):
+    connect, user = workspace
+    pending = upload('auto', b'%PDF-1.7 b4a kw-unknown ' + uuid4().bytes).json()
+    classified = upload('auto', b'%PDF-1.7 b4a kw-known ' + uuid4().bytes).json()
+    persist(connect, user, classified['id'], {'value': 'invoice', 'status': 'classified', 'method': 'explicit_heading_rules',
+                                              'reason': 'EXPLICIT_DOCUMENT_HEADING'}, tmp_path)
+    classified_code = row(connect, classified['id'])['document_code']
+    client = TestClient(api.app)
+    workflow = client.get(f"/api/documents/{pending['id']}/kind-workflow", headers=HEADERS)
+    assert workflow.status_code == 200, workflow.text
+    assert (workflow.json()['kind'], workflow.json()['kindDetected']) == ('AUTO', False)
+    workflow = client.get(f"/api/documents/{classified['id']}/kind-workflow", headers=HEADERS).json()
+    assert (workflow['kind'], workflow['kindDetected']) == ('INVOICE', True)
+    register = client.get('/api/reports/accounting', headers=HEADERS)
+    assert register.status_code == 200, register.text
+    kinds = {item['reference']: item['kind'] for item in register.json()['documents']}
+    assert kinds[pending['code']] == 'AUTO' and kinds[classified_code] == 'INVOICE'
+    with connect() as db:
+        _headers, values = reporting_routes._export_rows(db, user['tenant_id'], 'documents')
+    exported = {code: kind for code, kind, *_rest in values}
+    assert exported[pending['code']] == 'auto' and exported[classified_code] == 'invoice'
 
 
 def test_duplicate_auto_upload_is_reported_with_the_existing_code(workspace):

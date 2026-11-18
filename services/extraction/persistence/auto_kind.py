@@ -43,6 +43,11 @@ def read_kind(row: dict[str, Any]) -> dict[str, Any]:
     return {"kind": str(row["kind"]).upper(), "kindDetected": True}
 
 
+def stored_kind_or_auto(row: dict[str, Any], code_key: str = "document_code") -> str:
+    """The stored kind in its stored (lower) case, or "auto" for a DOC_ document: for lists and exports that keep raw kinds."""
+    return AUTO_KIND if kind_pending(row.get(code_key)) else row["kind"]
+
+
 def classified_kind(classification: dict[str, Any] | None) -> str | None:
     classification = classification or {}
     value = classification.get("value")
