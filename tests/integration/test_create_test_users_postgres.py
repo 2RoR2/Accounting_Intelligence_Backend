@@ -132,6 +132,31 @@ def test_refuses_a_user_of_another_company_and_writes_nothing(database, pack_roo
     assert users(database).keys() == before.keys()
 
 
+def test_unassigned_documents_are_shared_among_test_accountants(database, pack_root):
+    with psycopg.connect(database, row_factory=dict_row) as db:
+        tenant = db.execute("SELECT id FROM tenants WHERE registration_number=%s", (COMPANY["ssm"],)).fetchone()["id"]
+        owner = db.execute("SELECT id FROM users WHERE email='lead.admin@uat.example.test'").fetchone()["id"]
+        held = None
+        for n in range(5):
+            row = db.execute("""INSERT INTO documents(document_code,tenant_id,owner_id,original_filename,kind,category,
+                    storage_path,mime_type,file_size_bytes,file_hash_sha256)
+                VALUES (%s,%s,%s,%s,'bill','accounts_payable','x','application/pdf',1,%s) RETURNING id""",
+                (f"BILL_E1_{n}", tenant, owner, f"bill{n}.pdf", uuid4().hex)).fetchone()
+            held = held or row["id"]
+        db.execute("UPDATE documents SET assigned_to=%s WHERE id=%s", (owner, held))  # already held: left alone
+    code, lines = invoke(database, pack_root, EMAILS)
+    assert code == 0 and "4 unassigned documents shared among the test accountants." in lines
+    with psycopg.connect(database, row_factory=dict_row) as db:
+        counts = {row["email"]: row["n"] for row in db.execute(
+            """SELECT u.email, count(*) n FROM documents d JOIN users u ON u.id=d.assigned_to
+               WHERE d.tenant_id=%s GROUP BY u.email""", (tenant,))}
+    # this run sets acct.two back to accountant (it was promoted earlier), so the two accountants share 4
+    assert counts == {"lead.admin@uat.example.test": 1, "acct.one@uat.example.test": 2,
+                      "acct.two@uat.example.test": 2}
+    code, lines = invoke(database, pack_root, EMAILS)
+    assert code == 0 and not any("shared among" in line for line in lines)
+
+
 def test_missing_demo_company_points_to_the_seed(database, tmp_path, capsys):
     (tmp_path / "trading").mkdir()
     (tmp_path / "trading" / "pack.json").write_text(json.dumps({"company": {"name": "Nope", "ssm": "0"}}))

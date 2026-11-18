@@ -192,9 +192,31 @@ def apply_changes(db, tenant, changes: list[Change], password: str | None, reset
     return None
 
 
+def share_documents(db, tenant_id, wanted: list[TestUser]) -> int:
+    """Assign the company's unassigned documents to the test accountants, in turn (oldest first).
+
+    An accountant sees only documents they own or are assigned, and the seed's documents belong to
+    the demo accountant, so without this a teammate's Today and Documents pages would be empty.
+    Documents someone already holds are left alone, so running it again assigns only new ones."""
+    emails = [user.email for user in wanted if user.role == "accountant"]
+    if not emails:
+        return 0
+    ids = [row["id"] for row in db.execute(
+        "SELECT id FROM users WHERE tenant_id=%s AND role='accountant' AND status='active' "
+        "AND lower(email) = ANY(%s) ORDER BY lower(email)", (tenant_id, emails)).fetchall()]
+    documents = [row["id"] for row in db.execute(
+        "SELECT id FROM documents WHERE tenant_id=%s AND assigned_to IS NULL ORDER BY uploaded_at, id FOR UPDATE",
+        (tenant_id,)).fetchall()]
+    for index, document_id in enumerate(documents):
+        db.execute("UPDATE documents SET assigned_to=%s WHERE id=%s AND tenant_id=%s",
+                   (ids[index % len(ids)], document_id, tenant_id))
+    return len(documents)
+
+
 def create_test_users(db, environ, *, pack=None, company=None, reset_passwords=False,
-                      prompt=getpass.getpass, pack_root=PACK_ROOT):
-    """Create or update the UAT_TEST_EMAILS users in one transaction. Returns (tenant, changes, seat_limit)."""
+                      prompt=getpass.getpass, pack_root=PACK_ROOT, assign_documents=True):
+    """Create or update the UAT_TEST_EMAILS users in one transaction.
+    Returns (tenant, changes, seat_limit, documents assigned)."""
     wanted = parse_test_emails(environ.get("UAT_TEST_EMAILS"))
     tenant = find_tenant(db, pack=pack, company=company, pack_root=pack_root)
     rows = db.execute("SELECT id,lower(email) AS email,tenant_id,role,status,must_change_password "
@@ -205,13 +227,16 @@ def create_test_users(db, environ, *, pack=None, company=None, reset_passwords=F
     if reset_passwords or any(change.action == "create" for change in changes):
         password = read_password(environ, prompt)
     seat_limit = apply_changes(db, tenant, changes, password, reset_passwords)
-    return tenant, changes, seat_limit
+    assigned = share_documents(db, tenant["id"], wanted) if assign_documents else 0
+    return tenant, changes, seat_limit, assigned
 
 
-def report_lines(tenant, changes, seat_limit) -> list[str]:
+def report_lines(tenant, changes, seat_limit, assigned=0) -> list[str]:
     lines = [f"{change.action:<9} {change.user.role:<12} {mask_email(change.user.email)}" for change in changes]
     if seat_limit:
         lines.append(f"Seat limit of {tenant['name']} raised to {seat_limit}.")
+    if assigned:
+        lines.append(f"{assigned} unassigned documents shared among the test accountants.")
     lines.append(f"{len(changes)} test users ready (company: {tenant['name']})")
     lines.append("Sign in at the frontend with email and password. Accountants then get a code by email; "
                  "local admins and super admins scan the QR code with an authenticator app at first sign-in.")
@@ -226,6 +251,9 @@ def add_arguments(parser):
     parser.add_argument("--reset-passwords", action="store_true",
                         help="also give existing test users the new password (signs them out)")
     parser.add_argument("--pack-root", default=str(PACK_ROOT), help="folder holding <pack>/pack.json")
+    parser.add_argument("--no-assign", action="store_true",
+                        help="leave unassigned documents alone (by default the test accountants share them, "
+                             "so their Today and Documents pages have work)")
 
 
 def run(args, environ=None, connect=None, prompt=getpass.getpass, out=print) -> int:
@@ -238,13 +266,14 @@ def run(args, environ=None, connect=None, prompt=getpass.getpass, out=print) -> 
         from database.connection import connect
     try:
         with connect() as db:
-            tenant, changes, seat_limit = create_test_users(
+            tenant, changes, seat_limit, assigned = create_test_users(
                 db, environ, pack=args.pack, company=args.company,
                 reset_passwords=args.reset_passwords, prompt=prompt,
-                pack_root=getattr(args, "pack_root", None) or PACK_ROOT)
+                pack_root=getattr(args, "pack_root", None) or PACK_ROOT,
+                assign_documents=not getattr(args, "no_assign", False))
     except TestUsersError as error:
         print(str(error), file=sys.stderr)
         return 2
-    for line in report_lines(tenant, changes, seat_limit):
+    for line in report_lines(tenant, changes, seat_limit, assigned):
         out(line)
     return 0
