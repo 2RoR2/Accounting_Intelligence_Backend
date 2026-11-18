@@ -169,8 +169,9 @@ def test_unassigned_documents_are_shared_among_test_accountants(database, pack_r
     assert code == 0 and not any("shared among" in line for line in lines)
 
 
-def test_invited_account_gets_the_password_and_a_demoted_admin_loses_the_authenticator(database, pack_root):
+def test_invited_account_gets_the_password_and_a_demoted_admin_loses_the_authenticator(database, pack_root, monkeypatch):
     from security.authentication import encrypt_totp_secret, new_totp_secret
+    monkeypatch.setenv("AUTH_SECRET", "test-" + "x" * 40)  # encrypts the throwaway TOTP secret; no .env needed
     with psycopg.connect(database, row_factory=dict_row) as db:
         tenant = db.execute("SELECT id FROM tenants WHERE registration_number=%s", (COMPANY["ssm"],)).fetchone()["id"]
         db.execute("""INSERT INTO users(tenant_id,name,email,role,status,invited_at)
