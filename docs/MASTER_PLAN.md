@@ -419,11 +419,12 @@ Planner from here: an Opus session following `docs/PLANNER_PLAYBOOK.md`. Section
 | Frontend #3 plain language + navigation | Merged into `features` |
 | Backend #8 `fix/inline-queue-full-requeue` | **Merged** 2026-11-17 (`4573c3f`), approved by Jonathan. Codex review: no findings |
 | Backend #7 A2+A3 CSV imports + demo company seed | **Merged** 2026-11-17 (`1f2edb1`, from `a34a8a3`) (re-verified 2026-11-17): 0 behind; suite same 56 names, 1397 passed; imports/seed/flood tests 60/60 on local Postgres; P1 seed guard fixed and checked by hand (hostaddr, host=, multi-host, empty host, service, PGHOST all refused). Codex round 2: three P2 for a follow-up PR (opening re-import after reversal, strict CSV quoting, print demo credentials right after user commit) |
-| Backend #6 B3 Today API | **Ready to merge** at `c4320ca` (2026-11-18): 0 behind `features` `1f2edb1`, `registry.py` keeps imports + home; suite same 56 names, 1409 passed; home + imports Postgres 22/22. Codex round 3: bank-list server filter for the tile (frontend filters client-side, link works) -> C5; month-end period filters and company-time-zone month bounds -> D1 |
+| Backend #6 B3 Today API | **Merged** 2026-11-18 (`7be47a0`, from `c4320ca`). Follow-ups: bank-list server filter (C5), month-end period filters + company-time-zone month bounds (D1) |
 | Frontend #4 B3 Today page | Head `314b660`: typecheck/lint clean, `npm test` 108/0 fail. Waits only for the browser check (E1 login needs `UAT_TEST_EMAILS`/`UAT_TEST_PASSWORD` in `.env`) |
 | Backend #10 E1 local test users (draft) | Head `89cb55f`: `manage.py create-test-users`, `docs/LOCALHOST.md` UAT accounts; executor reports suite same 56 names, unit 36, Postgres 4/4. Waits for `.env` values, the Brevo send and the browser login |
-| Backend #11 #7 review fixes | **Ready to merge** at `87c0015`: suite same 56 names, 1400 passed; imports Postgres 5/5, unit 56; Codex: no findings |
-| B5a lanes API, B4a Inbox | Running (both hit the 5-hour usage limit on 2026-11-17 night and were resumed 2026-11-18) |
+| Backend #11 #7 review fixes | **Merged** 2026-11-18 (`b4810f6`, from `c7f0723` after update from `features`; suite same 56 names, imports + home Postgres 11/11) |
+| Backend #12 B5a lanes API + bulk submit/approve | Updated from `features` to `0553cbe`: suite same 56 names, 1458 passed; lanes Postgres + unit 49/49. Codex review running |
+| B4a Inbox | Running (resumed after the usage limit) |
 | Frontend #2 draft `integration/v3.1-plus-20261103` | Stale, conflicts; owner decides close or re-apply |
 | Accuracy | Tuning set 97.24% (not evidence: tuned on it). Hold-out not run. |
 | Not verified | Hosted Render deploy after #4; Brevo login code end to end; full walkthrough on a local database |
@@ -549,3 +550,4 @@ Operating rules for the last week (override 10.4's "one backend and one frontend
 - 2026-11-17 (Opus planner): #7 merged (`1f2edb1`) on Jonathan's "merge #7". Sent: #6 owner to update from `features` (`registry.py`) + two link fixes; E1 to finish its subcommand and docs; #7 owner to open a follow-up PR (`planv3/a2a3-review-fixes`) for the three round-2 P2s. Next merge: #6 after re-verify.
 
 - 2026-11-18 (Opus planner): #6 ready at `c4320ca` (Codex round 3 P2s moved to C5/D1); #11 ready at `87c0015`; E1 draft #10 complete apart from the Brevo send and browser login (needs `.env` values). B5a and B4a hit the usage limit overnight and were resumed. Ask: "merge #6", "merge #11". Next: #4 browser check once E1 login works, then "merge #4".
+- 2026-11-18 (Opus planner): #6 merged (`7be47a0`) and #11 merged (`b4810f6`) on Jonathan's "merge #6 and #11". B5a opened #12; updated and verified, Codex running. Next merges: #12 after Codex; frontend #4 after its browser check; #10 after Brevo + login. Then start B4b and B5b.
