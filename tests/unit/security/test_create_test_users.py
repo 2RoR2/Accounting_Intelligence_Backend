@@ -12,9 +12,31 @@ OTHER_TENANT = uuid4()
 LOCAL_ENV = {"APP_ENV": "development", "DATABASE_URL": "postgresql://postgres:x@127.0.0.1:5433/accounting_db"}
 
 
-def row(email, role="accountant", tenant_id=TENANT, status="active", must_change=False):
+def row(email, role="accountant", tenant_id=TENANT, status="active", must_change=False,
+        password_hash="$argon2id$hash", totp=False):
     return {"id": uuid4(), "email": email, "tenant_id": tenant_id, "role": role,
-            "status": status, "must_change_password": must_change}
+            "status": status, "must_change_password": must_change, "password_hash": password_hash,
+            "totp_enabled": totp, "totp_secret_enc": "enc" if totp else None}
+
+
+def test_invited_account_without_a_password_gets_one_before_it_is_activated():
+    wanted = tu.parse_test_emails("a@x.com:local_admin")
+    change = tu.plan_changes({"a@x.com": row("a@x.com", "local_admin", status="invited", password_hash=None)},
+                             TENANT, wanted)[0]
+    assert (change.action, change.set_password) == ("update", True)
+    assert "(password set)" in tu.report_lines({"name": "Co"}, [change], None)[0]
+
+
+def test_demoting_an_enrolled_admin_clears_the_authenticator_and_says_so_masked():
+    wanted = tu.parse_test_emails("boss@x.com:local_admin,a@x.com")
+    changes = tu.plan_changes({"a@x.com": row("a@x.com", "local_admin", totp=True)}, TENANT, wanted)
+    demoted = changes[1]
+    assert (demoted.action, demoted.role_changed, demoted.clear_totp) == ("update", True, True)
+    line = tu.report_lines({"name": "Co"}, changes, None)[1]
+    assert line.endswith("a***@x***.com (authenticator cleared)") and "a@x.com" not in line
+    # promotion keeps nothing to clear; an accountant without an authenticator has nothing to clear
+    promoted = tu.plan_changes({"a@x.com": row("a@x.com")}, TENANT, tu.parse_test_emails("a@x.com:local_admin"))[0]
+    assert promoted.clear_totp is False
 
 
 # --- masking ---------------------------------------------------------------------------------------

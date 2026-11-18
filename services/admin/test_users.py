@@ -52,6 +52,10 @@ class Change:
     user: TestUser
     existing_id: object = None
     role_changed: bool = False
+    # The account gets the test password: --reset-passwords, or an invited account that has none yet.
+    set_password: bool = False
+    # A local or super admin demoted to accountant: drop the authenticator so sign-in uses the emailed code.
+    clear_totp: bool = False
 
 
 def mask_email(email: str) -> str:
@@ -146,9 +150,15 @@ def plan_changes(existing: dict, tenant_id, wanted: list[TestUser], reset_passwo
             raise TestUsersError(f"{mask_email(user.email)} already has an account outside the demo company "
                                  "(or a different kind of account); remove it from UAT_TEST_EMAILS or use another address.")
         role_changed = row["role"] != user.role
+        # An invited account (invite_user, approve-company) has no password yet: activating it without
+        # one would leave a user who can never sign in.
+        set_password = reset_passwords or not row.get("password_hash")
+        clear_totp = (role_changed and user.role == "accountant"
+                      and bool(row.get("totp_enabled") or row.get("totp_secret_enc")))
         needs_update = (role_changed or row["status"] != "active" or row["must_change_password"]
-                        or reset_passwords)
-        changes.append(Change("update" if needs_update else "unchanged", user, row["id"], role_changed))
+                        or set_password or clear_totp)
+        changes.append(Change("update" if needs_update else "unchanged", user, row["id"], role_changed,
+                              set_password, clear_totp))
     return changes
 
 
@@ -165,7 +175,7 @@ def read_password(environ, prompt=getpass.getpass) -> str:
     return password
 
 
-def apply_changes(db, tenant, changes: list[Change], password: str | None, reset_passwords=False) -> int | None:
+def apply_changes(db, tenant, changes: list[Change], password: str | None) -> int | None:
     """Write the planned changes. Returns the new seat limit if it had to be raised, else None."""
     from security.authentication import hash_password
     password_hash = hash_password(password) if password else None
@@ -178,9 +188,16 @@ def apply_changes(db, tenant, changes: list[Change], password: str | None, reset
                        (tenant_id, display_name(user.email), user.email, password_hash, user.role))
         elif change.action == "update":
             db.execute("""UPDATE users SET role=%s,status='active',must_change_password=false,
-                password_hash=CASE WHEN %s THEN %s ELSE password_hash END WHERE id=%s""",
-                       (user.role, reset_passwords, password_hash, change.existing_id))
-            if change.role_changed or reset_passwords:
+                password_hash=CASE WHEN %s THEN %s ELSE password_hash END,
+                totp_secret_enc=CASE WHEN %s THEN NULL ELSE totp_secret_enc END,
+                totp_enabled=CASE WHEN %s THEN false ELSE totp_enabled END WHERE id=%s""",
+                       (user.role, change.set_password, password_hash, change.clear_totp, change.clear_totp,
+                        change.existing_id))
+            if change.clear_totp:
+                # verify_mfa accepts a stored authenticator code even on an email challenge, so a demoted
+                # admin must lose the enrolment; backup codes belong to it.
+                db.execute("DELETE FROM mfa_backup_codes WHERE user_id=%s", (change.existing_id,))
+            if change.role_changed or change.set_password:
                 # Sign out existing sessions so the new role or password applies at the next sign-in.
                 db.execute("DELETE FROM web_sessions WHERE user_id=%s", (change.existing_id,))
                 db.execute("DELETE FROM auth_challenges WHERE user_id=%s", (change.existing_id,))
@@ -197,19 +214,46 @@ def share_documents(db, tenant_id, wanted: list[TestUser]) -> int:
 
     An accountant sees only documents they own or are assigned, and the seed's documents belong to
     the demo accountant, so without this a teammate's Today and Documents pages would be empty.
-    Documents someone already holds are left alone, so running it again assigns only new ones."""
+    Documents someone already holds are left alone, so running it again assigns only new ones.
+
+    Each assignment is recorded the way the local admin's assign endpoint records it (a
+    `workload_assignments` row, assigned by a test local admin); it also sets `documents.assigned_to`,
+    which is what the visibility rule reads. Each accountant gets one notification, and the run
+    leaves one audit entry (counts only, no addresses)."""
     emails = [user.email for user in wanted if user.role == "accountant"]
     if not emails:
         return 0
     ids = [row["id"] for row in db.execute(
         "SELECT id FROM users WHERE tenant_id=%s AND role='accountant' AND status='active' "
         "AND lower(email) = ANY(%s) ORDER BY lower(email)", (tenant_id, emails)).fetchall()]
+    admin = db.execute(
+        "SELECT id FROM users WHERE tenant_id=%s AND role='local_admin' AND status='active' "
+        "ORDER BY (lower(email) = ANY(%s)) DESC, created_at LIMIT 1",
+        (tenant_id, [user.email for user in wanted if user.role == "local_admin"])).fetchone()
     documents = [row["id"] for row in db.execute(
         "SELECT id FROM documents WHERE tenant_id=%s AND assigned_to IS NULL ORDER BY uploaded_at, id FOR UPDATE",
         (tenant_id,)).fetchall()]
+    if not ids or not documents:
+        return 0
+    given = {user_id: 0 for user_id in ids}
     for index, document_id in enumerate(documents):
-        db.execute("UPDATE documents SET assigned_to=%s WHERE id=%s AND tenant_id=%s",
-                   (ids[index % len(ids)], document_id, tenant_id))
+        accountant = ids[index % len(ids)]
+        given[accountant] += 1
+        db.execute("UPDATE documents SET assigned_to=%s WHERE id=%s AND tenant_id=%s", (accountant, document_id, tenant_id))
+        if admin:
+            db.execute("""INSERT INTO workload_assignments(tenant_id,document_id,assigned_to,assigned_by)
+                VALUES (%s,%s,%s,%s) ON CONFLICT (document_id) DO UPDATE SET assigned_to=EXCLUDED.assigned_to,
+                assigned_by=EXCLUDED.assigned_by,completed_at=NULL""", (tenant_id, document_id, accountant, admin["id"]))
+    for accountant, count in given.items():
+        if count:
+            db.execute("""INSERT INTO notifications(tenant_id,user_id,type,title,message,resource)
+                VALUES (%s,%s,'document_workflow',%s,%s,'documents')""",
+                       (tenant_id, accountant, "Documents assigned to you",
+                        f"{count} demo company document{'s' if count != 1 else ''} assigned to you for review."))
+    db.execute("""INSERT INTO audit_logs(tenant_id,user_id,user_name,role,action,resource,details)
+        VALUES (%s,%s,'create-test-users','system','DOCUMENTS_ASSIGNED','documents',%s)""",
+               (tenant_id, admin["id"] if admin else None,
+                json.dumps({"documents": len(documents), "accountants": len(ids)})))
     return len(documents)
 
 
@@ -219,20 +263,25 @@ def create_test_users(db, environ, *, pack=None, company=None, reset_passwords=F
     Returns (tenant, changes, seat_limit, documents assigned)."""
     wanted = parse_test_emails(environ.get("UAT_TEST_EMAILS"))
     tenant = find_tenant(db, pack=pack, company=company, pack_root=pack_root)
-    rows = db.execute("SELECT id,lower(email) AS email,tenant_id,role,status,must_change_password "
-                      "FROM users WHERE lower(email) = ANY(%s) FOR UPDATE",
+    rows = db.execute("SELECT id,lower(email) AS email,tenant_id,role,status,must_change_password,password_hash,"
+                      "totp_enabled,totp_secret_enc FROM users WHERE lower(email) = ANY(%s) FOR UPDATE",
                       ([user.email for user in wanted],)).fetchall()
     changes = plan_changes({row["email"]: row for row in rows}, tenant["id"], wanted, reset_passwords)
     password = None
-    if reset_passwords or any(change.action == "create" for change in changes):
+    if any(change.action == "create" or change.set_password for change in changes):
         password = read_password(environ, prompt)
-    seat_limit = apply_changes(db, tenant, changes, password, reset_passwords)
+    seat_limit = apply_changes(db, tenant, changes, password)
     assigned = share_documents(db, tenant["id"], wanted) if assign_documents else 0
     return tenant, changes, seat_limit, assigned
 
 
 def report_lines(tenant, changes, seat_limit, assigned=0) -> list[str]:
-    lines = [f"{change.action:<9} {change.user.role:<12} {mask_email(change.user.email)}" for change in changes]
+    def note(change):
+        notes = [text for flag, text in ((change.action == "update" and change.set_password, "password set"),
+                                         (change.clear_totp, "authenticator cleared")) if flag]
+        return f" ({', '.join(notes)})" if notes else ""
+    lines = [f"{change.action:<9} {change.user.role:<12} {mask_email(change.user.email)}{note(change)}"
+             for change in changes]
     if seat_limit:
         lines.append(f"Seat limit of {tenant['name']} raised to {seat_limit}.")
     if assigned:

@@ -153,8 +153,44 @@ def test_unassigned_documents_are_shared_among_test_accountants(database, pack_r
     # this run sets acct.two back to accountant (it was promoted earlier), so the two accountants share 4
     assert counts == {"lead.admin@uat.example.test": 1, "acct.one@uat.example.test": 2,
                       "acct.two@uat.example.test": 2}
+    with psycopg.connect(database, row_factory=dict_row) as db:
+        # recorded like the local admin's assign endpoint: one workload row per document, by the test admin
+        workload = db.execute("""SELECT count(*) n, count(DISTINCT w.assigned_by) admins, bool_and(u.email='lead.admin@uat.example.test') by_admin
+            FROM workload_assignments w JOIN users u ON u.id=w.assigned_by WHERE w.tenant_id=%s""", (tenant,)).fetchone()
+        notes = db.execute("""SELECT count(*) n FROM notifications WHERE tenant_id=%s AND title='Documents assigned to you'""",
+                           (tenant,)).fetchone()["n"]
+        audit = db.execute("""SELECT details FROM audit_logs WHERE tenant_id=%s AND action='DOCUMENTS_ASSIGNED'""",
+                           (tenant,)).fetchall()
+    assert (workload["n"], workload["admins"], workload["by_admin"]) == (4, 1, True)
+    assert notes == 2
+    assert [json.loads(row["details"]) for row in audit] == [{"documents": 4, "accountants": 2}]
+    assert "uat.example.test" not in audit[0]["details"]
     code, lines = invoke(database, pack_root, EMAILS)
     assert code == 0 and not any("shared among" in line for line in lines)
+
+
+def test_invited_account_gets_the_password_and_a_demoted_admin_loses_the_authenticator(database, pack_root):
+    from security.authentication import encrypt_totp_secret, new_totp_secret
+    with psycopg.connect(database, row_factory=dict_row) as db:
+        tenant = db.execute("SELECT id FROM tenants WHERE registration_number=%s", (COMPANY["ssm"],)).fetchone()["id"]
+        db.execute("""INSERT INTO users(tenant_id,name,email,role,status,invited_at)
+            VALUES (%s,'Invited','invited@uat.example.test','accountant','invited',now())""", (tenant,))
+        lead = db.execute("""UPDATE users SET totp_secret_enc=%s,totp_enabled=true
+            WHERE email='lead.admin@uat.example.test' RETURNING id""", (encrypt_totp_secret(new_totp_secret()),)).fetchone()["id"]
+        db.execute("INSERT INTO mfa_backup_codes(user_id,code_hash) VALUES (%s,'x')", (lead,))
+    demoted = (EMAILS.replace("lead.admin@uat.example.test:local_admin", "lead.admin@uat.example.test")
+               + ", boss@uat.example.test:local_admin, invited@uat.example.test")
+    code, lines = invoke(database, pack_root, demoted)
+    assert code == 0, lines
+    assert any(line.endswith("l***@u***.test (authenticator cleared)") for line in lines)
+    assert any(line.endswith("i***@u***.test (password set)") for line in lines)
+    rows = users(database)
+    assert rows["invited@uat.example.test"]["status"] == "active"
+    assert verify_password(PASSWORD, rows["invited@uat.example.test"]["password_hash"])
+    lead_row = rows["lead.admin@uat.example.test"]
+    assert (lead_row["role"], lead_row["totp_enabled"], lead_row["totp_secret_enc"]) == ("accountant", False, None)
+    with psycopg.connect(database, row_factory=dict_row) as db:
+        assert db.execute("SELECT count(*) n FROM mfa_backup_codes WHERE user_id=%s", (lead,)).fetchone()["n"] == 0
 
 
 def test_missing_demo_company_points_to_the_seed(database, tmp_path, capsys):
