@@ -36,6 +36,13 @@ def kind_pending(document_code: Any) -> bool:
     return isinstance(document_code, str) and document_code.startswith(PENDING_CODE_PREFIX)
 
 
+def read_kind(row: dict[str, Any]) -> dict[str, Any]:
+    """Kind fields for read DTOs: a DOC_ (type not detected yet) document reads as AUTO, never as its placeholder."""
+    if kind_pending(row.get("document_code")):
+        return {"kind": AUTO_KIND.upper(), "kindDetected": False}
+    return {"kind": str(row["kind"]).upper(), "kindDetected": True}
+
+
 def classified_kind(classification: dict[str, Any] | None) -> str | None:
     classification = classification or {}
     value = classification.get("value")

@@ -116,6 +116,34 @@ def test_auto_upload_stores_placeholder_and_neutral_code(workspace):
     assert stored['status'] == 'queued'
 
 
+def read_kind_via_api(document_id):
+    """(list kind, list kindDetected, detail kind, detail kindDetected) from the real GET routes."""
+    client = TestClient(api.app)
+    listed = client.get('/api/documents', headers=HEADERS)
+    detail = client.get(f'/api/documents/{document_id}', headers=HEADERS)
+    assert listed.status_code == 200 and detail.status_code == 200, (listed.text, detail.text)
+    entry = next(item for item in listed.json() if item['id'] == document_id)
+    return entry['kind'], entry['kindDetected'], detail.json()['kind'], detail.json()['kindDetected']
+
+
+def test_get_routes_read_undetected_auto_upload_as_auto_until_classified(workspace, tmp_path):
+    connect, user = workspace
+    pending = upload('auto', b'%PDF-1.7 b4a get-unknown ' + uuid4().bytes).json()
+    classified = upload('auto', b'%PDF-1.7 b4a get-known ' + uuid4().bytes).json()
+    typed = upload('receipt', b'%PDF-1.7 b4a get-typed ' + uuid4().bytes).json()
+    # Queued: the stored placeholder kind is never shown as INVOICE.
+    assert read_kind_via_api(pending['id']) == ('AUTO', False, 'AUTO', False)
+    # Read but not classified (needs fixing): still AUTO.
+    persist(connect, user, pending['id'], {'value': None, 'status': 'unclassified', 'method': 'explicit_heading_rules',
+                                           'reason': 'NO_SUPPORTED_HEADING'}, tmp_path)
+    assert read_kind_via_api(pending['id']) == ('AUTO', False, 'AUTO', False)
+    # Classified: the detected kind.
+    persist(connect, user, classified['id'], {'value': 'invoice', 'status': 'classified', 'method': 'explicit_heading_rules',
+                                              'reason': 'EXPLICIT_DOCUMENT_HEADING'}, tmp_path)
+    assert read_kind_via_api(classified['id']) == ('INVOICE', True, 'INVOICE', True)
+    assert read_kind_via_api(typed['id']) == ('RECEIPT', True, 'RECEIPT', True)
+
+
 def test_duplicate_auto_upload_is_reported_with_the_existing_code(workspace):
     content = b'%PDF-1.7 b4a duplicate ' + uuid4().bytes
     first = upload('auto', content)

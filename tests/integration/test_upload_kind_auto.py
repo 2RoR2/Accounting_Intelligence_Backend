@@ -124,6 +124,54 @@ def test_typed_upload_keeps_its_code_when_classification_sets_the_kind():
     assert updated["document_code"] == "INVOICE_100001" and updated["kind"] == "credit_note"
 
 
+def stored_row(code, kind="invoice", status="queued"):
+    return {"id": "11111111-1111-1111-1111-111111111111", "document_code": code, "original_filename": "scan.pdf",
+            "detected_identifier": None, "tenant_id": USER["tenant_id"], "owner_id": USER["id"], "assigned_to": None,
+            "kind": kind, "category": "accounts_payable", "status": status, "mime_type": "application/pdf",
+            "file_size_bytes": 10, "processing_seconds": None, "total_amount": None, "supplier_name": None,
+            "buyer_name": None, "due_date_value": None, "content_revision": 1, "uploaded_at": "2026-11-18", "updated_at": "2026-11-18"}
+
+
+class ReadDB:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def execute(self, query, params=()):
+        result = MagicMock()
+        result.fetchall.return_value = self.rows
+        result.fetchone.return_value = self.rows[0] if self.rows else None
+        return result
+
+
+def read(path, rows):
+    with patch.object(document_routes, "require_workspace_user", return_value=USER), \
+         patch.object(document_routes, "connect", return_value=ReadDB(rows)):
+        return TestClient(app.app).get(path, headers=HEADERS)
+
+
+def test_get_documents_reads_undetected_auto_upload_as_auto_not_invoice():
+    for status in ("queued", "processing", "exception"):
+        response = read("/api/documents", [stored_row("DOC_1111111111AB", status=status), stored_row("BILL_100002", "bill")])
+        assert response.status_code == 200, response.text
+        pending, typed = response.json()
+        assert (pending["kind"], pending["kindDetected"], pending["code"]) == ("AUTO", False, "DOC_1111111111AB")
+        assert (typed["kind"], typed["kindDetected"]) == ("BILL", True)
+
+
+def test_get_document_detail_reads_undetected_auto_upload_as_auto_not_invoice():
+    response = read("/api/documents/11111111-1111-1111-1111-111111111111", [stored_row("DOC_1111111111AB", status="exception")])
+    assert response.status_code == 200, response.text
+    assert (response.json()["kind"], response.json()["kindDetected"]) == ("AUTO", False)
+    response = read("/api/documents/11111111-1111-1111-1111-111111111111", [stored_row("INVOICE_100001")])
+    assert (response.json()["kind"], response.json()["kindDetected"]) == ("INVOICE", True)
+
+
 def test_pending_flag_is_only_the_doc_prefix():
     assert auto_kind.kind_pending("DOC_ABCDEF123456")
     assert not auto_kind.kind_pending("INVOICE_100001")
