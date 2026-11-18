@@ -141,6 +141,28 @@ def test_opening_balances_respect_closed_periods(company, pack):
     assert refused.value.status_code == 422
 
 
+def test_reversed_opening_journal_can_be_replaced(company, pack):
+    from services.routes.accounting import routes as accounting_routes
+    connect, user = company
+    content = (pack / 'opening_balances.csv').read_bytes()
+    run_import(user, 'chart_of_accounts', (pack / 'coa.csv').read_bytes())
+    _, first = run_import(user, 'opening_balances', content)
+    with patch.object(accounting_routes, 'require_workspace_user', return_value=user), \
+         patch.object(accounting_routes, 'connect', side_effect=connect):
+        accounting_routes.reverse_journal(first['journalId'], None)
+    _, second = run_import(user, 'opening_balances', content)
+    assert second['journalId'] != first['journalId'] and second['journalStatus'] == 'posted'
+    with connect() as db:
+        rows = db.execute("""SELECT idempotency_key, status FROM journal_headers
+            WHERE tenant_id=%s AND idempotency_key LIKE 'opening-balances:%%' ORDER BY created_at""", (user['tenant_id'],)).fetchall()
+    as_at = demo_company.read_csv(pack / 'opening_balances.csv')[0]['as_at']
+    assert [(r['idempotency_key'], r['status']) for r in rows] == [
+        (f'opening-balances:{as_at}', 'reversed'), (f'opening-balances:{as_at}:2', 'posted')]
+    # With the replacement posted, the date is blocked again.
+    again = import_routes._preview('opening_balances', user, content)
+    assert any('already posted' in error for error in again['fileErrors'])
+
+
 def test_seed_company_and_users_are_created_once(database, pack):
     info = json.loads((pack / 'pack.json').read_text(encoding='utf-8'))
     key = 'it' + uuid4().hex[:6]
