@@ -135,6 +135,10 @@ company. It prints each address masked (`f***@e***.com`) with what it did: `crea
   account.
 - **Passwords:** existing users keep their password unless you add `--reset-passwords`, which also
   signs them out.
+- **Work to do:** an accountant sees only documents they own or are assigned, and the seeded
+  documents belong to the demo accountant. So the command shares the company's unassigned
+  documents among the test accountants, in turn. Add `--no-assign` to skip this. Documents
+  someone already holds are left alone.
 - **Limits:** it never moves an account that belongs to another company, and it raises the
   company's seat limit when the list needs more seats. It refuses to run against anything but a
   local database, with the same check as `seed-demo-company`.
