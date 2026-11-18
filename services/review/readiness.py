@@ -22,7 +22,7 @@ A field an accountant corrected (corrected_by and corrected_at set) counts as ve
 from __future__ import annotations
 
 from services.extraction.contracts.accounting_contract import FIELD_KEYS, effective_value
-from services.extraction.contracts.reliability import review_signal
+from services.extraction.contracts.reliability import ASSUMPTION_ISSUES, review_signal
 from validation.matching.vendor_matching import find_vendor_match
 
 SUBMIT_STATUSES = ('extracted', 'corrected', 'exception')
@@ -62,6 +62,9 @@ REASON_TEXT = {
     'own_submission': 'You submitted this document, so another administrator must approve it.',
 }
 
+ASSUMPTION_TEXT = {'DATE_ORDER_ASSUMED': 'the day and month order was assumed',
+                   'DEFAULT_CURRENCY_APPLIED': 'the company default was used, not printed'}
+
 REASON_CODES = ('extraction_not_succeeded', 'validation_not_run', 'validation_failed', 'open_exception',
                 'field_missing', 'field_needs_check', 'supplier_not_known', 'duplicate_candidate', 'own_submission')
 
@@ -95,11 +98,31 @@ def required_fields(document, rules=None):
     return required
 
 
-def field_is_verified(row):
+def field_issue_codes(raw_issues):
+    """Extraction issues by canonical field key, e.g. {'date': {'DATE_ORDER_ASSUMED'}}.
+
+    An issue names its field in `field` (lite extraction) or as the `detail` prefix before ':' (mapped results)."""
+    by_field = {}
+    for issue in raw_issues or []:
+        if not isinstance(issue, dict) or not issue.get('code'):
+            continue
+        name = issue.get('field')
+        if not name and isinstance(issue.get('detail'), str) and ':' in issue['detail']:
+            name = issue['detail'].split(':', 1)[0].strip()
+        key = FIELD_KEYS.get(name) if isinstance(name, str) else None
+        if key is not None:
+            by_field.setdefault(key, set()).add(issue['code'])
+    return by_field
+
+
+def field_is_verified(row, issues=()):
+    """A person corrected it, or review_signal says `verified` given the extraction's issues for this field
+    (an assumed date order or a default currency is never verified)."""
     if row.get('corrected_by') is not None and row.get('corrected_at') is not None:
         return True
     return review_signal(evidence=row.get('evidence') or [], candidates=row.get('candidates') or [],
-                         resolution=row.get('resolution'), extraction_state=row.get('extraction_state')) == 'verified'
+                         resolution=row.get('resolution'), extraction_state=row.get('extraction_state'),
+                         field_issues=tuple(issues or ())) == 'verified'
 
 
 def _value(row):
@@ -139,9 +162,11 @@ def counterparty_role(document):
 
 
 def assess(document, *, has_extraction, fields, validation, open_exceptions, rules=None,
-           catalogue=None, requires_known_supplier=POLICY_DEFAULT, approver_id=None, last_submitted_by=None):
+           catalogue=None, requires_known_supplier=POLICY_DEFAULT, approver_id=None, last_submitted_by=None,
+           issues=None):
     """Every unmet ready condition for one document, in a fixed order. An empty list means ready.
 
+    issues: {canonical field key: {issue codes}} from the current extraction (field_issue_codes)
     validation: {'total': int, 'failures': [rule ids failing on the current revision, EX-007 included]}
     open_exceptions: [{'type': ...}] for exceptions whose status is not 'resolved'
     catalogue: [{'id', 'vendor_name'}] of the counterparty list, or None when it could not be read
@@ -162,18 +187,23 @@ def assess(document, *, has_extraction, fields, validation, open_exceptions, rul
         reasons.append(reason('open_exception', None if count == 1 else
                               f'There are {count} open exceptions on this document to resolve first.', count=count))
     keyed = fields_by_key(fields)
-    missing, unchecked = [], []
+    issues = issues or {}
+    missing, unchecked, assumed = [], [], {}
     for key in required_fields(document, rules):
         row = _required_row(document, keyed, key)
         if row is None or _value(row) is None:
             missing.append(key)
-        elif not field_is_verified(row):
+        elif not field_is_verified(row, issues.get(key)):
             unchecked.append(key)
+            codes = sorted(ASSUMPTION_ISSUES & set(issues.get(key) or ()))
+            if codes and not (row.get('corrected_by') and row.get('corrected_at')):
+                assumed[key] = codes
     if missing:
         reasons.append(reason('field_missing', 'Fill in: ' + ', '.join(_label(k) for k in missing) + '.', fields=missing))
     if unchecked:
-        reasons.append(reason('field_needs_check', 'Check against the document: '
-                              + ', '.join(_label(k) for k in unchecked) + '.', fields=unchecked))
+        named = [_label(k) + (f' ({ASSUMPTION_TEXT[assumed[k][0]]})' if k in assumed else '') for k in unchecked]
+        details = {'fields': unchecked, **({'assumed': assumed} if assumed else {})}
+        reasons.append(reason('field_needs_check', 'Check against the document: ' + ', '.join(named) + '.', **details))
     if requires_known_supplier:
         role = counterparty_role(document)
         name_row = keyed.get(role)
@@ -241,9 +271,11 @@ def assess_documents(db, tenant_id, documents, *, approver_id=None):
     if not documents:
         return {}, {}, policy
     ids = [str(d['id']) for d in documents]
-    extractions = {str(r['document_id']): str(r['id']) for r in db.execute(
-        'SELECT id, document_id FROM raw_extractions WHERE document_id = ANY(%s::uuid[]) AND is_current=true',
-        (ids,)).fetchall()}
+    extractions, issues = {}, {}
+    for r in db.execute("""SELECT id, document_id, raw_json->'issues' AS issues FROM raw_extractions
+            WHERE document_id = ANY(%s::uuid[]) AND is_current=true""", (ids,)).fetchall():
+        extractions[str(r['document_id'])] = str(r['id'])
+        issues[str(r['document_id'])] = field_issue_codes(r['issues'] if isinstance(r['issues'], list) else [])
     fields = {}
     if extractions:
         for row in db.execute("""SELECT fp.* FROM field_predictions fp
@@ -284,7 +316,8 @@ def assess_documents(db, tenant_id, documents, *, approver_id=None):
             document, has_extraction=key in extractions, fields=fields.get(key, []),
             validation=validation.get(key, {'total': 0, 'failures': []}), open_exceptions=exceptions.get(key, []),
             rules=rules, catalogue=_catalogue(db, document, catalogues) if policy else [],
-            requires_known_supplier=policy, approver_id=approver_id, last_submitted_by=submitted_by.get(key))
+            requires_known_supplier=policy, approver_id=approver_id, last_submitted_by=submitted_by.get(key),
+            issues=issues.get(key))
     return result, fields, policy
 
 
@@ -296,5 +329,8 @@ def summary_values(document, fields):
         row = _required_row(document, keyed, key)
         found = _value(row) if row is not None else None
         return None if found is None else str(found)
-    return {'supplier': value(counterparty_role(document)), 'number': value('invoice') or value('reference'),
+    # A credit or debit note's own number is its reference; its `invoice` is the original invoice it adjusts.
+    own_number = (value('reference') or value('invoice')) if document.get('kind') in {'credit_note', 'debit_note'} \
+        else (value('invoice') or value('reference'))
+    return {'supplier': value(counterparty_role(document)), 'number': own_number,
             'date': value('date'), 'currency': value('currency'), 'total': value('total'), 'tax': value('tax')}

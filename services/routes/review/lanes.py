@@ -172,13 +172,19 @@ def _bulk_item(request, user, action, bulk_id, item, data, seen):
         return _skipped(item.documentId, reason('duplicate_in_request', 'This document is listed twice in the request.'))
     seen.add(document_id)
     audit = {'bulkRequestId': bulk_id, 'contentRevision': item.contentRevision}
-    with connect() as db:
-        document, skipped = _precheck(db, user, action, document_id, item)
-        if skipped:
-            if document is not None:  # Not found writes nothing: the id may belong to another company.
-                _audit(db, user, ACTIONS[action]['audit'], document_id,
-                       {**audit, 'outcome': 'skipped', 'reason': skipped['reason']['code']})
-            return skipped
+    try:  # The pre-check is part of this document's boundary: a failure here skips only this document.
+        with connect() as db:
+            document, skipped = _precheck(db, user, action, document_id, item)
+            if skipped:
+                if document is not None:  # Not found writes nothing: the id may belong to another company.
+                    _audit(db, user, ACTIONS[action]['audit'], document_id,
+                           {**audit, 'outcome': 'skipped', 'reason': skipped['reason']['code']})
+                return skipped
+    except HTTPException as exc:
+        return _skipped(item.documentId, _reason_from_error(exc))
+    except Exception:  # noqa: BLE001 - rolled back with its connection; the rest of the batch still runs.
+        logger.exception('Bulk %s pre-check failed for document %s', action, document_id)
+        return _skipped(item.documentId, reason('action_failed', 'This document could not be checked. Try it on its own.'))
     try:
         outcome = _run_action(request, action, document_id, item, data)
         result = {'documentId': item.documentId, 'outcome': 'done', 'status': outcome['status']}

@@ -172,3 +172,32 @@ class PolicyDB:
                                                      (True, False, False), (True, True, True)])
 def test_supplier_policy_defaults_to_true_and_reads_workspace_settings(column, value, expected):
     assert readiness.ready_lane_requires_known_supplier(PolicyDB(column, value), 't1') is expected
+
+
+def test_an_assumed_date_order_is_not_verified_until_a_person_confirms_it():
+    # 03/04/2026 read as day/month: text-layer evidence alone would say verified.
+    issues = readiness.field_issue_codes([{'code': 'DATE_ORDER_ASSUMED', 'field': 'date', 'detail': 'read as day/month.'}])
+    assert issues == {'date': {'DATE_ORDER_ASSUMED'}}
+    reasons = check(issues=issues)
+    assert codes(reasons) == ['field_needs_check'] and lane_for(reasons) == 'to_check'
+    assert reasons[0]['details'] == {'fields': ['date'], 'assumed': {'date': ['DATE_ORDER_ASSUMED']}}
+    assert 'day and month order was assumed' in reasons[0]['message']
+    confirmed = field('date', None, current_value='2026-04-03', corrected_by='u1',
+                      corrected_at=datetime(2026, 11, 18, tzinfo=timezone.utc))
+    assert check(issues=issues, fields=receipt_fields(date=confirmed)) == []
+
+
+def test_extraction_issues_map_onto_canonical_fields():
+    assert readiness.field_issue_codes([
+        {'code': 'DEFAULT_CURRENCY_APPLIED', 'field': 'currency'},
+        {'code': 'DATE_ORDER_ASSUMED', 'detail': 'invoice_date: day and month both 12 or less'},
+        {'code': 'OCR_REQUIRES_REVIEW', 'detail': 'OCR spelling needs review'}, 'not an issue', {'field': 'total'},
+    ]) == {'currency': {'DEFAULT_CURRENCY_APPLIED'}, 'date': {'DATE_ORDER_ASSUMED'}}
+    assert codes(check(issues={'currency': {'DEFAULT_CURRENCY_APPLIED'}})) == ['field_needs_check']
+    assert check(issues={'total': {'OCR_REQUIRES_REVIEW'}}) == []  # Only assumptions block a verified field.
+
+
+@pytest.mark.parametrize('kind, expected', [('credit_note', 'CN-7'), ('debit_note', 'CN-7'), ('invoice', 'INV-1')])
+def test_the_number_shown_is_the_documents_own_number(kind, expected):
+    rows = receipt_fields(original=field('original_invoice_number', 'INV-1'), own=field('credit_note_number', 'CN-7'))
+    assert readiness.summary_values({**DOCUMENT, 'kind': kind}, rows)['number'] == expected

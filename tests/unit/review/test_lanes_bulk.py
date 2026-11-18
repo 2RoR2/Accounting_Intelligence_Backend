@@ -72,6 +72,9 @@ def world():
     state = {'reasons': {}, 'calls': [], 'fail': {}}
 
     def assess(db, tenant_id, documents, approver_id=None):
+        for d in documents:
+            if d['id'] in state.get('assess_fail', ()):
+                raise RuntimeError('readiness query failed')
         return ({d['id']: state['reasons'].get(d['id'], []) for d in documents}, {}, True)
 
     def single(name, status):
@@ -153,6 +156,30 @@ def test_one_failure_never_blocks_the_rest(world):
     assert response['done'] == 2 and response['skipped'] == 2
     assert 'database' not in response['results'][2]['reason']['message']  # No internal error text to the user.
     assert [c[0] for c in state['calls']] == ['approve'] * 4
+
+
+def test_a_failing_precheck_on_item_two_of_three_skips_only_that_item(world):
+    state, build = world
+    docs = [doc(), doc(), doc()]
+    db = build(docs, ACCOUNTANT)
+    state['assess_fail'] = {docs[1]['id']}
+    response = lanes.bulk_submit(body(*docs), None)
+    assert outcomes(response) == [('done', None), ('skipped', 'action_failed'), ('done', None)]
+    assert 'readiness' not in response['results'][1]['reason']['message']
+    assert [c[1] for c in state['calls']] == [docs[0]['id'], docs[2]['id']]
+    assert [a['resource'] for a in db.audit] == [docs[0]['id'], docs[2]['id']]
+
+
+def test_a_failing_precheck_on_item_two_of_three_skips_only_that_item(world):
+    state, build = world
+    docs = [doc(), doc(), doc()]
+    db = build(docs, ACCOUNTANT)
+    state['assess_fail'] = {docs[1]['id']}
+    response = lanes.bulk_submit(body(*docs), None)
+    assert outcomes(response) == [('done', None), ('skipped', 'action_failed'), ('done', None)]
+    assert 'readiness' not in response['results'][1]['reason']['message']
+    assert [c[1] for c in state['calls']] == [docs[0]['id'], docs[2]['id']]
+    assert [a['resource'] for a in db.audit] == [docs[0]['id'], docs[2]['id']]
 
 
 def test_single_function_conflicts_map_to_named_reasons(world):

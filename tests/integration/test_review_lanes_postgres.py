@@ -158,6 +158,18 @@ def test_lanes_explain_why_a_document_is_not_ready_then_list_it_as_ready(workspa
     item = after['lanes']['ready'][0]
     assert item['contentRevision'] == revision and item['nextAction'] == 'submit' and item['reasons'] == []
     assert item['supplier'] == 'Triple Six Point Enterprise 666' and item['total'] == '22.60'
+    # An assumed date order stored on the extraction keeps an unconfirmed date out of the ready lane.
+    with ws['connect']() as db:
+        db.execute("""UPDATE raw_extractions SET raw_json = jsonb_set(raw_json, '{issues}',
+            COALESCE(raw_json->'issues', '[]'::jsonb) || '[{"code": "DATE_ORDER_ASSUMED", "field": "date"}]'::jsonb)
+            WHERE document_id=%s""", (document,))
+        db.execute("UPDATE field_predictions SET corrected_by=NULL, corrected_at=NULL WHERE document_id=%s AND field_key='date'", (document,))
+    with Acting(ws['accountant']):
+        held = lanes.review_lanes(None)['lanes']['to_check'][0]['reasons']
+    assert [r['code'] for r in held] == ['field_needs_check'] and held[0]['details']['assumed'] == {'date': ['DATE_ORDER_ASSUMED']}
+    with ws['connect']() as db:
+        db.execute("UPDATE field_predictions SET corrected_by=%s, corrected_at=now() WHERE document_id=%s AND field_key='date'",
+                   (ws['accountant']['id'], document))
     # The tenant policy: with the supplier off the list the document is not ready; with the policy off it is.
     with ws['connect']() as db:
         db.execute('DELETE FROM vendors')
