@@ -57,6 +57,27 @@ def chosen_classification(db, document: dict[str, Any], extraction: dict[str, An
             'detected': details.get('detected') or {}}
 
 
+def chosen_kinds(db, tenant_id) -> dict[str, tuple[str, str]]:
+    """Each document's latest type decision in this company: {document_id: (kind, extraction_id)}.
+
+    For reference reads across documents (duplicate detection). A caller still checks that the
+    extraction id is the document's current one and the kind is its stored kind.
+    """
+    rows = db.execute(
+        """SELECT DISTINCT ON (resource) resource, details FROM audit_logs
+           WHERE tenant_id=%s AND action=%s ORDER BY resource, created_at DESC""",
+        (tenant_id, KIND_CHOSEN_ACTION)).fetchall()
+    decisions = {}
+    for row in rows:
+        try:
+            details = json.loads(row['details'])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if details.get('kind') in KIND_SEQUENCES and details.get('extraction_id'):
+            decisions[str(row['resource'])] = (details['kind'], str(details['extraction_id']))
+    return decisions
+
+
 def document_classification(raw: dict[str, Any] | None, chosen: dict[str, Any] | None) -> dict[str, Any]:
     """The classification the type gates use: a person's choice wins over what reading found."""
     if chosen:

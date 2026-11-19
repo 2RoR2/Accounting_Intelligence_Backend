@@ -79,11 +79,17 @@ def invoice_references(db, document):
           AND d.status NOT IN ('uploaded','queued','processing','failed')
           AND fp.field_key IN ('supplier','supplier_name','vendor_name','seller','invoice','invoice_number')
         ORDER BY d.id,fp.field_key""", (document['tenant_id'], document['id'])).fetchall()
+    # A person's type choice for the current reading counts like a classification (kind_choice),
+    # so a document confirmed as an invoice is a duplicate reference like a detected one.
+    from services.extraction.persistence.kind_choice import chosen_kinds
+    chosen = read_or_unavailable(db, lambda: chosen_kinds(db, document['tenant_id']), {}) or {}
     grouped = defaultdict(list)
     for row in rows:
         raw = row.get('raw_json') or {}
         classification = raw.get('document_type') or {}
-        if raw.get('mode') == 'module2_public_result' and (
+        reference_id = str(row['reference_document_id'])
+        confirmed = chosen.get(reference_id) == ('invoice', str(row.get('extraction_id')))
+        if raw.get('mode') == 'module2_public_result' and not confirmed and (
                 classification.get('value') != 'invoice' or classification.get('status') != 'classified'):
             continue
         grouped[str(row['reference_document_id'])].append(row)

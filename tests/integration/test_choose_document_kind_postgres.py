@@ -253,3 +253,36 @@ def test_choosing_the_stored_kind_of_a_numbered_upload_keeps_its_code(workspace,
     assert after['kind'] == 'invoice' and after['document_code'] == before['document_code']
     assert not type_errors(response.json()['validation'])
     assert {'supplier', 'invoice', 'date', 'currency', 'total'} <= fields and audits[0]['previous_kind'] == 'invoice'
+
+
+def test_a_document_confirmed_as_an_invoice_is_a_duplicate_reference(workspace, tmp_path):
+    """Codex P1 on #15: the raw classification stays unknown, so references must use the person's choice."""
+    connect, people = workspace
+    owner = people['owner']
+
+    def confirmed_invoice(number):
+        document_id = unread_document(connect, owner, tmp_path, kind='invoice')
+        response = choose(document_id, owner, 'invoice', stored(connect, document_id)[0]['content_revision'])
+        assert response.status_code == 200, response.text
+        revision = response.json()['contentRevision']
+        for key, value in [('supplier', 'Syarikat Pendua Sdn. Bhd.'), ('invoice', number), ('date', '2026-10-01'),
+                           ('currency', 'MYR'), ('total', '50.00')]:
+            corrected = call('PATCH', f'/api/documents/{document_id}/extraction/{key}', owner,
+                             json={'value': value, 'expectedContentRevision': revision})
+            assert corrected.status_code == 200, (key, corrected.text)
+            revision = corrected.json()['contentRevision']
+        return document_id
+
+    first = confirmed_invoice('INV-DUP-' + uuid4().hex[:6])
+    number = call('GET', f'/api/documents/{first}/extraction', owner).json()
+    number = next(f['value'] for f in number['fields'] if f['key'] == 'invoice')
+    second = confirmed_invoice(number)
+    checked = call('POST', f'/api/documents/{second}/revalidate', owner).json()
+    assert any(e['code'] == 'EX-007' for e in checked['errors']), checked['errors']
+    with connect() as db:
+        flagged = db.execute("""SELECT 1 FROM exceptions WHERE document_id=%s AND type='VALIDATION:EX-007'
+            AND status<>'resolved'""", (second,)).fetchone()
+    assert flagged
+    # A different number is not a duplicate.
+    third = confirmed_invoice('INV-OTHER-' + uuid4().hex[:6])
+    assert not any(e['code'] == 'EX-007' for e in call('POST', f'/api/documents/{third}/revalidate', owner).json()['errors'])
