@@ -33,6 +33,11 @@ Run this loop every time an executor finishes or Jonathan asks "what next".
 - Guard rails from the brief never move: record printed tax only, no tax computation or filing, no payment initiation, no live ERP posting, nothing approved or posted automatically.
 - Accuracy claims use the hold-out set or real pilot documents, never the tuning set.
 - When a usage limit or blocker stops an executor, record the exact task and step in section 10 so the next session resumes rather than restarts.
+- **Few branches, few PRs (Jonathan, 2026-11-19).**
+  1. One branch and one PR per task, per repository. Fixes found during a task (review findings, a lock, a re-read command, a missing choice) go on that task's branch. A new branch is only for a fix that is urgent and unrelated to the task.
+  2. Executors never start new sessions or branches on their own. They report the need to the planner, and the planner decides.
+  3. Before starting new work, the planner shrinks the open queue: it tells Jonathan which PRs are ready, in merge order, and folds small dependent PRs into one where that is safe (one already contains the other, or they touch the same files for the same task).
+  4. After a PR merges, the planner lists its head branch for deletion. Branches are deleted only with Jonathan's OK, or automatically once he turns on "Automatically delete head branches" in the repository settings.
 
 ## 4. Brief template for an executor
 
@@ -45,6 +50,7 @@ Steps: <3-7 concrete steps>.
 Tests: <exact commands>; no new failing test names vs features.
 Done when: <observable acceptance criteria, including a browser check for UI tasks>.
 Finish: push the branch, open a PR into features with summary, evidence and a not-verified list; do not merge.
+One branch and one PR per repository for this task: review fixes and anything found along the way go on this branch. Never start another session or branch; report the need to the planner.
 Never print .env values; local database only.
 ```
 
