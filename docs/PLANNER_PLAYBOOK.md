@@ -38,6 +38,7 @@ Run this loop every time an executor finishes or Jonathan asks "what next".
   2. Executors never start new sessions or branches on their own. They report the need to the planner, and the planner decides.
   3. Before starting new work, the planner shrinks the open queue: it tells Jonathan which PRs are ready, in merge order, and folds small dependent PRs into one where that is safe (one already contains the other, or they touch the same files for the same task).
   4. After a PR merges, the planner lists its head branch for deletion. Branches are deleted only with Jonathan's OK, or automatically once he turns on "Automatically delete head branches" in the repository settings.
+- **Codex status (Jonathan, 2026-11-19: "always tell me if codex isnt working or running out of usage").** When a Codex run (review or build) fails to start, errors, stalls, returns no result, or reports a usage or rate limit, tell Jonathan at once in one line, not just in the evening status: what Codex was doing (PR or task), what happened (error text, or the limit and its reset time if shown), and what the planner did instead (Opus took the review or task, or it waits). Say so again when Codex works again. A missing Codex review never counts as a clean one: a PR without a completed Codex review does not meet any merge rule unless Jonathan says to merge without it.
 
 ## 4. Brief template for an executor
 
