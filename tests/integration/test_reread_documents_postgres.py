@@ -179,3 +179,20 @@ def test_the_queue_refuses_corrected_or_approved_documents_directly(database):
     with connect() as db, pytest.raises(attempts.AttemptRejected) as rejected:
         attempts.schedule_reread(db, str(ids['other']), str(ids['tenant']))
     assert rejected.value.code == 'ATTEMPT_DOCUMENT_MISMATCH'
+
+
+def test_only_readings_finished_after_the_reread_are_timed(database):
+    connect, ids = database
+    with connect() as db:
+        db.execute("""UPDATE documents SET processing_seconds=0.3, processing_completed_at=now() - interval '1 day'
+            WHERE id IN (%s,%s)""", (ids['fixing'], ids['busy']))
+        since = db.execute('SELECT clock_timestamp() AS instant').fetchone()['instant']
+        # The re-read of one finished; the other failed and kept its old reading time.
+        db.execute("""UPDATE documents SET status='extracted', processing_seconds=12.5,
+            processing_completed_at=clock_timestamp() WHERE id=%s""", (ids['fixing'],))
+        db.execute("UPDATE documents SET status='failed' WHERE id=%s", (ids['busy'],))
+    rows = reread.outcome(connect, [str(ids['fixing']), str(ids['busy'])], since)
+    assert sorted((row['status'], row['processing_seconds']) for row in rows) == \
+        [('extracted', 12.5), ('failed', None)]
+    result = reread.summarize(rows)
+    assert result['timed'] == 1 and result['average_seconds'] == 12.5

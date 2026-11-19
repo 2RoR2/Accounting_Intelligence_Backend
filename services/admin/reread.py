@@ -186,10 +186,13 @@ def wait_for(connect, document_ids, timeout_seconds, poll=3.0):
             inline.stop_supervisor()
 
 
-def outcome(connect, document_ids):
+def outcome(connect, document_ids, since):
+    """Status and reading time of each document. A failed read leaves processing_seconds from the
+    earlier run, so only a reading completed after `since` (when the re-reads were queued) is timed."""
     with connect() as db:
-        return db.execute("SELECT status, processing_seconds FROM documents WHERE id = ANY(%s::uuid[])",
-                          (document_ids,)).fetchall()
+        return db.execute("""SELECT status, CASE WHEN processing_completed_at >= %s
+                THEN processing_seconds END AS processing_seconds
+            FROM documents WHERE id = ANY(%s::uuid[])""", (since, document_ids)).fetchall()
 
 
 # --- command -----------------------------------------------------------------------------------------
@@ -213,6 +216,7 @@ def reread(company=None, pack=None, statuses=DEFAULT_STATUSES, limit=None, dry_r
     with connect() as db:
         tenant = find_company(db, company)
         planned = plan(document_facts(db, tenant["id"]), statuses, limit)
+        since = db.execute("SELECT clock_timestamp() AS instant").fetchone()["instant"]
     print(f"{tenant['name']}: {len(planned)} documents; re-reading status {', '.join(statuses)}"
           f"{' (dry run, nothing changes)' if dry_run else ''}; AI extraction: {os.getenv('AI_EXTRACTION') or 'off'}.")
     if not dry_run:
@@ -229,7 +233,7 @@ def reread(company=None, pack=None, statuses=DEFAULT_STATUSES, limit=None, dry_r
               "skipped": dict(sorted(skipped.items()))}
     if queued and wait:
         report["seconds"] = wait_for(connect, queued, timeout_minutes * 60)
-        report["result"] = summarize(outcome(connect, queued))
+        report["result"] = summarize(outcome(connect, queued, since))
     return report
 
 
@@ -244,8 +248,8 @@ def print_report(report):
     if result:
         print("Re-read documents by status now:", json.dumps(result["by_status"]))
         if result["timed"]:
-            print(f"Reading time over {result['timed']} documents: average {result['average_seconds']} s, "
-                  f"p95 {result['p95_seconds']} s.")
+            print(f"Reading time over the {result['timed']} documents read in this run: "
+                  f"average {result['average_seconds']} s, p95 {result['p95_seconds']} s.")
 
 
 def add_arguments(parser):
