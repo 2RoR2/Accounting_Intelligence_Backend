@@ -32,6 +32,9 @@ from pathlib import Path
 from services.admin.demo_company import PACK_ROOT, PACKS, WAITING_STATUSES, refusal_reason
 
 DEFAULT_STATUSES = ("exception", "extracted", "failed")
+# Held jobs stay held this long after the timeout, so the timeout clean-up closes them before any
+# other dispatcher could see them due.
+HOLD_MARGIN_SECONDS = 600
 # Statuses at or past review. ensure_unreviewed refuses these too; listed here so the skip says why.
 PAST_REVIEW = ("corrected", "in_review", "validated", "standardised", "completed")
 REJECTION_TEXT = {
@@ -164,11 +167,13 @@ def schedule(connect, tenant_id, planned, hold_seconds=0):
     return results, jobs
 
 
-def dispatch_held(connect, tenant_id, jobs, capacity, send=None):
+def dispatch_held(connect, tenant_id, jobs, capacity, send=None, failed=None):
     """Hand up to `capacity` of this command's held jobs to its own workers. Returns how many were sent.
 
     Held jobs are not due yet, so another API on the same database does not take them;
-    attempts.reserve_held makes each one due and reserves it in the same transaction.
+    attempts.reserve_held makes each one due and reserves it in the same transaction. A hand-over
+    the transport could not confirm (publish() raises DISPATCH_UNCONFIRMED after closing that job
+    and marking the document failed) is added to `failed` and the rest carry on.
     """
     from services.queue import attempts
     send = send or attempts.publish
@@ -184,18 +189,25 @@ def dispatch_held(connect, tenant_id, jobs, capacity, send=None):
                 delivery = attempts.reserve_held(db, str(job["document_id"]), str(tenant_id), str(job["id"]))
         except attempts.AttemptRejected:
             continue
-        if send(delivery)["dispatchAccepted"]:
-            sent += 1
+        try:
+            accepted = send(delivery)["dispatchAccepted"]
+        except attempts.AttemptRejected:
+            if failed is not None:
+                failed.append(str(job["document_id"]))
+            continue
+        sent += bool(accepted)
     return sent
 
 
-def wait_for(connect, document_ids, timeout_seconds, poll=3.0, tenant_id=None, jobs=None):
+def wait_for(connect, document_ids, timeout_seconds, poll=3.0, tenant_id=None, jobs=None, deadline=None,
+             failed=None):
     """Hand this command's own jobs to its workers until these documents leave the queue.
 
-    Returns the seconds taken, or None at the timeout. Only the selected jobs are dispatched:
-    no lease recovery or company-wide dispatch runs here, and a finishing worker does not pull
-    other waiting jobs (the inline stop flag, set before the first hand-over, turns that
-    wake-up off). Nothing the plan skipped is read with these settings.
+    Returns the seconds taken, or None at the deadline (time.monotonic(); default: timeout_seconds
+    from now). The deadline is checked before every hand-over, so no reading starts after it.
+    Only the selected jobs are dispatched: no lease recovery or company-wide dispatch runs here,
+    and a finishing worker does not pull other waiting jobs (the inline stop flag, set before the
+    first hand-over, turns that wake-up off). Nothing the plan skipped is read with these settings.
     """
     from services.queue.backend import queue_backend
     inline = None
@@ -203,10 +215,9 @@ def wait_for(connect, document_ids, timeout_seconds, poll=3.0, tenant_id=None, j
         from services.queue import inline
         inline.stop_supervisor()  # sets the stop flag; submit() still works, completions stop dispatching
     started, last = time.monotonic(), None
+    deadline = started + timeout_seconds if deadline is None else deadline
     try:
         while True:
-            if inline is not None:
-                dispatch_held(connect, tenant_id, jobs or {}, inline.capacity())
             with connect() as db:
                 waiting = db.execute("SELECT count(*) n FROM documents WHERE id = ANY(%s::uuid[]) AND status = ANY(%s)",
                                      (document_ids, list(WAITING_STATUSES))).fetchone()["n"]
@@ -215,9 +226,11 @@ def wait_for(connect, document_ids, timeout_seconds, poll=3.0, tenant_id=None, j
                 last = waiting
             if not waiting:
                 return round(time.monotonic() - started, 1)
-            if time.monotonic() - started > timeout_seconds:
+            if time.monotonic() >= deadline:
                 print(f"  {waiting} documents still waiting after {timeout_seconds // 60} minutes; stopping.")
                 return None
+            if inline is not None:
+                dispatch_held(connect, tenant_id, jobs or {}, inline.capacity(), failed=failed)
             time.sleep(poll)
     finally:
         if inline is not None:
@@ -279,10 +292,13 @@ def reread(company=None, pack=None, statuses=DEFAULT_STATUSES, limit=None, dry_r
     if not dry_run:
         # Keep this process's dispatch and lease recovery to this one company.
         os.environ["QUEUE_TENANT_ID"] = str(tenant["id"])
-    # Driving the in-process queue here, hold the jobs for this process for the whole wait, so a
-    # running API with other reading settings cannot take them. Otherwise any dispatcher may run them.
+    # Driving the in-process queue here, hold the jobs for this process, so a running API with other
+    # reading settings cannot take them. The deadline starts before the first job is queued and the
+    # hold lasts HOLD_MARGIN_SECONDS longer, so the timeout clean-up closes every job before any hold
+    # ends. Without the wait (or with RQ) there is no hold and any dispatcher may run them.
     from services.queue.backend import queue_backend
-    hold_seconds = timeout_minutes * 60 if wait and queue_backend() == "inline" else 0
+    deadline = time.monotonic() + timeout_minutes * 60
+    hold_seconds = timeout_minutes * 60 + HOLD_MARGIN_SECONDS if wait and queue_backend() == "inline" else 0
     results, jobs = (planned, {}) if dry_run else schedule(connect, tenant["id"], planned, hold_seconds)
     for row, action in results:
         print(f"  {row['document_code']}  {row['original_filename']}  "
@@ -293,13 +309,19 @@ def reread(company=None, pack=None, statuses=DEFAULT_STATUSES, limit=None, dry_r
               "selected": sum(action == "reread" for _row, action in planned), "queued": len(queued),
               "skipped": dict(sorted(skipped.items()))}
     if queued and wait:
+        names = {str(row["id"]): f"{row['document_code']}  {row['original_filename']}" for row, _a in results}
+        failed = []
         try:
-            report["seconds"] = wait_for(connect, queued, timeout_minutes * 60, tenant_id=str(tenant["id"]), jobs=jobs)
+            report["seconds"] = wait_for(connect, queued, timeout_minutes * 60, tenant_id=str(tenant["id"]),
+                                         jobs=jobs, deadline=deadline, failed=failed)
         except KeyboardInterrupt:
             print("  interrupted; stopping.")
             report["seconds"] = None
+        except Exception:
+            abandon(connect, tenant["id"], jobs)  # an unexpected error still closes every unfinished job
+            raise
+        report["dispatch_failed"] = [names[document_id] for document_id in failed]
         if report["seconds"] is None:
-            names = {str(row["id"]): f"{row['document_code']}  {row['original_filename']}" for row, _a in results}
             report["abandoned"] = [names[document_id] for document_id in abandon(connect, tenant["id"], jobs)]
         report["result"] = summarize(outcome(connect, queued, since))
     return report
@@ -318,6 +340,11 @@ def print_report(report):
         if result["timed"]:
             print(f"Reading time over the {result['timed']} documents read in this run: "
                   f"average {result['average_seconds']} s, p95 {result['p95_seconds']} s.")
+    if report.get("dispatch_failed"):
+        print(f"Not handed to a worker: {len(report['dispatch_failed'])} documents (DISPATCH_UNCONFIRMED); "
+              "they are marked failed; read them again with --status failed.")
+        for name in report["dispatch_failed"]:
+            print("  " + name)
     if report.get("abandoned"):
         print(f"Not finished: {len(report['abandoned'])} documents. Their jobs are closed (REREAD_TIMEOUT) and "
               "the documents marked failed; read them again with --status failed.")

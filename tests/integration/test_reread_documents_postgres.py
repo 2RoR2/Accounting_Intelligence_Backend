@@ -303,3 +303,74 @@ def test_abandon_leaves_finished_jobs_alone(database):
     with connect() as db:
         assert attempts.abandon_reread(db, str(ids['fixing']), str(ids['tenant']), str(ids['fixing_job'])) is False
         assert db.execute('SELECT status FROM documents WHERE id=%s', (ids['fixing'],)).fetchone()['status'] == 'exception'
+
+
+def _second_exception_document(connect, ids):
+    with connect() as db:
+        owner = db.execute('SELECT owner_id FROM documents WHERE id=%s', (ids['fixing'],)).fetchone()['owner_id']
+        return db.execute("""INSERT INTO documents(tenant_id,owner_id,original_filename,kind,category,storage_path,
+                mime_type,file_size_bytes,file_hash_sha256,status)
+            VALUES (%s,%s,'second.pdf','bill','accounts_payable','synthetic/none.pdf','application/pdf',100,%s,'exception')
+            RETURNING id""", (ids['tenant'], owner, hashlib.sha256(b'second').hexdigest())).fetchone()['id']
+
+
+def test_an_unconfirmed_hand_over_is_reported_and_the_rest_carry_on(database, monkeypatch):
+    connect, ids = database
+    from services.queue import inline
+    second = _second_exception_document(connect, ids)
+    monkeypatch.setenv('QUEUE_BACKEND', 'inline')
+    monkeypatch.setattr(inline, 'capacity', lambda: 2)
+    handed = []
+
+    def transport(delivery):
+        handed.append(delivery.document_id)
+        with connect() as db:
+            if delivery.document_id == str(ids['fixing']):
+                # What publish() does when the transport fails: close the reservation, fail the document.
+                db.execute("""UPDATE pending_jobs SET status='failed',finished_at=now(),last_error='DISPATCH_UNCONFIRMED'
+                    WHERE id=%s""", (delivery.job_id,))
+                db.execute("UPDATE documents SET status='failed' WHERE id=%s", (delivery.document_id,))
+                fail = True
+            else:
+                db.execute("UPDATE pending_jobs SET status='succeeded',finished_at=now() WHERE id=%s", (delivery.job_id,))
+                db.execute("UPDATE documents SET status='extracted',processing_completed_at=now() WHERE id=%s",
+                           (delivery.document_id,))
+                fail = False
+        if fail:
+            raise attempts.AttemptRejected('DISPATCH_UNCONFIRMED')
+        return {'dispatchAccepted': True}
+
+    monkeypatch.setattr(attempts, 'publish', transport)
+    report = reread.reread(company='Synthetic Reread A', timeout_minutes=1, connect=connect)
+
+    assert sorted(handed) == sorted([str(ids['fixing']), str(second)])
+    assert report['seconds'] is not None and not report.get('abandoned')
+    assert len(report['dispatch_failed']) == 1 and report['dispatch_failed'][0].endswith('needs-fixing.pdf')
+    assert report['result']['by_status'] == {'extracted': 1, 'failed': 1}
+
+
+def test_nothing_is_handed_over_after_the_deadline(database, monkeypatch):
+    connect, ids = database
+    import time
+    from services.queue import inline
+    monkeypatch.setenv('QUEUE_BACKEND', 'inline')
+    monkeypatch.setattr(inline, 'capacity', lambda: 2)
+    with connect() as db:
+        held = attempts.schedule_reread(db, str(ids['fixing']), str(ids['tenant']), hold_seconds=600)
+    handed = []
+    monkeypatch.setattr(attempts, 'publish', lambda d: handed.append(d) or {'dispatchAccepted': True})
+    seconds = reread.wait_for(connect, [str(ids['fixing'])], 60, poll=0.01, tenant_id=str(ids['tenant']),
+                              jobs={str(ids['fixing']): str(held['id'])}, deadline=time.monotonic() - 1)
+    assert seconds is None and handed == []
+    with connect() as db:
+        assert db.execute('SELECT status FROM pending_jobs WHERE id=%s', (held['id'],)).fetchone()['status'] == 'pending'
+
+
+def test_holds_outlast_the_timeout(database, monkeypatch):
+    connect, ids = database
+    monkeypatch.setenv('QUEUE_BACKEND', 'inline')  # the hold applies when this command drives the inline queue
+    report = reread.reread(company='Synthetic Reread A', timeout_minutes=0, connect=connect)
+    with connect() as db:
+        job = db.execute("""SELECT next_attempt_at - created_at AS hold FROM pending_jobs WHERE document_id=%s
+            ORDER BY created_at DESC LIMIT 1""", (ids['fixing'],)).fetchone()
+    assert report['abandoned'] and job['hold'].total_seconds() >= reread.HOLD_MARGIN_SECONDS - 1

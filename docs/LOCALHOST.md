@@ -123,7 +123,9 @@ it prints the new statuses with the average and p95 reading time of the document
 It dispatches only the documents it listed, never other waiting jobs of the company. At the
 timeout (or Ctrl+C) it stops handing out work, closes the unfinished jobs, marks those documents
 `failed`, lists them and exits with code 3 without waiting for a reading in progress; run it
-again with `--status failed` to finish them. `--no-wait` queues the jobs without a hold and
+again with `--status failed` to finish them. The timeout counts from the moment the first job is
+queued, and nothing new starts after it. A document that cannot be handed to a worker is listed
+and marked `failed` while the others carry on. `--no-wait` queues the jobs without a hold and
 leaves them to the running backend.
 
 Or create your own accounts:
