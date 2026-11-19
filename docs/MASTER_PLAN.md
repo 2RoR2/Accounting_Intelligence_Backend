@@ -594,6 +594,9 @@ Jonathan's direction (19 Nov): fix bugs, finish the daily and monthly accounting
 - Cut now: reconciliation = exact and one-to-many matches only (no partial or combined payments); ageing = a simple list by due date; skip I2 image fallback and cost-centre reports.
 - AI-on demo seed (G5/R6): if Jonathan doesn't choose by end of 19 Nov, use Groq `openai/gpt-oss-120b` with Gemini as fallback, free tiers only.
 - Target: most features done by Wed 25; freeze Thu 26 12:00; release Fri 27.
+- **Focus (Jonathan, 19 Nov): the accountant's screens first** (Dashboard, Upload, Documents, Review, Exceptions, posting, bank, month-end as the accountant sees them). The local admin's approval flow comes second, if there is capacity. Codex is the backup builder.
+- Team demo accounts already exist in the team database (shared password, test only; use a different one on the hosted demo). The `uat` branch copy carries them over, so no emails are re-entered or written anywhere.
+- **Risk: the Neon project has used 82.4% of its monthly network transfer (19 Nov).** The `uat` branch shares the allowance. Every test, seed and benchmark runs on local Docker Postgres, never on Neon. The hosted demo keeps polling light, and a top-up or plan upgrade is a paid decision for Jonathan if usage climbs.
 
 ### 10.6 Handoff log
 
