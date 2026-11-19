@@ -546,6 +546,44 @@ Operating rules for the last week (override 10.4's "one backend and one frontend
 
 **UI redesign (Jonathan, 2026-11-18).** Jonathan asked to bring back the team's earlier look and page names, grouped by when they are used: Daily (Dashboard, Upload, Documents, Exceptions, Money In, Money Out, Reconciliation), Month-end (checklist, Ledger, Reports, Standardised Records, Summary), Company (Contacts, Settings, admin pages, Help). This replaces B2's job-based menu; B1's plain-language sentences stay. Draft: side-session notes `ui-redesign-plan-draft.md`. The work items map onto existing tasks rather than adding effort: R0 navigation + Dashboard (Today merged in; supersedes frontend #4), R1 Documents/Upload = B4a + B5b, R2 Review = B4b, R3 Exceptions grouped per document with suggested fixes = B5b, R4 Banking = C5, R5 Month-end = D1-D3, R6 demo data seeded with AI on (provider decision pending) + reset, R7 polish = U3. Frontend #4 and #5 merge after R0, so they are not redone.
 
+### 10.8 Gaps and improvements (added 2026-11-19, re-orders 10.7)
+
+Jonathan's direction (19 Nov): fix bugs, finish the daily and monthly accounting workflow, a full chart of accounts, more realistic data, evidence for all five success criteria, show only the new architecture, and a demo in which accountants visibly do less work. Merged work stays: build on it, never redo or revert it. Every playbook rule still applies.
+
+**Evidence used.** 46 screenshots of the pre-plan UI (old architecture, still partly on `features`), the `features` branches, 10.2, 10.6 and 10.7.
+- The Summary page shows the SAIC criteria as NOT MET from the old Docling/Qwen benchmark (SC1 90.0%, SC3 p95 39.4 s, SC4 57% first-pass exceptions, SC2 not measured) and names Docling, Qwen mode and saic-eval-qwen. It is the jury's first evidence, and it describes the old architecture.
+- Exceptions: one row per rule finding (EX-002, EX-008), no suggested fix, no assignee. Top causes: currency symbol only, uncertain source value, missing value, supplier not matched.
+- Upload asks for document type and AP/AR by hand. Review shows rule codes, intake ids and worker events. The output stops at "Create standardised record"; nothing reaches a ledger.
+- Documents: raw filenames, many FAILED, 17-100+ s. Contacts: 3, no defaults. Reconciliation: 3 rows, one-to-one only. Money In/Out: duplicate summaries, no P&L. Dashboard: zeros and "failed jobs" shown to accountants. The help tutorial describes the old flow.
+
+**Gaps, in priority order**
+
+| ID | Gap | Work (plan task) | Size |
+|---|---|---|---|
+| G1 | No accounting output: no posting to the chart of accounts, no journals UI, no month-end, no P&L/BS/TB | C3, D1, D2, D3 | L |
+| G2 | Chart of accounts end to end | Expand C2: COA page grouped by type and report section, with balances; add/edit/deactivate; import (from #7) and export; company defaults (AP 2000, AR 1100, bank -> cash account, printed SST -> SST input/output accounts, recorded only, never computed); supplier/customer default account (C1); category -> account suggestion; reports roll up by report section. Load the Malaysian SME COA (64 accounts, company pack `coa.csv`) for every demo company | M |
+| G3 | Exception rate too high (SC4 < 10% on the demo month) | New backend task before I1: company default currency (MYR) as a "check" value, not an exception; supplier/customer auto-match against imported contacts by name and registration, with one-click "add as supplier"; AP vs AR inferred from whether the company is buyer or seller; exceptions grouped per document with a suggested fix (B5b) | M |
+| G4 | Evidence is from the old architecture | Expand I1 + I3: hold-out and public sets with the lite engine and the chosen provider; p95 seconds; replace the old Summary/evaluation content entirely (no Docling/Qwen wording); I4 effort study and I5 load test feed the same page | M |
+| G5 | Unrealistic data | R6 raised to M: seed all three company packs with AI on; dates moved into the current and previous two months so month-end and ageing are meaningful; matching bank statements; a reset command. A demo Dashboard never shows all zeros | M |
+| G6 | Old-architecture surfaces in the accountant UI | Processing health and workers move to the admin System page only; the AI Assist (Qwen) panel becomes "Read again with AI" on the new text provider (#14); the activity tab shows human events (uploaded, corrected, approved, posted); help rewritten around 10.3. Legacy Docling/RQ code stays off by default this week and is removed after UAT, never during the freeze run-up | M |
+| G7 | Known bugs | One backend task (file set `services/queue`, `services/review`, `services/routes/documents`, `services/routes/review`): `assign_workload` never sets `documents.assigned_to`; old-engine failed jobs -> bulk "read again"; display names from extracted identifiers instead of raw filenames; dates without a year and 2019 rows in demo data; Codex follow-ups parked for C5/D1 | S-M |
+| G8 | No demo script | New task P1, last: a 10-minute script on the seeded company. Accountant's day (drop 20 documents -> review only flagged fields -> bulk approve -> post -> match bank) and month-end (checklist -> lock -> month pack), with before/after time from I4 on screen and the five criteria on the evaluation page. Rehearse on the hosted UAT environment Thu 26 | S |
+
+**Remaining days (replaces the 10.7 table from Thu 19; adjust to merges)**
+
+| Day | Work |
+|---|---|
+| Thu 19 | Merges: backend #12, #13, #10, #16, plan #9; frontend #6 (R0), then #5. Start G7 (backend) and B4b (frontend). |
+| Fri 20 | G3 (backend); B5b (frontend, uses G3 suggestions); C1 + G2 data model start. |
+| Sat 21 - Sun 22 | C3 posting with the COA (both lanes); G2 COA page; G5 seed with AI on. |
+| Mon 23 | C5 reconciliation incl. partial/combined payments and create-expense; D2 reports (P&L, BS, TB, GL, recorded tax). |
+| Tue 24 | D1 month-end + lock, D3 month pack; G4 hold-out/public runs + new Summary page; I5 load test; U2 hardening; I4 effort study (Jonathan books two people). |
+| Wed 25 | G6 cleanup + help rewrite; U1 hosted UAT (Jonathan approves each step; secrets rotated first); U3 tester guide. |
+| Thu 26 | E2 full walkthrough on hosted; G8 rehearsal; freeze 12:00. |
+| Fri 27 | U4 release, handover. |
+
+**Cut order if a day slips:** C4 ageing detail, D4 vendor templates, I2 image fallback, cost-centre reports. Never cut G3, G4, G5, E2, U2 or G8.
+
 ### 10.6 Handoff log
 
 - 2026-11-17 (Fable): Plan v3 and `docs/PLANNER_PLAYBOOK.md` written. Open PRs: backend #6, #7, #8; frontend #4, #2 (draft, stale). Next: Z1 merge queue, starting with backend #8. Blockers on Jonathan: week 12 date in 10.1, merge approvals, Docker Desktop running for E1, secret rotation before U1.
@@ -564,3 +602,4 @@ Operating rules for the last week (override 10.4's "one backend and one frontend
 - 2026-11-18 (Opus planner): #10 ready at `8a9a1b4`. Frontend #6 (R0 dashboard + menu, replaces #4) passes gates at `3020205`, screenshots reviewed; Codex running; Jonathan to approve the look. Ready to merge: #12, #13, #10 (no shared files).
 - 2026-11-18 (Opus planner): Frontend #6 (R0) ready at `a18df75` after Codex P2 fixes (dashboard polls every 30 s while visible; category selector locked while a dashboard filter is active; unavailable figures stay visible, all-clear only when every figure is known zero). Gates pass, merges cleanly with #5; adds optional `disabled`/`title` props to the shared `Filter` UI component. Needs Jonathan's OK on the look. Merge order: backend #12, #13, #10 (any order); then frontend #6 (close #4), then #5 rebased.
 - 2026-11-19 (Opus planner): New rule in the playbook (one branch and one PR per task; executors never start sessions or branches). #14/#15/#16 and frontend #7 came from sessions started by B4a; all four verified. Ready in merge order: backend #12, #13, #10, #16 (no shared files), plan #9; frontend #6 (R0, then close #4). Fixes pending: #15 (P1), #14, frontend #7, frontend #5 (rebase onto R0 + browser check). Branches of merged PRs to delete (needs Jonathan): backend `planv3/a2a3-review-fixes`, `fix/inline-queue-full-requeue`, `claude/planv2-a2-a3-imports-seed-418791`, `planv2/b3-today`, `planv2/a1-company-pack`, `phase0/slim-private-extraction`; frontend `planv2/b1-b2-plain-ui`.
+- 2026-11-19 (Opus planner): Added 10.8 (gaps G1-G8 from the old-UI screenshots and Jonathan's direction); remaining days re-ordered by it. Proposed G7 (bug sweep, backend) and B4b (review, frontend). Merge list unchanged: #12, #13, #10, #16, #9, frontend #6.
