@@ -35,7 +35,7 @@ Out of scope, do not build: tax computation or filing, e-Invoice submission, pay
 | Reading documents | PDF text layer (pypdfium2) or RapidOCR on CPU | `EXTRACTION_ENGINE=lite`; nothing leaves the server |
 | Structuring fields | Hosted text model, masked OCR text only | `AI_EXTRACTION=text`; default provider Gemini Flash-Lite; off by default |
 | Verification | Every model value must be printed in the local OCR rows | `services/extraction/lite/structure.py` |
-| Database + files | Supabase Postgres + S3-compatible storage | Existing schema loads as is |
+| Database + files | Neon Postgres (team branch; separate `uat` branch for the hosted demo) + Neon object storage. Supabase is not used (decided 2026-11-19; older Supabase mentions below are superseded) | Existing schema loads as is |
 | Host | Render free (512 MB) or Cloud Run (1-2 GB) | Decide after P0.7 memory check |
 | Legacy paths | Docling parser, Redis/RQ | Kept behind `EXTRACTION_ENGINE=docling`, `QUEUE_BACKEND=rq` as the report baseline |
 
@@ -576,13 +576,24 @@ Jonathan's direction (19 Nov): fix bugs, finish the daily and monthly accounting
 | Thu 19 | Merges: backend #12, #13, #10, #16, plan #9; frontend #6 (R0), then #5. Start G7 (backend) and B4b (frontend). |
 | Fri 20 | G3 (backend); B5b (frontend, uses G3 suggestions); C1 + G2 data model start. |
 | Sat 21 - Sun 22 | C3 posting with the COA (both lanes); G2 COA page; G5 seed with AI on. |
-| Mon 23 | C5 reconciliation incl. partial/combined payments and create-expense; D2 reports (P&L, BS, TB, GL, recorded tax). |
+| Mon 23 | U1 hosted UAT on the Neon `uat` branch (moved from Wed 25); C5 reconciliation (exact + one-to-many, create-expense); D2 reports by Codex (P&L, BS, TB, GL, recorded tax). |
 | Tue 24 | D1 month-end + lock, D3 month pack; G4 hold-out/public runs + new Summary page; I5 load test; U2 hardening; I4 effort study (Jonathan books two people). |
 | Wed 25 | G6 cleanup + help rewrite; U1 hosted UAT (Jonathan approves each step; secrets rotated first); U3 tester guide. |
 | Thu 26 | E2 full walkthrough on hosted; G8 rehearsal; freeze 12:00. |
 | Fri 27 | U4 release, handover. |
 
 **Cut order if a day slips:** C4 ageing detail, D4 vendor templates, I2 image fallback, cost-centre reports. Never cut G3, G4, G5, E2, U2 or G8.
+
+**Decisions and speed-ups (19 Nov, later; relayed from Jonathan)**
+- Stay on Neon for the database and object storage. Supabase is not used; older mentions in sections 2, 5, 7 and 8 are superseded.
+- Hosted demo database: a Neon branch named `uat`, copied from the team database. Demo resets and the seed run only against `uat`; the team branch is never written to. U1 points at `uat`. *(Awaiting Jonathan's confirmation in the planner session before the branch is created.)*
+- Standing merge approval for the planner into `features` when: the section 5 gates pass at the merged head, Codex has no open P1 or blocking finding, the PR is up to date with `features`, and merge order holds. Every merge is reported with its link and commit. Still needs Jonathan each time: anything into `main`, deployments, secrets, shared-database changes beyond `uat`, paid AI usage. *(Awaiting confirmation in the planner session.)*
+- Demo accounts: each teammate signs in with their own email via Brevo (`manage.py create-test-users`, #10, with demo documents assigned). Teammates are accountants, Jonathan is local admin, and one person is super admin (admins need an authenticator app). Emails live only in `.env` or the `uat` database, never in the repo or notes. If presenters demo at the same time, each gets a different demo company (trading, services, F&B). Reset the demo the night before.
+- U1 moves from Wed 25 to **Mon 23**; secrets must be rotated by Sun 22.
+- Codex is a second builder: D2 reports (backend + frontend, own file set) go to Codex once C3 posting and the G2 chart-of-accounts model exist; Opus takes C3 and G2.
+- Cut now: reconciliation = exact and one-to-many matches only (no partial or combined payments); ageing = a simple list by due date; skip I2 image fallback and cost-centre reports.
+- AI-on demo seed (G5/R6): if Jonathan doesn't choose by end of 19 Nov, use Groq `openai/gpt-oss-120b` with Gemini as fallback, free tiers only.
+- Target: most features done by Wed 25; freeze Thu 26 12:00; release Fri 27.
 
 ### 10.6 Handoff log
 
@@ -603,3 +614,4 @@ Jonathan's direction (19 Nov): fix bugs, finish the daily and monthly accounting
 - 2026-11-18 (Opus planner): Frontend #6 (R0) ready at `a18df75` after Codex P2 fixes (dashboard polls every 30 s while visible; category selector locked while a dashboard filter is active; unavailable figures stay visible, all-clear only when every figure is known zero). Gates pass, merges cleanly with #5; adds optional `disabled`/`title` props to the shared `Filter` UI component. Needs Jonathan's OK on the look. Merge order: backend #12, #13, #10 (any order); then frontend #6 (close #4), then #5 rebased.
 - 2026-11-19 (Opus planner): New rule in the playbook (one branch and one PR per task; executors never start sessions or branches). #14/#15/#16 and frontend #7 came from sessions started by B4a; all four verified. Ready in merge order: backend #12, #13, #10, #16 (no shared files), plan #9; frontend #6 (R0, then close #4). Fixes pending: #15 (P1), #14, frontend #7, frontend #5 (rebase onto R0 + browser check). Branches of merged PRs to delete (needs Jonathan): backend `planv3/a2a3-review-fixes`, `fix/inline-queue-full-requeue`, `claude/planv2-a2-a3-imports-seed-418791`, `planv2/b3-today`, `planv2/a1-company-pack`, `phase0/slim-private-extraction`; frontend `planv2/b1-b2-plain-ui`.
 - 2026-11-19 (Opus planner): Added 10.8 (gaps G1-G8 from the old-UI screenshots and Jonathan's direction); remaining days re-ordered by it. Proposed G7 (bug sweep, backend) and B4b (review, frontend). Merge list unchanged: #12, #13, #10, #16, #9, frontend #6.
+- 2026-11-19 (Opus planner): Recorded Jonathan's relayed decisions (Neon only, `uat` branch, standing merge approval, demo accounts, U1 moved to Mon 23, Codex builds D2, cuts). Standing merge approval and the `uat` branch wait for his confirmation in the planner session. The Neon MCP needs authorising (`/mcp`) before the planner can create `uat`.
