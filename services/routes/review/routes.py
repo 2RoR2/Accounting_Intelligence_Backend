@@ -1,6 +1,7 @@
 from __future__ import annotations
 from main import *
 from main import _lock_upload_identity, _processing_error, _lock_workspace_document, _require_current_extraction, _authorised_document, _bank_row_values, _bank_transaction_dto, _uuid_or_422, _account_dto, _cost_centre_dto
+from services.review.reread_failed import ReadAgainInput, read_again
 
 def accountant_inbox(request: Request, status: str | None = None, assignedTo: str | None = None):
     user = require_workspace_user(request, {"accountant", "local_admin"})
@@ -71,9 +72,17 @@ def list_workload(request: Request):
             JOIN users u ON u.id=w.assigned_to
             WHERE w.tenant_id=%s AND w.completed_at IS NULL ORDER BY w.due_at NULLS LAST,w.priority DESC""", (user["tenant_id"],)).fetchall()
     return [{"id": str(r["id"]), "documentId": str(r["document_id"]), "documentCode": r["document_code"], "filename": r["original_filename"], "assignedTo": str(r["assigned_to"]), "assigneeName": r["assignee_name"], "priority": r["priority"], "dueAt": str(r["due_at"] or "")} for r in rows]
+
+
+def read_again_failed(data: ReadAgainInput, request: Request):
+    """Queue selected (or all) FAILED documents for a fresh read with the current settings."""
+    user = require_workspace_user(request, {"local_admin", "accountant"})
+    return read_again(user, data)
 """Review API route registrations."""
 
 def register(router, handlers):
+    # Bulk "read again" for documents that could not be read (G7); see services/review/reread_failed.py.
+    router.add_api_route('/api/documents/read-again', read_again_failed, methods=['POST'])
     router.add_api_route('/api/accountant/inbox', accountant_inbox, methods=['GET'])
     router.add_api_route('/api/accountant/batches', create_accountant_batch, methods=['POST'], status_code=201)
     router.add_api_route('/api/accountant/batches/{batch_id}', get_accountant_batch, methods=['GET'])

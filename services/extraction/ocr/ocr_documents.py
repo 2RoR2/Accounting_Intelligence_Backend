@@ -55,15 +55,17 @@ def _time(text):
 def _date(text):
     # Only a leading complete calendar date; never infer a two-digit century
     # or choose day/month order when both numeric components are <= 12.
-    match = re.match(r'^(\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}/\d{4}|\d{1,2}/?[A-Za-z]{3}/\d{4})(?=$|\s)', text)
+    # Day/month/year may be separated by '/', '-' or '.' (14-10-2026 and 14.10.2026 are
+    # common on Malaysian invoices), always the same separator and a four-digit year.
+    match = re.match(r'^(\d{4}-\d{2}-\d{2}|\d{1,2}([/.-])\d{1,2}\2\d{4}|\d{1,2}/?[A-Za-z]{3}/\d{4})(?=$|\s)', text)
     if not match:
         return None
     raw = match[1]
     try:
         if re.fullmatch(r'\d{4}-\d{2}-\d{2}', raw):
             return date.fromisoformat(raw).isoformat()
-        if re.fullmatch(r'\d{1,2}/\d{1,2}/\d{4}', raw):
-            day, month, year = map(int, raw.split('/'))
+        if re.fullmatch(r'\d{1,2}([/.-])\d{1,2}\1\d{4}', raw):
+            day, month, year = map(int, re.split(r'[/.-]', raw))
             return date(year, month, day).isoformat() if day > 12 or day == month else None
         for fmt in ('%d/%b/%Y', '%d%b/%Y'):
             try:
@@ -196,11 +198,17 @@ def map_rapidocr_document(artifact, document_id, model_versions):
                     and page.boxes[i][1] > first_bottom]
     item_top = min((page.boxes[i][1] for i in item_headers), default=first_bottom)
     if item_top > first_bottom:
+        # A row already read as another labelled date (the due date) is not also an
+        # unlabelled document date; otherwise every invoice with a due date conflicts.
+        claimed = {ev['source_ref'] for key, found in candidates.items() if key != date_key and key.endswith('_date')
+                   for c in found if c['value'] is not None for ev in c['evidence']}
         for i, row in enumerate(page.rows):
             box = page.boxes[i]
             # OCR rectangles can overlap a few pixels despite distinct lines.
             # Require the date centre below the heading and its whole box
             # before items; do not expand into footer/payment timestamps.
+            if f'#/rows/{i}' in claimed:
+                continue
             if first_bottom < (box[1] + box[3]) / 2 and box[3] < item_top:
                 value = _date(row['text'])
                 if value is not None:
