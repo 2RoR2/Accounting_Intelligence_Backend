@@ -129,6 +129,31 @@ def reserve_held(db, document_id, tenant_id, job_id):
     return reserve_dispatch(db,document_id,tenant_id,job_id=job_id)
 
 
+def abandon_reread(db, document_id, tenant_id, job_id):
+    """Close a re-read job its command gave up on (timeout or interrupt). Returns True when closed.
+
+    The job fails as REREAD_TIMEOUT and an unreviewed queued/processing document becomes
+    `failed`, so it can be retried explicitly. Fenced on the open job: a job that finished first
+    is left alone, and a worker still running loses its claim and cannot store a result.
+    """
+    document=lock_document(db,document_id,tenant_id)
+    job=db.execute("""SELECT * FROM pending_jobs WHERE id=%s AND document_id=%s AND tenant_id=%s FOR UPDATE""",
+        (uuid_text(job_id),uuid_text(document_id),uuid_text(tenant_id))).fetchone()
+    if not job or job['status'] not in OPEN:
+        return False
+    db.execute("""UPDATE pending_jobs SET status='failed',finished_at=clock_timestamp(),
+        last_error='REREAD_TIMEOUT',updated_at=clock_timestamp() WHERE id=%s""",(job['id'],))
+    try:
+        ensure_unreviewed(db,document)
+        editable=document['status'] in {'queued','processing'}
+    except AttemptRejected:
+        editable=False
+    if editable:
+        db.execute("UPDATE documents SET status='failed',updated_at=clock_timestamp() WHERE id=%s",(document['id'],))
+    audit(db,document,job['id'],'extraction.reread_timeout')
+    return True
+
+
 class AttemptRejected(ValueError):
     def __init__(self, code, job=None):
         super().__init__(code)

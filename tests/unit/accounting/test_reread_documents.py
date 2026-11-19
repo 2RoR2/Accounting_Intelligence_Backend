@@ -111,3 +111,23 @@ def test_summary_counts_statuses_and_times_finished_documents():
     assert result["p95_seconds"] == 19.0  # nearest rank: the 20th of the 21 timed values
     assert reread.percentile([5.0], 0.95) == 5.0
     assert reread.summarize([])["average_seconds"] is None
+
+
+def test_exits_at_once_after_closing_unfinished_jobs(monkeypatch, capsys):
+    import argparse
+    report = {"company": "C", "documents": 1, "dry_run": False, "selected": 1, "queued": 1, "skipped": {},
+              "seconds": None, "abandoned": ["DOC-1  a.pdf"], "result": reread.summarize([])}
+    monkeypatch.setattr(reread, "reread", lambda *args: report)
+    exits = []
+
+    def fake_exit(code):
+        exits.append(code)
+        raise SystemExit(code)
+
+    monkeypatch.setattr(reread.os, "_exit", fake_exit)
+    parser = argparse.ArgumentParser()
+    reread.add_arguments(parser)
+    with pytest.raises(SystemExit):
+        reread.run(parser.parse_args(["--company", "C"]))
+    assert exits == [3]
+    assert "DOC-1  a.pdf" in capsys.readouterr().out

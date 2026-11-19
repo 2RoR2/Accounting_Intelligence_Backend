@@ -10,8 +10,11 @@ is audited, the document goes back to `queued`). With the in-process queue (the 
 command then runs the extraction itself and waits for it, as the seed does. While it waits it
 holds the jobs (they are not due until --timeout-minutes have passed) and dispatches them to its
 own workers, so an API running on the same database with other reading settings does not take
-them. A job still waiting when the command stops falls due after the hold, and then any
-dispatcher may run it. With --no-wait there is no hold.
+them. It dispatches only those jobs (no company-wide recovery or dispatch). At the timeout or on
+Ctrl+C it stops, closes the unfinished jobs as REREAD_TIMEOUT, marks those documents failed and
+exits with os._exit(3) rather than waiting for a reading in progress. If the process is killed
+outright, its held jobs fall due after the hold and any dispatcher may run them. With --no-wait
+there is no hold.
 
 Never touched: documents someone corrected, submitted, reviewed or approved, documents with an
 open job, and documents past review. Persistence still refuses to replace reviewed corrections.
@@ -187,16 +190,22 @@ def dispatch_held(connect, tenant_id, jobs, capacity, send=None):
 
 
 def wait_for(connect, document_ids, timeout_seconds, poll=3.0, tenant_id=None, jobs=None):
-    """Drive the in-process queue (if that is the transport) until these documents leave the queue."""
+    """Hand this command's own jobs to its workers until these documents leave the queue.
+
+    Returns the seconds taken, or None at the timeout. Only the selected jobs are dispatched:
+    no lease recovery or company-wide dispatch runs here, and a finishing worker does not pull
+    other waiting jobs (the inline stop flag, set before the first hand-over, turns that
+    wake-up off). Nothing the plan skipped is read with these settings.
+    """
     from services.queue.backend import queue_backend
     inline = None
     if queue_backend() == "inline":
         from services.queue import inline
+        inline.stop_supervisor()  # sets the stop flag; submit() still works, completions stop dispatching
     started, last = time.monotonic(), None
     try:
         while True:
             if inline is not None:
-                inline.run_cycle()
                 dispatch_held(connect, tenant_id, jobs or {}, inline.capacity())
             with connect() as db:
                 waiting = db.execute("SELECT count(*) n FROM documents WHERE id = ANY(%s::uuid[]) AND status = ANY(%s)",
@@ -207,14 +216,31 @@ def wait_for(connect, document_ids, timeout_seconds, poll=3.0, tenant_id=None, j
             if not waiting:
                 return round(time.monotonic() - started, 1)
             if time.monotonic() - started > timeout_seconds:
-                print(f"  {waiting} documents still waiting after {timeout_seconds // 60} minutes; "
-                      "their jobs stay queued and the backend picks them up when it runs.")
+                print(f"  {waiting} documents still waiting after {timeout_seconds // 60} minutes; stopping.")
                 return None
             time.sleep(poll)
     finally:
         if inline is not None:
-            # Stop handing out new work; a document still running is recovered by its lease.
-            inline.stop_supervisor()
+            inline.stop_supervisor()  # hand out nothing more
+
+
+def abandon(connect, tenant_id, jobs):
+    """Close every job this command did not see finish (timeout or Ctrl+C). Returns their document ids.
+
+    Each job fails as REREAD_TIMEOUT and its document becomes `failed`, so a later
+    `reread-documents --status failed` (or "Read again" in the app) retries it. A worker thread
+    still running cannot store anything afterwards: its claim no longer matches.
+    """
+    from services.queue import attempts
+    closed = []
+    for document_id, job_id in jobs.items():
+        try:
+            with connect() as db:
+                if attempts.abandon_reread(db, document_id, str(tenant_id), job_id):
+                    closed.append(document_id)
+        except attempts.AttemptRejected:
+            continue
+    return closed
 
 
 def outcome(connect, document_ids, since):
@@ -267,7 +293,14 @@ def reread(company=None, pack=None, statuses=DEFAULT_STATUSES, limit=None, dry_r
               "selected": sum(action == "reread" for _row, action in planned), "queued": len(queued),
               "skipped": dict(sorted(skipped.items()))}
     if queued and wait:
-        report["seconds"] = wait_for(connect, queued, timeout_minutes * 60, tenant_id=str(tenant["id"]), jobs=jobs)
+        try:
+            report["seconds"] = wait_for(connect, queued, timeout_minutes * 60, tenant_id=str(tenant["id"]), jobs=jobs)
+        except KeyboardInterrupt:
+            print("  interrupted; stopping.")
+            report["seconds"] = None
+        if report["seconds"] is None:
+            names = {str(row["id"]): f"{row['document_code']}  {row['original_filename']}" for row, _a in results}
+            report["abandoned"] = [names[document_id] for document_id in abandon(connect, tenant["id"], jobs)]
         report["result"] = summarize(outcome(connect, queued, since))
     return report
 
@@ -285,6 +318,11 @@ def print_report(report):
         if result["timed"]:
             print(f"Reading time over the {result['timed']} documents read in this run: "
                   f"average {result['average_seconds']} s, p95 {result['p95_seconds']} s.")
+    if report.get("abandoned"):
+        print(f"Not finished: {len(report['abandoned'])} documents. Their jobs are closed (REREAD_TIMEOUT) and "
+              "the documents marked failed; read them again with --status failed.")
+        for name in report["abandoned"]:
+            print("  " + name)
 
 
 def add_arguments(parser):
@@ -307,4 +345,11 @@ def run(args):
         print(str(error), file=sys.stderr)
         return 2
     print_report(report)
+    if report.get("abandoned"):
+        # A worker thread may still be inside OCR or an AI request, and Python joins pool threads at
+        # shutdown, so a normal exit would wait for it. Every job is already closed in the database
+        # (that thread can no longer store anything), so leave at once.
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(3)
     return 0

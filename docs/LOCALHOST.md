@@ -120,7 +120,11 @@ kept and the audit log records `extraction.reread_scheduled`). The command then 
 in its own process with its own settings and waits (`--timeout-minutes`, default 30). Until then
 it holds the jobs, so a backend that is running with other settings does not take them. Finally
 it prints the new statuses with the average and p95 reading time of the documents it read.
-`--no-wait` queues the jobs without a hold and leaves them to the running backend.
+It dispatches only the documents it listed, never other waiting jobs of the company. At the
+timeout (or Ctrl+C) it stops handing out work, closes the unfinished jobs, marks those documents
+`failed`, lists them and exits with code 3 without waiting for a reading in progress; run it
+again with `--status failed` to finish them. `--no-wait` queues the jobs without a hold and
+leaves them to the running backend.
 
 Or create your own accounts:
 

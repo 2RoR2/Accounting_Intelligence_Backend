@@ -226,3 +226,80 @@ def test_a_running_api_cannot_take_held_jobs_but_the_command_can(database, monke
     with connect() as db:
         free = attempts.schedule_reread(db, str(ids['other']), str(ids['tenant_b']))
     assert durable.dispatch_due_jobs() == 1 and [d.job_id for d in taken_by_api] == [str(free['id'])]
+
+
+def _stray_waiting_job(connect, ids):
+    """A document of the same company, not selected by the re-read, with a job that is due now."""
+    with connect() as db:
+        owner = db.execute('SELECT owner_id FROM documents WHERE id=%s', (ids['fixing'],)).fetchone()['owner_id']
+        stray = db.execute("""INSERT INTO documents(tenant_id,owner_id,original_filename,kind,category,storage_path,
+                mime_type,file_size_bytes,file_hash_sha256,status)
+            VALUES (%s,%s,'stray.pdf','bill','accounts_payable','synthetic/none.pdf','application/pdf',100,%s,'queued')
+            RETURNING id""", (ids['tenant'], owner, hashlib.sha256(b'stray').hexdigest())).fetchone()['id']
+        job = db.execute("INSERT INTO pending_jobs(tenant_id,document_id,status) VALUES (%s,%s,'pending') RETURNING id",
+                         (ids['tenant'], stray)).fetchone()['id']
+    return stray, job
+
+
+def test_the_wait_dispatches_only_the_selected_jobs(database, monkeypatch):
+    connect, ids = database
+    from services.queue import inline
+    stray, stray_job = _stray_waiting_job(connect, ids)
+    monkeypatch.setenv('QUEUE_BACKEND', 'inline')
+    monkeypatch.setattr(inline, 'capacity', lambda: 2)
+    with connect() as db:
+        held = attempts.schedule_reread(db, str(ids['fixing']), str(ids['tenant']), hold_seconds=600)
+    sent, wake_up_off = [], []
+
+    def worker(delivery):  # stands in for an inline thread that reads and stores the document
+        sent.append(delivery.job_id)
+        wake_up_off.append(inline._stop.is_set())
+        with connect() as db:
+            db.execute("UPDATE pending_jobs SET status='succeeded',finished_at=now() WHERE id=%s", (delivery.job_id,))
+            db.execute("UPDATE documents SET status='extracted',processing_completed_at=now() WHERE id=%s",
+                       (delivery.document_id,))
+        return {'dispatchAccepted': True}
+
+    monkeypatch.setattr(attempts, 'publish', worker)
+    seconds = reread.wait_for(connect, [str(ids['fixing'])], 60, poll=0.01, tenant_id=str(ids['tenant']),
+                              jobs={str(ids['fixing']): str(held['id'])})
+    assert seconds is not None
+    assert sent == [str(held['id'])] and wake_up_off == [True]
+    with connect() as db:
+        assert db.execute('SELECT status FROM pending_jobs WHERE id=%s', (stray_job,)).fetchone()['status'] == 'pending'
+        assert db.execute('SELECT status FROM documents WHERE id=%s', (stray,)).fetchone()['status'] == 'queued'
+
+
+def test_timeout_closes_unfinished_jobs_for_a_retry(database, monkeypatch, capsys):
+    connect, ids = database
+    from services.queue import inline
+    monkeypatch.setenv('QUEUE_BACKEND', 'inline')
+    monkeypatch.setattr(inline, 'capacity', lambda: 1)
+    monkeypatch.setattr(attempts, 'publish', lambda d: {'dispatchAccepted': True})  # a worker that never finishes
+    with connect() as db:
+        db.execute("UPDATE documents SET status='failed' WHERE id=%s", (ids['other'],))
+    report = reread.reread(company='Synthetic Reread A', timeout_minutes=0, connect=connect)
+
+    assert report['seconds'] is None and report['abandoned'] == [report_line for report_line in report['abandoned']]
+    assert len(report['abandoned']) == 1 and report['abandoned'][0].endswith('needs-fixing.pdf')
+    with connect() as db:
+        job = db.execute("""SELECT status,last_error FROM pending_jobs WHERE document_id=%s
+            ORDER BY created_at DESC LIMIT 1""", (ids['fixing'],)).fetchone()
+        assert (job['status'], job['last_error']) == ('failed', 'REREAD_TIMEOUT')
+        assert db.execute('SELECT status FROM documents WHERE id=%s', (ids['fixing'],)).fetchone()['status'] == 'failed'
+        actions = [r['action'] for r in db.execute('SELECT action FROM audit_logs WHERE resource=%s ORDER BY created_at',
+                                                    (str(ids['fixing']),)).fetchall()]
+        assert actions[0] == 'extraction.reread_scheduled' and actions[-1] == 'extraction.reread_timeout'
+    reread.print_report(report)
+    assert 'read them again with --status failed' in capsys.readouterr().out
+
+    # Retryable: the next run picks it up again as a failed document.
+    again = reread.reread(company='Synthetic Reread A', statuses=('failed',), wait=False, connect=connect)
+    assert again['queued'] == 1
+
+
+def test_abandon_leaves_finished_jobs_alone(database):
+    connect, ids = database
+    with connect() as db:
+        assert attempts.abandon_reread(db, str(ids['fixing']), str(ids['tenant']), str(ids['fixing_job'])) is False
+        assert db.execute('SELECT status FROM documents WHERE id=%s', (ids['fixing'],)).fetchone()['status'] == 'exception'
