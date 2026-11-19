@@ -21,6 +21,8 @@ import threading
 import time
 from pathlib import Path
 
+from services.extraction.pdfium_lock import PDFIUM_LOCK
+
 IMAGE_SUFFIXES = {'.jpg', '.jpeg', '.png', '.tif', '.tiff'}
 PDF_SUFFIXES = {'.pdf'}
 SUPPORTED_SUFFIXES = IMAGE_SUFFIXES | PDF_SUFFIXES
@@ -223,56 +225,77 @@ def _text_layer_rows(textpage, width, height):
     return rows
 
 
+def _read_pdf_page(pdf, index, max_pixels):
+    """Everything pdfium does for one page, under PDFIUM_LOCK.
+
+    Returns (width, height, size, rows, seconds, rendered): text-layer rows for a
+    digital page (rendered is None), or a rendered RGB copy for OCR (rows is None).
+    The page and bitmap are closed before the lock is released; the copy is not
+    backed by pdfium memory, so the caller can OCR it without the lock.
+    """
+    with PDFIUM_LOCK:
+        page = pdf[index]
+        try:
+            width, height = page.get_size()
+            if width <= 0 or height <= 0:
+                raise PageError('INVALID_OR_UNREADABLE_PDF')
+            size = (math.ceil(width * RENDER_SCALE), math.ceil(height * RENDER_SCALE))
+            started = time.perf_counter()
+            textpage = page.get_textpage()
+            try:
+                characters = len(textpage.get_text_range().strip())
+                native = (characters >= MIN_TEXT_LAYER_CHARACTERS
+                          and _largest_image_fraction(page, width * height) < MAX_TEXT_LAYER_IMAGE_FRACTION)
+                rows = _text_layer_rows(textpage, width, height) if native else []
+            finally:
+                textpage.close()
+            if native and rows:
+                return width, height, size, rows, round(time.perf_counter() - started, 3), None
+            if size[0] * size[1] > max_pixels:
+                raise PageError('IMAGE_PIXEL_LIMIT')
+            bitmap = page.render(scale=RENDER_SCALE)
+            try:
+                rendered = bitmap.to_pil().convert('RGB')  # A copy: to_pil() shares the bitmap buffer.
+            finally:
+                bitmap.close()
+            return width, height, size, None, None, rendered
+        finally:
+            page.close()
+
+
 def _pdf_pages(data, max_pages, max_pixels):
+    """pdfium calls hold PDFIUM_LOCK page by page; OCR runs with the lock released,
+    so concurrent inline workers overlap on OCR and the AI step."""
     import pypdfium2 as pdfium
     pages = []
+    with PDFIUM_LOCK:
+        try:
+            pdf = pdfium.PdfDocument(data)
+        except Exception as exc:
+            raise PageError('INVALID_OR_UNREADABLE_PDF') from exc
+        try:
+            count = len(pdf)
+        except BaseException:
+            pdf.close()
+            raise
     try:
-        pdf = pdfium.PdfDocument(data)
-    except Exception as exc:
-        raise PageError('INVALID_OR_UNREADABLE_PDF') from exc
-    try:
-        count = len(pdf)
         if count < 1:
             raise PageError('INVALID_OR_UNREADABLE_PDF')
         for index in range(min(count, max_pages)):
-            page = pdf[index]
+            width, height, size, rows, seconds, rendered = _read_pdf_page(pdf, index, max_pixels)
+            transform = {'render_scale': RENDER_SCALE, 'pdf_size_points': [width, height]}
+            if rendered is None:
+                pages.append(_finish_page(index + 1, 'text_layer', size, rows, seconds, transform))
+                continue
             try:
-                width, height = page.get_size()
-                if width <= 0 or height <= 0:
-                    raise PageError('INVALID_OR_UNREADABLE_PDF')
-                size = (math.ceil(width * RENDER_SCALE), math.ceil(height * RENDER_SCALE))
-                started = time.perf_counter()
-                textpage = page.get_textpage()
-                try:
-                    characters = len(textpage.get_text_range().strip())
-                    native = (characters >= MIN_TEXT_LAYER_CHARACTERS
-                              and _largest_image_fraction(page, width * height) < MAX_TEXT_LAYER_IMAGE_FRACTION)
-                    rows = _text_layer_rows(textpage, width, height) if native else []
-                finally:
-                    textpage.close()
-                if native and rows:
-                    pages.append(_finish_page(index + 1, 'text_layer', size, rows,
-                                              round(time.perf_counter() - started, 3),
-                                              {'render_scale': RENDER_SCALE, 'pdf_size_points': [width, height]}))
-                    continue
-                if size[0] * size[1] > max_pixels:
-                    raise PageError('IMAGE_PIXEL_LIMIT')
-                bitmap = page.render(scale=RENDER_SCALE)
-                try:
-                    rendered = bitmap.to_pil().convert('RGB')
-                finally:
-                    bitmap.close()
-                try:
-                    rows, seconds = ocr_image(rendered)
-                    pages.append(_finish_page(index + 1, 'ocr', rendered.size, rows, seconds,
-                                              {'render_scale': RENDER_SCALE, 'pdf_size_points': [width, height]}))
-                finally:
-                    rendered.close()
+                rows, seconds = ocr_image(rendered)
+                pages.append(_finish_page(index + 1, 'ocr', rendered.size, rows, seconds, transform))
             finally:
-                page.close()
+                rendered.close()
         return pages, count > max_pages
     finally:
-        pdf.close()
+        with PDFIUM_LOCK:
+            pdf.close()
 
 
 def _reading_order(rows):

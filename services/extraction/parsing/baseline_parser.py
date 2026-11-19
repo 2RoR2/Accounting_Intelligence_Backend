@@ -197,17 +197,19 @@ def warm_converter(project_root: Path = PROJECT_ROOT) -> float:
     """
     import tempfile
     import pypdfium2 as pdfium
+    from services.extraction.pdfium_lock import PDFIUM_LOCK
     models = resolve_models_dir(Path(project_root).resolve())
     started = time.perf_counter()
     with tempfile.TemporaryDirectory(prefix="accordai-warm-", ignore_cleanup_errors=True) as folder:
         root = Path(folder)
         source = root / "warm.pdf"
-        pdf = pdfium.PdfDocument.new()
-        try:
-            pdf.new_page(595, 842)
-            pdf.save(str(source))
-        finally:
-            pdf.close()
+        with PDFIUM_LOCK:  # pdfium is not thread-safe.
+            pdf = pdfium.PdfDocument.new()
+            try:
+                pdf.new_page(595, 842)
+                pdf.save(str(source))
+            finally:
+                pdf.close()
         parse_document(source, root / "runs", project_root=root, models_dir=models)
     return round(time.perf_counter() - started, 3)
 
@@ -405,18 +407,26 @@ def parse_document(
         if len(readers) == 1 and any(line['from_ocr'] for line in lines):
             try:
                 import pypdfium2
-                with pypdfium2.PdfDocument(source) as pdf:
+                from services.extraction.pdfium_lock import PDFIUM_LOCK
+                # pdfium is not thread-safe: hold the lock for each pdfium call, not for the OCR retry.
+                with PDFIUM_LOCK:
+                    pdf = pypdfium2.PdfDocument(source)
+                try:
                     def page_image(number):
-                        page = pdf[number-1]
-                        try:
-                            bitmap = page.render(scale=2)
+                        with PDFIUM_LOCK:
+                            page = pdf[number-1]
                             try:
-                                return bitmap.to_pil().copy()
+                                bitmap = page.render(scale=2)
+                                try:
+                                    return bitmap.to_pil().copy()
+                                finally:
+                                    bitmap.close()
                             finally:
-                                bitmap.close()
-                        finally:
-                            page.close()
+                                page.close()
                     record['party_spacing'] = recover_party_spacing(exported, readers[0], page_image)
+                finally:
+                    with PDFIUM_LOCK:
+                        pdf.close()
             except Exception:
                 record['party_spacing'] = {'status': 'retry_unavailable_originals_preserved'}
         document_json.write_text(

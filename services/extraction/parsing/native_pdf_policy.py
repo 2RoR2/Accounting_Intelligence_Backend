@@ -17,9 +17,10 @@ def assess_native_utility_pages(pages):
 
 def native_utility_fast_path(path):
     import pypdfium2 as pdfium
+    from services.extraction.pdfium_lock import PDFIUM_LOCK
     try:
         pages=[]
-        with pdfium.PdfDocument(path) as pdf:
+        with PDFIUM_LOCK, pdfium.PdfDocument(path) as pdf:  # pdfium is not thread-safe.
             if not 0<len(pdf)<=10:return False
             for page in pdf:
                 try:

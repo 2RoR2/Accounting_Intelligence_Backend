@@ -52,8 +52,9 @@ def prepare_image_frame(frame):
 def source_page_geometry(pdf_bytes, document, conversion):
     """Validate actual PDF/Docling page sizes; keep OCR evidence in PDF points."""
     import pypdfium2 as pdfium
+    from services.extraction.pdfium_lock import PDFIUM_LOCK
     pages = []
-    with pdfium.PdfDocument(pdf_bytes) as pdf:
+    with PDFIUM_LOCK, pdfium.PdfDocument(pdf_bytes) as pdf:  # pdfium is not thread-safe.
         if set(document.get('pages', {})) != {str(i + 1) for i in range(len(pdf))}:
             raise ValueError('Source/OCR page identity mismatch')
         frames = conversion['frames']
