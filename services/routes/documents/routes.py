@@ -89,6 +89,7 @@ from validation.documents.document_validation import validation_outcome
 from validation.documents.references import accepted_reviews, REVIEW_ACTION
 from services.extraction.contracts.accounting_contract import effective_value, json_safe
 from services.extraction.persistence.auto_kind import read_kind, stored_kind_or_auto
+from services.extraction.persistence.kind_choice import CHOOSABLE_KINDS, CHOOSABLE_STATUSES, choose_kind, chosen_classification
 from services.extraction.contracts.currency_review import build_currency_review, decision_details
 from starlette.background import BackgroundTask
 
@@ -528,10 +529,13 @@ def standardise_document(document_id: str, request: Request):
         items = db.execute("SELECT * FROM line_items WHERE document_id=%s AND extraction_id=%s ORDER BY line_number", (document_id, extraction['id'])).fetchall()
         try:
             values = record_values(fields)
-            snapshot = approved_snapshot(doc, extraction, fields, items)
+            kind_decision = chosen_classification(db, doc, extraction)
+            snapshot = approved_snapshot(doc, extraction, fields, items, classification=kind_decision)
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
         snapshot['validationReviews'] = json_safe(list(accepted_reviews(db, doc).values()))
+        if kind_decision:
+            snapshot['documentTypeDecision'] = json_safe(kind_decision)
         if doc['kind'] == 'bill' and values.get('reference') is None:
             values['reference'] = values.get('bill_number') or values.get('bill_reference') or values.get('account_number')
         elif doc['kind'] == 'receipt' and values.get('reference') is None:
@@ -600,10 +604,11 @@ def get_document_extraction(document_id: str, request: Request):
     with connect() as db:
         ownership = ' AND (owner_id=%s OR assigned_to=%s)' if user['role'] == 'accountant' else ''
         params = [document_id, user['tenant_id']] + ([user['id'], user['id']] if ownership else [])
-        doc = db.execute('SELECT id,content_revision FROM documents WHERE id=%s AND tenant_id=%s' + ownership, params).fetchone()
+        doc = db.execute('SELECT id,tenant_id,kind,content_revision FROM documents WHERE id=%s AND tenant_id=%s' + ownership, params).fetchone()
         if not doc:
             raise HTTPException(404, "Document not found.")
         extraction = db.execute("SELECT * FROM raw_extractions WHERE document_id=%s AND is_current=true ORDER BY run_number DESC LIMIT 1", (document_id,)).fetchone()
+        kind_decision = chosen_classification(db, doc, extraction)
         fields = db.execute("SELECT * FROM field_predictions WHERE document_id=%s AND extraction_id=%s ORDER BY field_key", (document_id, extraction["id"] if extraction else None)).fetchall() if extraction else []
         items = db.execute("SELECT * FROM line_items WHERE document_id=%s AND extraction_id=%s ORDER BY line_number", (document_id, extraction["id"] if extraction else None)).fetchall() if extraction else []
         line_corrections = db.execute("""SELECT line_item_id,field_key,old_value,new_value,corrected_by,corrected_at
@@ -616,6 +621,8 @@ def get_document_extraction(document_id: str, request: Request):
             ({'value': extraction['raw_json']['predicted_document_type'], 'status': 'classified',
               'reason': 'STRUCTURED_SOURCE_TYPE_CODE', 'evidence': []}
              if extraction['raw_json'].get('predicted_document_type') in {'credit_note','debit_note'} else {})) if extraction else {}),
+        # A person's type choice for this extraction; "classification" stays what reading found.
+        "kindDecision": json_safe(kind_decision) if kind_decision else None,
         "raw": extraction["raw_json"] if extraction else {},
         "warnings": extraction_guidance(extraction["raw_json"] if extraction else {}, items),
         "fields": [prediction_dto(row) for row in fields],
@@ -1038,6 +1045,40 @@ def revalidate_document(document_id: str, request: Request):
     with connect() as db:
         return validate_document(db, document_id, user)
 
+
+class KindChoiceInput(BaseModel):
+    kind: str = Field(min_length=1, max_length=32)
+    expectedContentRevision: int = Field(strict=True, ge=1)
+
+
+def choose_document_kind(document_id: str, data: KindChoiceInput, request: Request):
+    """A person chooses the document type when reading could not settle it, then the checks run again.
+
+    Allowed until the document is submitted. The choice is audited and counts as the classification
+    for the current extraction only (kind_choice); approval by a local admin is still required.
+    """
+    user = require_workspace_user(request, {"local_admin", "accountant"})
+    kind = data.kind.strip().lower()
+    if kind not in CHOOSABLE_KINDS:
+        raise HTTPException(422, "Choose invoice, bill, receipt, credit note or debit note.")
+    with connect() as db:
+        document = _lock_workspace_document(db, document_id, user)
+        if document['status'] not in CHOOSABLE_STATUSES:
+            raise HTTPException(409, "This document has been submitted or approved, so its type cannot be changed here.")
+        if data.expectedContentRevision != document['content_revision']:
+            raise HTTPException(409, "The document changed. Refresh it before choosing its type.")
+        extraction = db.execute('SELECT * FROM raw_extractions WHERE document_id=%s AND is_current=true', (document_id,)).fetchone()
+        if not extraction:
+            raise HTTPException(422, "The document has not been read yet. Wait for reading to finish, or read it again.")
+        try:
+            chosen = choose_kind(db, document, extraction, kind, user)
+        except LookupError as exc:
+            raise HTTPException(409, "The document changed. Refresh it before choosing its type.") from exc
+        validation = validate_document(db, document_id, user)
+    return {"documentId": document_id, "kind": kind.upper(), "code": chosen['document_code'], "kindDetected": True,
+            "previousKind": str(chosen['previous_kind']).upper(), "contentRevision": chosen['content_revision'],
+            "fieldsAdded": chosen['fields_added'], "validation": validation}
+
 def save_document_draft(document_id: str, request: Request):
     user = require_workspace_user(request, {"local_admin", "accountant"})
     with connect() as db:
@@ -1294,6 +1335,7 @@ def register(router, handlers):
     router.add_api_route('/api/documents/{document_id}/line-items', add_line_item, methods=['POST'], status_code=201)
     router.add_api_route('/api/records/{record_id}/amendments', request_record_amendment, methods=['POST'], status_code=201)
     router.add_api_route('/api/documents/{document_id}/revalidate', revalidate_document, methods=['POST'])
+    router.add_api_route('/api/documents/{document_id}/kind', choose_document_kind, methods=['PATCH'])
     router.add_api_route('/api/documents/{document_id}/validation-review', accept_validation_review, methods=['POST'])
     router.add_api_route('/api/documents/{document_id}/draft', save_document_draft, methods=['POST'])
     router.add_api_route('/api/documents/{document_id}/review', submit_document_review, methods=['POST'])
