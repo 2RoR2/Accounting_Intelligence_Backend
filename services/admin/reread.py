@@ -7,10 +7,11 @@ For a demo company seeded with AI reading off: turn it on in .env, then run this
 of that company is either skipped, with the reason, or given a fresh extraction attempt through
 the durable queue (attempts.schedule_reread: earlier attempts are kept, `extraction.reread_scheduled`
 is audited, the document goes back to `queued`). With the in-process queue (the default) this
-command then runs the extraction itself and waits for it, as the seed does. Stop any API running
-on the same database first (or start it with the same reading settings): its queue would take
-some of the jobs and read them with its own settings. The SQL claim still makes sure each job
-runs once.
+command then runs the extraction itself and waits for it, as the seed does. While it waits it
+holds the jobs (they are not due until --timeout-minutes have passed) and dispatches them to its
+own workers, so an API running on the same database with other reading settings does not take
+them. A job still waiting when the command stops falls due after the hold, and then any
+dispatcher may run it. With --no-wait there is no hold.
 
 Never touched: documents someone corrected, submitted, reviewed or approved, documents with an
 open job, and documents past review. Persistence still refuses to replace reviewed corrections.
@@ -139,24 +140,53 @@ def document_facts(db, tenant_id):
         FROM documents d WHERE d.tenant_id=%s ORDER BY d.document_code""", (tenant_id,)).fetchall()
 
 
-def schedule(connect, tenant_id, planned):
-    """Queue every 'reread' row, one transaction each. Returns [(row, action)] with the outcome."""
+def schedule(connect, tenant_id, planned, hold_seconds=0):
+    """Queue every 'reread' row, one transaction each.
+
+    Returns ([(row, action)] with the outcome, {document id: job id} of the queued ones).
+    """
     from services.queue import attempts
-    results = []
+    results, jobs = [], {}
     for row, action in planned:
         if action != "reread":
             results.append((row, action))
             continue
         try:
             with connect() as db:
-                job = attempts.schedule_reread(db, str(row["id"]), str(tenant_id))
+                job = attempts.schedule_reread(db, str(row["id"]), str(tenant_id), hold_seconds)
             results.append((row, f"queued (job {job['id']})"))
+            jobs[str(row["id"])] = str(job["id"])
         except attempts.AttemptRejected as error:
             results.append((row, "skip: " + REJECTION_TEXT.get(error.code, error.code)))
-    return results
+    return results, jobs
 
 
-def wait_for(connect, document_ids, timeout_seconds, poll=3.0):
+def dispatch_held(connect, tenant_id, jobs, capacity, send=None):
+    """Hand up to `capacity` of this command's held jobs to its own workers. Returns how many were sent.
+
+    Held jobs are not due yet, so another API on the same database does not take them;
+    attempts.reserve_held makes each one due and reserves it in the same transaction.
+    """
+    from services.queue import attempts
+    send = send or attempts.publish
+    if capacity <= 0 or not jobs:
+        return 0
+    with connect() as db:
+        waiting = db.execute("""SELECT id, document_id FROM pending_jobs WHERE id = ANY(%s::uuid[])
+            AND status='pending' ORDER BY created_at LIMIT %s""", (list(jobs.values()), capacity)).fetchall()
+    sent = 0
+    for job in waiting:
+        try:
+            with connect() as db:
+                delivery = attempts.reserve_held(db, str(job["document_id"]), str(tenant_id), str(job["id"]))
+        except attempts.AttemptRejected:
+            continue
+        if send(delivery)["dispatchAccepted"]:
+            sent += 1
+    return sent
+
+
+def wait_for(connect, document_ids, timeout_seconds, poll=3.0, tenant_id=None, jobs=None):
     """Drive the in-process queue (if that is the transport) until these documents leave the queue."""
     from services.queue.backend import queue_backend
     inline = None
@@ -167,6 +197,7 @@ def wait_for(connect, document_ids, timeout_seconds, poll=3.0):
         while True:
             if inline is not None:
                 inline.run_cycle()
+                dispatch_held(connect, tenant_id, jobs or {}, inline.capacity())
             with connect() as db:
                 waiting = db.execute("SELECT count(*) n FROM documents WHERE id = ANY(%s::uuid[]) AND status = ANY(%s)",
                                      (document_ids, list(WAITING_STATUSES))).fetchone()["n"]
@@ -222,7 +253,11 @@ def reread(company=None, pack=None, statuses=DEFAULT_STATUSES, limit=None, dry_r
     if not dry_run:
         # Keep this process's dispatch and lease recovery to this one company.
         os.environ["QUEUE_TENANT_ID"] = str(tenant["id"])
-    results = planned if dry_run else schedule(connect, tenant["id"], planned)
+    # Driving the in-process queue here, hold the jobs for this process for the whole wait, so a
+    # running API with other reading settings cannot take them. Otherwise any dispatcher may run them.
+    from services.queue.backend import queue_backend
+    hold_seconds = timeout_minutes * 60 if wait and queue_backend() == "inline" else 0
+    results, jobs = (planned, {}) if dry_run else schedule(connect, tenant["id"], planned, hold_seconds)
     for row, action in results:
         print(f"  {row['document_code']}  {row['original_filename']}  "
               f"{'would re-read' if action == 'reread' else action}")
@@ -232,7 +267,7 @@ def reread(company=None, pack=None, statuses=DEFAULT_STATUSES, limit=None, dry_r
               "selected": sum(action == "reread" for _row, action in planned), "queued": len(queued),
               "skipped": dict(sorted(skipped.items()))}
     if queued and wait:
-        report["seconds"] = wait_for(connect, queued, timeout_minutes * 60)
+        report["seconds"] = wait_for(connect, queued, timeout_minutes * 60, tenant_id=str(tenant["id"]), jobs=jobs)
         report["result"] = summarize(outcome(connect, queued, since))
     return report
 

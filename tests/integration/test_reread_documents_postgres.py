@@ -196,3 +196,33 @@ def test_only_readings_finished_after_the_reread_are_timed(database):
         [('extracted', 12.5), ('failed', None)]
     result = reread.summarize(rows)
     assert result['timed'] == 1 and result['average_seconds'] == 12.5
+
+
+def test_a_running_api_cannot_take_held_jobs_but_the_command_can(database, monkeypatch):
+    connect, ids = database
+    from services.queue import durable, inline
+    monkeypatch.setenv('QUEUE_BACKEND', 'inline')
+    monkeypatch.setattr(inline, 'capacity', lambda: 2)
+    taken_by_api = []
+    monkeypatch.setattr(attempts, 'publish', lambda d: taken_by_api.append(d) or {'dispatchAccepted': True})
+
+    with connect() as db:
+        held = attempts.schedule_reread(db, str(ids['fixing']), str(ids['tenant']), hold_seconds=600)
+    # Another API's dispatcher (same code path as its supervisor) sees nothing due.
+    assert durable.dispatch_due_jobs() == 0 and taken_by_api == []
+
+    sent_here = []
+    count = reread.dispatch_held(connect, str(ids['tenant']), {str(ids['fixing']): str(held['id'])}, 1,
+                                 send=lambda d: sent_here.append(d) or {'dispatchAccepted': True})
+    assert count == 1 and [d.job_id for d in sent_here] == [str(held['id'])]
+    with connect() as db:
+        assert db.execute('SELECT status FROM pending_jobs WHERE id=%s', (held['id'],)).fetchone()['status'] == 'dispatched'
+    # Nothing left to hand over, and still nothing for the other dispatcher.
+    assert reread.dispatch_held(connect, str(ids['tenant']), {str(ids['fixing']): str(held['id'])}, 1,
+                                send=sent_here.append) == 0
+    assert durable.dispatch_due_jobs() == 0 and taken_by_api == []
+
+    # Without a hold (--no-wait), the job is due for any dispatcher at once.
+    with connect() as db:
+        free = attempts.schedule_reread(db, str(ids['other']), str(ids['tenant_b']))
+    assert durable.dispatch_due_jobs() == 1 and [d.job_id for d in taken_by_api] == [str(free['id'])]

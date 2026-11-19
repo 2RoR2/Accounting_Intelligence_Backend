@@ -80,12 +80,16 @@ def schedule_failed_retry(db, document_id, tenant_id):
 REREAD_STATUSES = frozenset({'exception', 'extracted', 'failed'})
 
 
-def schedule_reread(db, document_id, tenant_id):
+def schedule_reread(db, document_id, tenant_id, hold_seconds=0):
     """Explicit operator re-read with the current reading settings, retaining all prior attempts.
 
     Used by the local `manage.py reread-documents` command. Beyond ensure_unreviewed it also
     refuses any review history and any corrected field on an earlier run, so nothing a person
     entered is replaced. Persistence keeps its own correction guard as well.
+
+    hold_seconds > 0 makes the job due only later, so other dispatchers (a running API with
+    other reading settings) leave it alone while the command dispatches it itself. If the
+    command stops, the job falls due after the hold and any dispatcher may run it.
     """
     document=lock_document(db,document_id,tenant_id)
     ensure_unreviewed(db,document)
@@ -103,10 +107,26 @@ def schedule_reread(db, document_id, tenant_id):
     if document['status'] not in REREAD_STATUSES:
         raise AttemptRejected('DOCUMENT_NOT_REREADABLE')
     job=db.execute("""INSERT INTO pending_jobs(id,tenant_id,document_id,status,next_attempt_at,attempt_count)
-        VALUES (%s,%s,%s,'pending',clock_timestamp(),0) RETURNING *""",(uuid4(),tenant_id,document_id)).fetchone()
+        VALUES (%s,%s,%s,'pending',clock_timestamp() + (%s * interval '1 second'),0) RETURNING *""",
+        (uuid4(),tenant_id,document_id,max(0,int(hold_seconds)))).fetchone()
     db.execute("UPDATE documents SET status='queued',updated_at=clock_timestamp() WHERE id=%s",(document_id,))
     audit(db,document,job['id'],'extraction.reread_scheduled')
     return job
+
+
+def reserve_held(db, document_id, tenant_id, job_id):
+    """Reserve a held re-read job for the caller's own transport, before its hold ends.
+
+    Makes the job due and reserves it in one transaction under the document lock, so another
+    dispatcher (which skips locked documents) never sees it due and unreserved.
+    """
+    lock_document(db,document_id,tenant_id)
+    released=db.execute("""UPDATE pending_jobs SET next_attempt_at=clock_timestamp(),updated_at=clock_timestamp()
+        WHERE id=%s AND document_id=%s AND tenant_id=%s AND status='pending' AND attempt_count=0 RETURNING id""",
+        (uuid_text(job_id),uuid_text(document_id),uuid_text(tenant_id))).fetchone()
+    if not released:
+        raise AttemptRejected('JOB_NOT_DISPATCHABLE')
+    return reserve_dispatch(db,document_id,tenant_id,job_id=job_id)
 
 
 class AttemptRejected(ValueError):

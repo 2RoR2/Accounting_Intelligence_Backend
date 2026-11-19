@@ -101,9 +101,8 @@ imports those rows through the bank import's JSON form instead.
 ### Re-read the demo documents after turning AI on
 
 Re-running the seed skips documents that already exist, and "Read again" in the app only takes
-failed documents. After you set `AI_EXTRACTION=text` and a provider key (section 7), stop the
-backend (otherwise its queue takes some of the jobs and reads them with the settings it started
-with) and read the stored documents again with the new settings:
+failed documents. After you set `AI_EXTRACTION=text` and a provider key (section 7), read the
+stored documents again with the new settings:
 
 ```powershell
 .venv\Scripts\python services\admin\manage.py reread-documents --pack trading --dry-run
@@ -118,8 +117,10 @@ changes nothing. By default it re-reads documents in `exception` ("needs fixing"
 that someone corrected, submitted, reviewed or approved, one that already has an open job, or one
 past review. Each re-read is a new extraction attempt in the normal queue (earlier attempts are
 kept and the audit log records `extraction.reread_scheduled`). The command then runs the reading
-in its own process and waits (`--timeout-minutes`, default 30; `--no-wait` leaves the jobs for the
-running API), and finally prints the new statuses with the average and p95 reading time.
+in its own process with its own settings and waits (`--timeout-minutes`, default 30). Until then
+it holds the jobs, so a backend that is running with other settings does not take them. Finally
+it prints the new statuses with the average and p95 reading time of the documents it read.
+`--no-wait` queues the jobs without a hold and leaves them to the running backend.
 
 Or create your own accounts:
 
