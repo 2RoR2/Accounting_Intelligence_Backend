@@ -98,6 +98,29 @@ set `AI_EXTRACTION=text` with a provider key (section 7) to see documents reach 
 pack's bank layout (`dr_cr`) is not readable by the bank CSV parser yet (task C5), so the seed
 imports those rows through the bank import's JSON form instead.
 
+### Re-read the demo documents after turning AI on
+
+Re-running the seed skips documents that already exist, and "Read again" in the app only takes
+failed documents. After you set `AI_EXTRACTION=text` and a provider key (section 7), stop the
+backend (otherwise its queue takes some of the jobs and reads them with the settings it started
+with) and read the stored documents again with the new settings:
+
+```powershell
+.venv\Scripts\python services\admin\manage.py reread-documents --pack trading --dry-run
+.venv\Scripts\python services\admin\manage.py reread-documents --pack trading
+```
+
+`--pack` names the seeded company; use `--company "<exact name>"` for any other company. The
+command has the same local-only guard as the seed (`APP_ENV=development`, a `127.0.0.1`/`localhost`
+`DATABASE_URL`, no `S3_BUCKET`). It prints one line per document and a summary; `--dry-run`
+changes nothing. By default it re-reads documents in `exception` ("needs fixing"), `extracted` or
+`failed`; narrow that with `--status exception,failed` and `--limit 5`. It never touches a document
+that someone corrected, submitted, reviewed or approved, one that already has an open job, or one
+past review. Each re-read is a new extraction attempt in the normal queue (earlier attempts are
+kept and the audit log records `extraction.reread_scheduled`). The command then runs the reading
+in its own process and waits (`--timeout-minutes`, default 30; `--no-wait` leaves the jobs for the
+running API), and finally prints the new statuses with the average and p95 reading time.
+
 Or create your own accounts:
 
 ```powershell

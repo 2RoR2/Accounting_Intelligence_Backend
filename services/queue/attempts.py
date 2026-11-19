@@ -75,6 +75,40 @@ def schedule_failed_retry(db, document_id, tenant_id):
     return job
 
 
+# A re-read replaces only what the reader produced: documents that finished reading
+# and that nobody has corrected, submitted or approved.
+REREAD_STATUSES = frozenset({'exception', 'extracted', 'failed'})
+
+
+def schedule_reread(db, document_id, tenant_id):
+    """Explicit operator re-read with the current reading settings, retaining all prior attempts.
+
+    Used by the local `manage.py reread-documents` command. Beyond ensure_unreviewed it also
+    refuses any review history and any corrected field on an earlier run, so nothing a person
+    entered is replaced. Persistence keeps its own correction guard as well.
+    """
+    document=lock_document(db,document_id,tenant_id)
+    ensure_unreviewed(db,document)
+    doc=document['id']
+    if (db.execute('SELECT 1 FROM review_submissions WHERE document_id=%s AND tenant_id=%s LIMIT 1',
+                   (doc,document['tenant_id'])).fetchone()
+            or db.execute('SELECT 1 FROM review_decisions WHERE document_id=%s AND tenant_id=%s LIMIT 1',
+                          (doc,document['tenant_id'])).fetchone()
+            or db.execute('SELECT 1 FROM field_predictions WHERE document_id=%s AND corrected_at IS NOT NULL LIMIT 1',
+                          (doc,)).fetchone()):
+        raise AttemptRejected('REVIEW_HISTORY')
+    if db.execute("""SELECT 1 FROM pending_jobs WHERE document_id=%s
+        AND status IN ('pending','dispatched','processing')""",(doc,)).fetchone():
+        raise AttemptRejected('JOB_ALREADY_OPEN')
+    if document['status'] not in REREAD_STATUSES:
+        raise AttemptRejected('DOCUMENT_NOT_REREADABLE')
+    job=db.execute("""INSERT INTO pending_jobs(id,tenant_id,document_id,status,next_attempt_at,attempt_count)
+        VALUES (%s,%s,%s,'pending',clock_timestamp(),0) RETURNING *""",(uuid4(),tenant_id,document_id)).fetchone()
+    db.execute("UPDATE documents SET status='queued',updated_at=clock_timestamp() WHERE id=%s",(document_id,))
+    audit(db,document,job['id'],'extraction.reread_scheduled')
+    return job
+
+
 class AttemptRejected(ValueError):
     def __init__(self, code, job=None):
         super().__init__(code)

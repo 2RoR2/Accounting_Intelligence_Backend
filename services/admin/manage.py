@@ -44,9 +44,14 @@ def main():
     from services.admin import demo_company
     demo_company.add_arguments(commands.add_parser(
         "seed-demo-company", help="local only: a demo company from an A1 company pack (see docs/LOCALHOST.md)"))
+    from services.admin import reread
+    reread.add_arguments(commands.add_parser(
+        "reread-documents", help="local only: read a company's stored documents again with the current settings"))
     args = parser.parse_args()
     if args.command == "seed-demo-company":
         sys.exit(demo_company.run(args))
+    if args.command == "reread-documents":
+        sys.exit(reread.run(args))
     demo_password = None
     if args.command == "seed-demo-accounts":
         if (os.getenv("APP_ENV", "").lower() != "development"
