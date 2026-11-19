@@ -1176,7 +1176,10 @@ def document_status_history(document_id: str, request: Request):
         rows = db.execute("SELECT * FROM document_status_history WHERE document_id=%s AND tenant_id=%s ORDER BY created_at", (document_id, user["tenant_id"])).fetchall()
     return [{"id": str(r["id"]), "oldStatus": r["old_status"], "newStatus": r["new_status"], "reason": r["reason"], "createdAt": str(r["created_at"])} for r in rows]
 
-def _assign_documents(db, user, document_ids, assignee_id, *, priority="normal", due_at=None, bulk=False):
+KEEP = object()  # "not supplied": an existing workload row keeps its priority / due date
+
+
+def _assign_documents(db, user, document_ids, assignee_id, *, priority=KEEP, due_at=KEEP, bulk=False):
     """Give documents to one team member, or take them back when assignee_id is None.
 
     documents.assigned_to is what every accountant visibility rule reads (Documents list,
@@ -1184,7 +1187,12 @@ def _assign_documents(db, user, document_ids, assignee_id, *, priority="normal",
     transaction. The previous assignee loses access unless they own the document. One audit
     row per document; the new assignee, and a replaced one, get a notification.
     Validates the assignee and every document before the first write.
+    priority / due_at left as KEEP keep a reassigned document's scheduling (a new row gets
+    'normal' and no due date); due_at=None clears the due date.
     """
+    keep_priority, keep_due = priority is KEEP, due_at is KEEP
+    priority = "normal" if keep_priority else priority
+    due_at = None if keep_due else due_at
     tenant_id = user["tenant_id"]
     if assignee_id is not None:
         target = db.execute("SELECT id FROM users WHERE id=%s AND tenant_id=%s AND status='active'",
@@ -1210,11 +1218,14 @@ def _assign_documents(db, user, document_ids, assignee_id, *, priority="normal",
             workload = db.execute("""INSERT INTO workload_assignments(tenant_id,document_id,assigned_to,assigned_by,priority,due_at)
                 VALUES (%s,%s,%s,%s,%s,%s)
                 ON CONFLICT (document_id) DO UPDATE SET assigned_to=EXCLUDED.assigned_to,assigned_by=EXCLUDED.assigned_by,
-                    priority=EXCLUDED.priority,due_at=EXCLUDED.due_at,completed_at=NULL RETURNING *""",
-                (tenant_id, document_id, assignee_id, user["id"], priority, due_at)).fetchone()
+                    priority=CASE WHEN %s THEN workload_assignments.priority ELSE EXCLUDED.priority END,
+                    due_at=CASE WHEN %s THEN workload_assignments.due_at ELSE EXCLUDED.due_at END,
+                    completed_at=NULL RETURNING *""",
+                (tenant_id, document_id, assignee_id, user["id"], priority, due_at, keep_priority, keep_due)).fetchone()
         db.execute("UPDATE documents SET assigned_to=%s WHERE id=%s AND tenant_id=%s", (assignee_id, document_id, tenant_id))
         _document_action(db, user, document_id, "document.assigned" if assignee_id else "document.unassigned",
-                         {"from": previous, "to": assignee_id, "priority": priority if assignee_id else None, "bulk": bulk})
+                         {"from": previous, "to": assignee_id, "priority": workload["priority"] if workload else None,
+                          "bulk": bulk})
         code = document["document_code"] or "A document"
         if assignee_id and assignee_id != previous:
             db.execute("INSERT INTO notifications(tenant_id,user_id,type,title,message,resource) VALUES (%s,%s,%s,%s,%s,%s)",
@@ -1231,7 +1242,11 @@ def _assign_documents(db, user, document_ids, assignee_id, *, priority="normal",
 def assign_workload(document_id: str, data: WorkloadInput, request: Request):
     user = require_workspace_user(request, {"local_admin"})
     with connect() as db:
-        result = _assign_documents(db, user, [document_id], data.userId, priority=data.priority, due_at=data.dueAt)[0]
+        # Only fields the request sent change an existing assignment's scheduling.
+        sent = data.model_fields_set
+        result = _assign_documents(db, user, [document_id], data.userId,
+                                   priority=data.priority if "priority" in sent else KEEP,
+                                   due_at=data.dueAt if "dueAt" in sent else KEEP)[0]
     row = result["workload"]
     return {"id": str(row["id"]), "documentId": str(row["document_id"]), "assignedTo": str(row["assigned_to"]),
             "previousAssignedTo": result["previousAssignee"], "priority": row["priority"], "dueAt": str(row["due_at"] or "")}

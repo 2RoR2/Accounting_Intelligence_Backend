@@ -8,7 +8,7 @@ Display names: the list shows "<supplier> <number>" and keeps the original filen
 """
 import hashlib
 import os
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 from urllib.parse import urlsplit
@@ -159,6 +159,36 @@ def test_reassignment_and_unassignment_take_the_document_away(company):
     assert actions == ['document.assigned', 'document.assigned', 'document.unassigned']
 
 
+def test_reassignment_keeps_priority_and_due_date_unless_sent(company):
+    connect, ids = company
+    admin = _as(ids['admin'], ids['tenant'], 'local_admin')
+    document, due = str(ids['work'][0]), datetime(2026, 11, 25, 9, 0, tzinfo=timezone.utc)
+
+    def scheduling():
+        row = _one(connect, "SELECT priority, due_at FROM workload_assignments WHERE document_id=%s", (document,))
+        return row['priority'], row['due_at']
+
+    _call(connect, admin, documents.assign_workload, document,
+          WorkloadInput(userId=str(ids['acct']), priority='urgent', dueAt=due), None)
+    # Bulk reassignment sends no scheduling: the existing priority and due date stay.
+    _call(connect, admin, documents.bulk_document_action,
+          BulkActionInput(documentIds=[document], action='assign', userId=str(ids['acct2'])), None)
+    assert scheduling() == ('urgent', due)
+    assert _one(connect, "SELECT assigned_to FROM documents WHERE id=%s", (document,))['assigned_to'] == ids['acct2']
+    # A single reassignment keeps what it does not send, and changes what it does.
+    kept = _call(connect, admin, documents.assign_workload, document, WorkloadInput(userId=str(ids['acct'])), None)
+    assert (kept['priority'], scheduling()) == ('urgent', ('urgent', due))
+    _call(connect, admin, documents.assign_workload, document, WorkloadInput(userId=str(ids['acct']), dueAt=None), None)
+    assert scheduling() == ('urgent', None)
+    _call(connect, admin, documents.assign_workload, document, WorkloadInput(userId=str(ids['acct']), priority='low'), None)
+    assert scheduling() == ('low', None)
+    # A first bulk assignment gets the defaults.
+    fresh = str(ids['work'][1])
+    _call(connect, admin, documents.bulk_document_action,
+          BulkActionInput(documentIds=[fresh], action='assign', userId=str(ids['acct'])), None)
+    assert _one(connect, "SELECT priority, due_at FROM workload_assignments WHERE document_id=%s", (fresh,)) ==         {'priority': 'normal', 'due_at': None}
+
+
 def test_foreign_target_and_accountant_assignment_are_refused_without_writes(company):
     connect, ids = company
     admin, acct = _as(ids['admin'], ids['tenant'], 'local_admin'), _as(ids['acct'], ids['tenant'], 'accountant')
@@ -219,6 +249,28 @@ def test_partial_selection_reports_each_document_and_touches_nothing_else(compan
         assert _one(connect, "SELECT status FROM documents WHERE id=%s", (untouched,))['status'] == status
     assert _one(connect, "SELECT count(*) AS n FROM pending_jobs WHERE document_id=ANY(%s::uuid[]) AND status='pending'",
                 ([str(ids['budget']), str(ids['failed_b'])],))['n'] == 0
+
+
+def test_all_failed_reaches_newer_failures_when_the_oldest_used_their_budget(company):
+    connect, ids = company
+    admin = _as(ids['admin'], ids['tenant'], 'local_admin')
+    oldest = [ids['failed'][0], ids['failed'][1]]
+    with connect() as db:
+        # The two oldest failures were already read again three times each.
+        db.execute("UPDATE documents SET uploaded_at=%s WHERE id=ANY(%s::uuid[])", (TODAY - timedelta(days=30), oldest))
+        for document in oldest:
+            for _ in range(3):
+                db.execute("""INSERT INTO audit_logs(tenant_id,user_id,user_name,role,action,resource,details)
+                    VALUES (%s,%s,'Admin A','local_admin','extraction.read_again_requested',%s,'{}')""",
+                           (ids['tenant'], ids['admin'], str(document)))
+    # A limit of one: before the fix the oldest (spent) failure filled it and nothing was queued.
+    with patch.object(reread_failed, 'MAX_DOCUMENTS', 1):
+        result, _ = _read_again(connect, admin, allFailed=True)
+    assert result['queued'] == 1 and len(result['results']) == 1
+    assert result['results'][0]['id'] not in {str(d) for d in oldest + [ids['budget']]}
+    assert result['budgetUsed'] == 3      # the two oldest and the seeded 'budget' document
+    for document in oldest:
+        assert _one(connect, "SELECT status FROM documents WHERE id=%s", (document,))['status'] == 'failed'
 
 
 def test_accountant_reads_again_only_their_own_or_assigned_failed_documents(company):

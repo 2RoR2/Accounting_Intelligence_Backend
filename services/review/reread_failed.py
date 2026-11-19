@@ -76,23 +76,34 @@ def _valid_ids(document_ids):
     return valid, invalid
 
 
+_USED_SQL = """(SELECT count(*) FROM audit_logs a
+    WHERE a.tenant_id=d.tenant_id AND a.resource=d.id::text AND a.action=%s)"""
+
+
 def _candidates(user, data):
-    """(documents to consider in a stable order, requested ids that are not visible)."""
+    """(documents to consider in a stable order, requested ids that are not visible,
+    failed documents left out of allFailed because their read-again budget is used)."""
     tenant_id = user["tenant_id"]
     visibility, extra = _visibility(user)
     with connect() as db:
         if data.allFailed:
+            # The budget is applied before the limit: otherwise, once the oldest MAX_DOCUMENTS
+            # failures have used theirs, newer failures would never be reached.
             rows = db.execute(f"""SELECT d.id, d.document_code, d.original_filename, d.status FROM documents d
-                WHERE d.tenant_id=%s AND d.status='failed'{visibility}
-                ORDER BY d.uploaded_at, d.id LIMIT %s""", [tenant_id, *extra, MAX_DOCUMENTS]).fetchall()
-            return list(rows), []
+                WHERE d.tenant_id=%s AND d.status='failed'{visibility} AND {_USED_SQL} < %s
+                ORDER BY d.uploaded_at, d.id LIMIT %s""",
+                [tenant_id, *extra, AUDIT_ACTION, READ_AGAIN_LIMIT, MAX_DOCUMENTS]).fetchall()
+            spent = db.execute(f"""SELECT count(*) AS n FROM documents d
+                WHERE d.tenant_id=%s AND d.status='failed'{visibility} AND {_USED_SQL} >= %s""",
+                [tenant_id, *extra, AUDIT_ACTION, READ_AGAIN_LIMIT]).fetchone()["n"]
+            return list(rows), [], spent
         valid, invalid = _valid_ids(data.documentIds)
         rows = db.execute(f"""SELECT d.id, d.document_code, d.original_filename, d.status FROM documents d
             WHERE d.tenant_id=%s AND d.id=ANY(%s::uuid[]){visibility}""", [tenant_id, valid, *extra]).fetchall() if valid else []
     by_id = {str(row["id"]): row for row in rows}
     ordered = [by_id[document_id] for document_id in valid if document_id in by_id]
     missing = invalid + [document_id for document_id in valid if document_id not in by_id]
-    return ordered, missing
+    return ordered, missing, 0
 
 
 def _queue_one(user, document):
@@ -136,7 +147,7 @@ def read_again(user, data: ReadAgainInput):
     if user["role"] not in {"local_admin", "accountant"} or not user.get("tenant_id"):
         raise HTTPException(403, "Reading documents again requires a company accountant or administrator.")
     from services.queue import attempts
-    documents, missing = _candidates(user, data)
+    documents, missing, budget_used = _candidates(user, data)
     results = [{"id": str(document_id), "code": None, "name": None, "outcome": "skipped",
                 "reasonCode": "NOT_FOUND", "reason": REASONS["NOT_FOUND"]} for document_id in missing]
     queued = 0
@@ -158,4 +169,6 @@ def read_again(user, data: ReadAgainInput):
             results.append({**item, "outcome": "queued", "jobId": job_id, "status": "QUEUED"})
     if queued:
         _wake_dispatcher()
-    return {"requested": len(results), "queued": queued, "skipped": len(results) - queued, "results": results}
+    # budgetUsed: failed documents allFailed left out because they were read again READ_AGAIN_LIMIT times.
+    return {"requested": len(results), "queued": queued, "skipped": len(results) - queued,
+            "budgetUsed": budget_used, "results": results}
