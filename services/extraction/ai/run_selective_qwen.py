@@ -64,8 +64,7 @@ MAX_RENDER_SCALE = 150 / 72  # Scanned pages are wrapped at 150 dpi; rendering a
 
 def render_single_page(pdf_bytes, output):
     import pypdfium2 as pdfium
-    from services.extraction.pdfium_lock import PDFIUM_LOCK
-    with PDFIUM_LOCK, pdfium.PdfDocument(pdf_bytes) as pdf:  # pdfium is not thread-safe.
+    with pdfium.PdfDocument(pdf_bytes) as pdf:
         if len(pdf) != 1:
             raise ValueError('This selective experiment supports exactly one PDF page')
         page = pdf[0]

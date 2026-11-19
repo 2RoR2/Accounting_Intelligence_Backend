@@ -19,10 +19,8 @@ Rules for every caller:
   reference, outside the lock.
 
 The lock is reentrant, so a guarded helper may call another guarded helper.
-Docling's own PDF backend takes its separate lock (docling.utils.locks), not
-this one. With the default lite engine Docling is never loaded; with
-EXTRACTION_ENGINE=docling on the inline queue the two locks do not exclude each
-other.
+Callers: the lite reader (services/extraction/lite/pages.py) and the bank
+statement preview (services/bank/statement_parser.py).
 """
 from __future__ import annotations
 
