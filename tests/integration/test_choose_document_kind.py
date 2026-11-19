@@ -182,3 +182,38 @@ def test_choose_kind_refuses_an_unsupported_kind_before_writing():
     with pytest.raises(ValueError):
         kind_choice.choose_kind(db, {**document(), "document_code": "DOC_ABC"}, extraction(), "auto", ACCOUNTANT)
     assert not db.execute.called
+
+
+class ReferencesDB:
+    """Vendors and invoice rows read fine; the type-decision history read fails."""
+    def __init__(self, decisions_fail):
+        self.decisions_fail = decisions_fail
+
+    def execute(self, query, params=()):
+        result = MagicMock()
+        if kind_choice.KIND_CHOSEN_ACTION in params:
+            if self.decisions_fail:
+                raise RuntimeError("audit log unavailable")
+            result.fetchall.return_value = []
+        else:
+            result.fetchall.return_value = []
+        return result
+
+
+def test_duplicate_references_fail_closed_when_type_decisions_cannot_be_read():
+    from validation.documents.engine import validate_invoice_document
+    from validation.documents.references import invoice_references
+    vendors, invoices = invoice_references(ReferencesDB(decisions_fail=True), document("invoice"))
+    assert vendors == [] and invoices is None
+    assert invoice_references(ReferencesDB(decisions_fail=False), document("invoice"))[1] == []
+    # None is "history unavailable": EX-007 is NOT_CHECKED and required, so it blocks rather than passes.
+    result = validate_invoice_document({"vendor_name": "A", "invoice_number": "1"}, known_vendors=[], existing_invoices=None)
+    duplicate = next(check for check in result["checks"] if check["rule"] == "EX-007")
+    assert duplicate["checkStatus"] == "NOT_CHECKED" and duplicate["required"] is True
+
+
+def test_a_bill_chosen_for_an_unread_document_gets_a_number_the_accountant_can_enter():
+    keys = {row["field_key"] for row in kind_choice.missing_field_rows("bill")}
+    assert "bill_number" in keys and "bill_number" in document_routes.CORRECTABLE_FIELDS
+    # Every field the bill rules need can be saved through the correction route.
+    assert {"supplier", "date", "currency", "total", "amount_due", "account_number", "bill_number"} <= document_routes.CORRECTABLE_FIELDS

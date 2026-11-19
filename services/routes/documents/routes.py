@@ -113,6 +113,8 @@ CORRECTABLE_FIELDS = CORRECTABLE_MONEY_FIELDS | frozenset({
     'payment_terms', 'received_date', 'expense_category', 'payment_reference',
     'purchase_order_number', 'goods_receipt_reference',
     'bill_reference', 'receipt_number',
+    # The printed bill number: the reader's key for bills, and the empty field a type choice adds.
+    'bill_number',
 })
 
 def list_documents(

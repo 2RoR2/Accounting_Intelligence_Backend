@@ -286,3 +286,23 @@ def test_a_document_confirmed_as_an_invoice_is_a_duplicate_reference(workspace, 
     # A different number is not a duplicate.
     third = confirmed_invoice('INV-OTHER-' + uuid4().hex[:6])
     assert not any(e['code'] == 'EX-007' for e in call('POST', f'/api/documents/{third}/revalidate', owner).json()['errors'])
+
+
+def test_a_bill_chosen_for_an_unread_document_takes_its_printed_number(workspace, tmp_path):
+    """Codex P2 on #15: the bill_number field added by the choice must be correctable."""
+    connect, people = workspace
+    owner = people['owner']
+    document_id = unread_document(connect, owner, tmp_path)
+    response = choose(document_id, owner, 'bill', stored(connect, document_id)[0]['content_revision'])
+    assert response.status_code == 200, response.text
+    revision = response.json()['contentRevision']
+    for key, value in [('bill_number', 'BIL-2026-0042'), ('supplier', 'Syarikat Air Kuching'), ('date', '2026-10-01'),
+                       ('currency', 'MYR'), ('total', '78.00')]:
+        corrected = call('PATCH', f'/api/documents/{document_id}/extraction/{key}', owner,
+                         json={'value': value, 'expectedContentRevision': revision})
+        assert corrected.status_code == 200, (key, corrected.text)
+        revision = corrected.json()['contentRevision']
+    errors = call('POST', f'/api/documents/{document_id}/revalidate', owner).json()['errors']
+    # The bill number alone satisfies "a bill reference or account number is required".
+    assert not [e for e in errors if e['field'] == 'reference'], errors
+    assert not [e for e in errors if e['field'] == 'document_type'], errors

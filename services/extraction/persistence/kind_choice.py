@@ -63,18 +63,22 @@ def chosen_kinds(db, tenant_id) -> dict[str, tuple[str, str]]:
     For reference reads across documents (duplicate detection). A caller still checks that the
     extraction id is the document's current one and the kind is its stored kind.
     """
+    # Oldest first, so each document keeps its latest decision. Plain SQL: no Postgres-only syntax.
     rows = db.execute(
-        """SELECT DISTINCT ON (resource) resource, details FROM audit_logs
-           WHERE tenant_id=%s AND action=%s ORDER BY resource, created_at DESC""",
+        """SELECT resource, details FROM audit_logs
+           WHERE tenant_id=%s AND action=%s ORDER BY created_at""",
         (tenant_id, KIND_CHOSEN_ACTION)).fetchall()
     decisions = {}
     for row in rows:
         try:
             details = json.loads(row['details'])
         except (KeyError, TypeError, ValueError):
+            decisions.pop(str(row.get('resource')), None)  # an unreadable latest decision counts as none
             continue
         if details.get('kind') in KIND_SEQUENCES and details.get('extraction_id'):
             decisions[str(row['resource'])] = (details['kind'], str(details['extraction_id']))
+        else:
+            decisions.pop(str(row['resource']), None)
     return decisions
 
 

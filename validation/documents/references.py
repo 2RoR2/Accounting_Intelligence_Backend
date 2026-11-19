@@ -82,7 +82,11 @@ def invoice_references(db, document):
     # A person's type choice for the current reading counts like a classification (kind_choice),
     # so a document confirmed as an invoice is a duplicate reference like a detected one.
     from services.extraction.persistence.kind_choice import chosen_kinds
-    chosen = read_or_unavailable(db, lambda: chosen_kinds(db, document['tenant_id']), {}) or {}
+    chosen = read_or_unavailable(db, lambda: chosen_kinds(db, document['tenant_id']))
+    if chosen is None:
+        # Fail closed: without the decisions a confirmed invoice could drop out and EX-007 would
+        # pass. None makes the duplicate check NOT_CHECKED and required (engine.py), so it blocks.
+        return vendors, None
     grouped = defaultdict(list)
     for row in rows:
         raw = row.get('raw_json') or {}
