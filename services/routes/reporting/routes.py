@@ -1,6 +1,7 @@
 from __future__ import annotations
 from main import *
 from main import _lock_upload_identity, _processing_error, _lock_workspace_document, _require_current_extraction, _authorised_document, _bank_row_values, _bank_transaction_dto, _uuid_or_422, _account_dto, _cost_centre_dto
+from services.extraction.persistence.auto_kind import stored_kind_or_auto
 
 def accounting_reports(request: Request):
     """Tenant-scoped accounting report summaries for accountants and local admins."""
@@ -27,7 +28,7 @@ def accounting_reports(request: Request):
         {"key": "transactions", "title": "Document Transaction Register", "count": int(lines["items"])},
         {"key": "audit", "title": "Audit Trail", "count": int(audit)},
     ]
-    return {"cards": cards, "summary": {"documentCount": int(totals["documents"]), "totalAmount": amount, "lineAmount": item_amount, "openExceptions": int(exceptions)}, "documents": [{"reference": r["reference"], "kind": r["kind"].upper(), "status": r["status"].upper(), "date": str(r["date"])} for r in documents]}
+    return {"cards": cards, "summary": {"documentCount": int(totals["documents"]), "totalAmount": amount, "lineAmount": item_amount, "openExceptions": int(exceptions)}, "documents": [{"reference": r["reference"], "kind": stored_kind_or_auto(r, "reference").upper(),"status": r["status"].upper(), "date": str(r["date"])} for r in documents]}
 
 def request_backup(data: BackupInput, request: Request):
     user = require_workspace_user(request, {"super_admin"})
@@ -56,6 +57,8 @@ def _export_rows(db, tenant_id, resource):
     elif resource == "documents":
         headers = ["document_code", "kind", "original_filename", "status"]
         rows = db.execute("SELECT document_code,kind,original_filename,status FROM documents WHERE tenant_id=%s ORDER BY uploaded_at DESC", (tenant_id,)).fetchall()
+        # A kind=auto upload whose type is not detected yet exports as "auto", not its placeholder kind.
+        rows = [{**row, "kind": stored_kind_or_auto(row)} for row in rows]
     else:
         headers = ["type", "severity", "status", "message"]
         rows = db.execute("SELECT type,severity,status,message FROM exceptions WHERE tenant_id=%s ORDER BY created_at DESC", (tenant_id,)).fetchall()
