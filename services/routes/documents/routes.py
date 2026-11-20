@@ -88,6 +88,7 @@ from database.object_storage.object_store import local_storage_root, document_ke
 from validation.documents.document_validation import validation_outcome
 from validation.documents.references import accepted_reviews, REVIEW_ACTION
 from services.extraction.contracts.accounting_contract import effective_value, json_safe
+from services.extraction.persistence.auto_kind import read_kind, stored_kind_or_auto
 from services.extraction.contracts.currency_review import build_currency_review, decision_details
 from starlette.background import BackgroundTask
 
@@ -223,7 +224,7 @@ def list_documents(
             WHERE {' AND '.join(clauses)}
             ORDER BY d.uploaded_at DESC
         """, params).fetchall()
-    return [{"id": str(r["id"]), "code": r["document_code"], "name": _display_filename(r["original_filename"], r["detected_identifier"]), "tenantId": str(r["tenant_id"]), "ownerId": str(r["owner_id"]), "assignedTo": str(r["assigned_to"]) if r["assigned_to"] else None, "kind": r["kind"].upper(), "category": r["category"].upper(), "status": r["status"].upper(), "mimeType": r["mime_type"], "fileSize": r["file_size_bytes"], "seconds": float(r["processing_seconds"]) if r["processing_seconds"] is not None else 0, "totalAmount": float(r["total_amount"]) if r["total_amount"] is not None else None, "supplier": r["supplier_name"], "customer": r["buyer_name"], "dueDate": r["due_date_value"], "createdAt": str(r["uploaded_at"]), "updatedAt": str(r["updated_at"])} for r in rows]
+    return [{"id": str(r["id"]), "code": r["document_code"], "name": _display_filename(r["original_filename"], r["detected_identifier"]), "tenantId": str(r["tenant_id"]), "ownerId": str(r["owner_id"]), "assignedTo": str(r["assigned_to"]) if r["assigned_to"] else None, **read_kind(r), "category": r["category"].upper(), "status": r["status"].upper(), "mimeType": r["mime_type"], "fileSize": r["file_size_bytes"], "seconds": float(r["processing_seconds"]) if r["processing_seconds"] is not None else 0, "totalAmount": float(r["total_amount"]) if r["total_amount"] is not None else None, "supplier": r["supplier_name"], "customer": r["buyer_name"], "dueDate": r["due_date_value"], "createdAt": str(r["uploaded_at"]), "updatedAt": str(r["updated_at"])} for r in rows]
 
 def get_document_detail(document_id: str, request: Request):
     user = require_workspace_user(request)
@@ -235,7 +236,7 @@ def get_document_detail(document_id: str, request: Request):
         r = db.execute(f"SELECT * FROM documents WHERE id=%s AND (%s IS NULL OR tenant_id=%s){visibility}", params).fetchone()
     if not r:
         raise HTTPException(404, "Document not found.")
-    return {"id": str(r["id"]), "code": r["document_code"], "name": r["original_filename"], "tenantId": str(r["tenant_id"]), "ownerId": str(r["owner_id"]), "assignedTo": str(r["assigned_to"]) if r["assigned_to"] else None, "kind": r["kind"].upper(), "category": r["category"].upper(), "status": r["status"].upper(), "mimeType": r["mime_type"], "fileSize": r["file_size_bytes"], "contentRevision": r["content_revision"], "createdAt": str(r["uploaded_at"]), "updatedAt": str(r["updated_at"])}
+    return {"id": str(r["id"]), "code": r["document_code"], "name": r["original_filename"], "tenantId": str(r["tenant_id"]), "ownerId": str(r["owner_id"]), "assignedTo": str(r["assigned_to"]) if r["assigned_to"] else None, **read_kind(r), "category": r["category"].upper(), "status": r["status"].upper(), "mimeType": r["mime_type"], "fileSize": r["file_size_bytes"], "contentRevision": r["content_revision"], "createdAt": str(r["uploaded_at"]), "updatedAt": str(r["updated_at"])}
 
 def get_document_file(document_id: str, request: Request):
     """Return an authorised private source file for preview/download."""
@@ -423,8 +424,13 @@ def support_view(record_id: str, data: CompanyReviewInput, request: Request):
 
 async def upload_document(request: Request, file: UploadFile = File(...), kind: str = "invoice", category: str = "accounts_payable"):
     user = require_workspace_user(request, {"local_admin", "accountant"})
-    if kind not in {"invoice", "bill", "receipt", "credit_note", "debit_note"} or category not in {"accounts_payable", "accounts_receivable"}:
+    from services.extraction.persistence.auto_kind import AUTO_KIND, PLACEHOLDER_KIND, pending_document_code
+    if kind not in {"invoice", "bill", "receipt", "credit_note", "debit_note", AUTO_KIND} or category not in {"accounts_payable", "accounts_receivable"}:
         raise HTTPException(422, "Invalid document kind or category.")
+    # kind=auto: the type is detected during reading. Until then the row keeps an
+    # allowed placeholder kind and a neutral DOC_ code, which marks it as not yet typed.
+    auto_kind = kind == AUTO_KIND
+    stored_kind = PLACEHOLDER_KIND if auto_kind else kind
     data = await file.read()
     if len(data) > 20 * 1024 * 1024:
         raise HTTPException(413, "This file exceeds the 20 MB limit. Choose a smaller file.")
@@ -461,9 +467,11 @@ async def upload_document(request: Request, file: UploadFile = File(...), kind: 
             duplicate = db.execute("SELECT id,document_code,original_filename FROM documents WHERE tenant_id=%s AND file_hash_sha256=%s ORDER BY uploaded_at,id LIMIT 1", (tenant_id, file_hash)).fetchone()
             if duplicate:
                 raise HTTPException(409, {"message": "This document is already uploaded.", "existingDocumentId": str(duplicate["id"]), "existingDocumentCode": duplicate["document_code"], "existingFilename": duplicate["original_filename"]})
-            row = db.execute("""INSERT INTO documents(id,tenant_id,owner_id,original_filename,kind,category,storage_path,mime_type,file_size_bytes,file_hash_sha256,status)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'queued') RETURNING *""",
-                (upload_id, tenant_id, user["id"], original_filename, kind, category, storage_value, file.content_type or "application/octet-stream", len(data), file_hash)).fetchone()
+            # An empty document_code lets the trigger assign KIND_100001; auto uploads pass DOC_ instead.
+            row = db.execute("""INSERT INTO documents(id,tenant_id,owner_id,original_filename,kind,category,storage_path,mime_type,file_size_bytes,file_hash_sha256,status,document_code)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'queued',%s) RETURNING *""",
+                (upload_id, tenant_id, user["id"], original_filename, stored_kind, category, storage_value, file.content_type or "application/octet-stream", len(data), file_hash,
+                 pending_document_code(upload_id) if auto_kind else '')).fetchone()
             # Upload and durable scheduling commit together. Dispatch only when
             # worker capacity is available; waiting is not active extraction.
             job = attempts.schedule_document(db,str(row['id']),str(tenant_id))
@@ -485,7 +493,7 @@ async def upload_document(request: Request, file: UploadFile = File(...), kind: 
         _processing_error(exc,row['id'],job['id'])
     return {"id":str(row["id"]),"code":row["document_code"],"name":row["original_filename"],
             "tenantId":str(row["tenant_id"]),"ownerId":str(row["owner_id"]),
-            "kind":kind.upper(),"category":category.upper(),**queued}
+            "kind":kind.upper(),"category":category.upper(),"kindDetected":not auto_kind,**queued}
 
 def standardise_document(document_id: str, request: Request):
     user = require_workspace_user(request, {"local_admin", "accountant"})
@@ -1225,7 +1233,7 @@ def download_document_version(document_id: str, version_id: str, request: Reques
 def document_kind_workflow(document_id: str, request: Request):
     user = require_workspace_user(request)
     with connect() as db:
-        doc = db.execute("SELECT id,kind,status,updated_at FROM documents WHERE id=%s AND tenant_id=%s", (document_id, user["tenant_id"])).fetchone()
+        doc = db.execute("SELECT id,kind,document_code,status,updated_at FROM documents WHERE id=%s AND tenant_id=%s", (document_id, user["tenant_id"])).fetchone()
         if not doc: raise HTTPException(404, "Document not found.")
         fields = db.execute("""SELECT field_key,current_value,normalized_value FROM field_predictions
             WHERE document_id=%s ORDER BY created_at DESC""", (document_id,)).fetchall()
@@ -1240,7 +1248,7 @@ def document_kind_workflow(document_id: str, request: Request):
             FROM document_reconciliations r JOIN documents d ON d.id=r.related_document_id
             WHERE r.tenant_id=%s AND r.source_document_id=%s""", (user["tenant_id"], document_id)).fetchall()
     due = values.get("due") or values.get("due_date")
-    return {"kind": doc["kind"].upper(), "fields": values, "overdue": bool(due and str(due) < datetime.now(timezone.utc).date().isoformat()), "duplicates": [{"id": str(r["id"]), "code": r["document_code"], "name": r["original_filename"], "kind": r["kind"]} for r in duplicates], "relatedNotes": [{"id": str(r["id"]), "relationType": r["relation_type"], "amount": r["amount"], "code": r["document_code"], "kind": r["kind"]} for r in links]}
+    return {**read_kind(doc), "fields": values, "overdue": bool(due and str(due) < datetime.now(timezone.utc).date().isoformat()), "duplicates": [{"id": str(r["id"]), "code": r["document_code"], "name": r["original_filename"], "kind": stored_kind_or_auto(r)} for r in duplicates], "relatedNotes": [{"id": str(r["id"]), "relationType": r["relation_type"], "amount": r["amount"], "code": r["document_code"], "kind": stored_kind_or_auto(r)} for r in links]}
 
 def bulk_document_action(data: BulkActionInput, request: Request):
     user = require_workspace_user(request, {"local_admin", "accountant"})
