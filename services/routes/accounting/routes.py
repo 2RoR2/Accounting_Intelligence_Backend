@@ -3,6 +3,7 @@ import json
 from main import *
 from main import _lock_upload_identity, _processing_error, _lock_workspace_document, _require_current_extraction, _authorised_document, _bank_row_values, _bank_transaction_dto, _uuid_or_422, _account_dto, _cost_centre_dto
 from decimal import Decimal
+from psycopg.errors import RaiseException
 from pydantic import BaseModel, Field
 
 class LedgerAccountInput(BaseModel):

@@ -98,6 +98,36 @@ set `AI_EXTRACTION=text` with a provider key (section 7) to see documents reach 
 pack's bank layout (`dr_cr`) is not readable by the bank CSV parser yet (task C5), so the seed
 imports those rows through the bank import's JSON form instead.
 
+### Re-read the demo documents after turning AI on
+
+Re-running the seed skips documents that already exist, and "Read again" in the app only takes
+failed documents. After you set `AI_EXTRACTION=text` and a provider key (section 7), read the
+stored documents again with the new settings:
+
+```powershell
+.venv\Scripts\python services\admin\manage.py reread-documents --pack trading --dry-run
+.venv\Scripts\python services\admin\manage.py reread-documents --pack trading
+```
+
+`--pack` names the seeded company; use `--company "<exact name>"` for any other company. The
+command has the same local-only guard as the seed (`APP_ENV=development`, a `127.0.0.1`/`localhost`
+`DATABASE_URL`, no `S3_BUCKET`). It prints one line per document and a summary; `--dry-run`
+changes nothing. By default it re-reads documents in `exception` ("needs fixing"), `extracted` or
+`failed`; narrow that with `--status exception,failed` and `--limit 5`. It never touches a document
+that someone corrected, submitted, reviewed or approved, one that already has an open job, or one
+past review. Each re-read is a new extraction attempt in the normal queue (earlier attempts are
+kept and the audit log records `extraction.reread_scheduled`). The command then runs the reading
+in its own process with its own settings and waits (`--timeout-minutes`, default 30). Until then
+it holds the jobs, so a backend that is running with other settings does not take them. Finally
+it prints the new statuses with the average and p95 reading time of the documents it read.
+It dispatches only the documents it listed, never other waiting jobs of the company. At the
+timeout (or Ctrl+C) it stops handing out work, closes the unfinished jobs, marks those documents
+`failed`, lists them and exits with code 3 without waiting for a reading in progress; run it
+again with `--status failed` to finish them. The timeout counts from the moment the first job is
+queued, and nothing new starts after it. A document that cannot be handed to a worker is listed
+and marked `failed` while the others carry on. `--no-wait` queues the jobs without a hold and
+leaves them to the running backend.
+
 ### UAT test accounts: each teammate signs in with their own email (plan v3, E1)
 
 Real sign-in codes sent to real team addresses, against a local database. The addresses live only
@@ -263,3 +293,14 @@ as before. Without `QUEUE_BACKEND=rq` those two scripts now stop with a message,
 | `AI_UNAVAILABLE` / `AI_AUTH_REJECTED` on a document | Wrong or missing key, or the wrong first-provider settings; the document still goes to manual review. |
 | `The queue supervisor is part of the legacy Redis/RQ setup` | You started the old worker or supervisor; stop it, or set `QUEUE_BACKEND=rq`. |
 | Tests behave differently on your machine | Run them with `PYTHON_DOTENV_DISABLED=1` so your `.env` (AI keys, queue settings) does not leak in. |
+
+## Browser tests without a sign-in code
+
+Browser specs (`B4A_COOKIES`, `B4B_COOKIES`) need a signed-in session. On a local development database, write one for a synthetic demo user instead of pasting cookies:
+
+```powershell
+.venv\Scripts\python.exe services\admin\manage.py browser-session --out $env:TEMP\ai-accountant-cookies.json
+# local admin: --email admin@trading.demo.test
+```
+
+It uses seed-demo-company's local-only guard, signs in only `*.demo.test` accounts, and writes the cookie values to the file only. The refresh cookie lasts the normal 8-hour session. Keep the file outside the repository.

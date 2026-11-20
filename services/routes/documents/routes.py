@@ -71,12 +71,32 @@ def _ubl_line_items(raw_json):
     return output
 
 
-def _display_filename(original_filename, detected_identifier=None):
-    """Use the detected document number in the UI while preserving the upload extension."""
+_PLACEHOLDER_VALUES = {"invoice", "invoice number", "reference", "receipt", "bill", "n/a", "na", "none", "null", "unknown", "-"}
+
+
+def _display_part(value, limit):
+    """One line of printable text from an extracted value, or '' when it says nothing."""
+    text = " ".join("".join(ch if ch.isprintable() else " " for ch in str(value or "")).split())
+    if not text or text.casefold() in _PLACEHOLDER_VALUES:
+        return ""
+    return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
+
+
+def _display_filename(original_filename, detected_identifier=None, party=None):
+    """A name a person recognises: "<party> <document number>", e.g. "Syarikat Maju INV-1023".
+
+    party is the supplier (or the customer on a sales document). With only a document number
+    the number alone is used, keeping the upload's extension as before. Without a number the
+    original filename stays, so "images (2).png" is replaced only once reading found what it is.
+    Callers keep the original filename in the DTO as well.
+    """
     original = Path(str(original_filename or "document")).name
-    identifier = str(detected_identifier or "").strip()
-    if not identifier or identifier.casefold() in {"invoice", "invoice number", "reference", "n/a", "na", "none", "null", "unknown", "-"}:
+    identifier = _display_part(detected_identifier, 60)
+    if not identifier:
         return original
+    name = _display_part(party, 60)
+    if name and identifier.casefold() not in name.casefold():
+        return f"{name} {identifier}"
     safe = safe_component(identifier, "document")
     suffix = Path(original).suffix.lower()
     return f"{safe}{suffix}" if suffix else safe
@@ -89,6 +109,7 @@ from validation.documents.document_validation import validation_outcome
 from validation.documents.references import accepted_reviews, REVIEW_ACTION
 from services.extraction.contracts.accounting_contract import effective_value, json_safe
 from services.extraction.persistence.auto_kind import read_kind, stored_kind_or_auto
+from services.extraction.persistence.kind_choice import CHOOSABLE_KINDS, CHOOSABLE_STATUSES, choose_kind, chosen_classification
 from services.extraction.contracts.currency_review import build_currency_review, decision_details
 from starlette.background import BackgroundTask
 
@@ -112,6 +133,8 @@ CORRECTABLE_FIELDS = CORRECTABLE_MONEY_FIELDS | frozenset({
     'payment_terms', 'received_date', 'expense_category', 'payment_reference',
     'purchase_order_number', 'goods_receipt_reference',
     'bill_reference', 'receipt_number',
+    # The printed bill number: the reader's key for bills, and the empty field a type choice adds.
+    'bill_number',
 })
 
 def list_documents(
@@ -224,7 +247,7 @@ def list_documents(
             WHERE {' AND '.join(clauses)}
             ORDER BY d.uploaded_at DESC
         """, params).fetchall()
-    return [{"id": str(r["id"]), "code": r["document_code"], "name": _display_filename(r["original_filename"], r["detected_identifier"]), "tenantId": str(r["tenant_id"]), "ownerId": str(r["owner_id"]), "assignedTo": str(r["assigned_to"]) if r["assigned_to"] else None, **read_kind(r), "category": r["category"].upper(), "status": r["status"].upper(), "mimeType": r["mime_type"], "fileSize": r["file_size_bytes"], "seconds": float(r["processing_seconds"]) if r["processing_seconds"] is not None else 0, "totalAmount": float(r["total_amount"]) if r["total_amount"] is not None else None, "supplier": r["supplier_name"], "customer": r["buyer_name"], "dueDate": r["due_date_value"], "createdAt": str(r["uploaded_at"]), "updatedAt": str(r["updated_at"])} for r in rows]
+    return [{"id": str(r["id"]), "code": r["document_code"], "name": _display_filename(r["original_filename"], r["detected_identifier"], r["buyer_name"] if r["category"] == "accounts_receivable" else r["supplier_name"]), "originalFilename": r["original_filename"], "tenantId": str(r["tenant_id"]), "ownerId": str(r["owner_id"]), "assignedTo": str(r["assigned_to"]) if r["assigned_to"] else None, **read_kind(r), "category": r["category"].upper(), "status": r["status"].upper(), "mimeType": r["mime_type"], "fileSize": r["file_size_bytes"], "seconds": float(r["processing_seconds"]) if r["processing_seconds"] is not None else 0, "totalAmount": float(r["total_amount"]) if r["total_amount"] is not None else None, "supplier": r["supplier_name"], "customer": r["buyer_name"], "dueDate": r["due_date_value"], "createdAt": str(r["uploaded_at"]), "updatedAt": str(r["updated_at"])} for r in rows]
 
 def get_document_detail(document_id: str, request: Request):
     user = require_workspace_user(request)
@@ -528,10 +551,13 @@ def standardise_document(document_id: str, request: Request):
         items = db.execute("SELECT * FROM line_items WHERE document_id=%s AND extraction_id=%s ORDER BY line_number", (document_id, extraction['id'])).fetchall()
         try:
             values = record_values(fields)
-            snapshot = approved_snapshot(doc, extraction, fields, items)
+            kind_decision = chosen_classification(db, doc, extraction)
+            snapshot = approved_snapshot(doc, extraction, fields, items, classification=kind_decision)
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
         snapshot['validationReviews'] = json_safe(list(accepted_reviews(db, doc).values()))
+        if kind_decision:
+            snapshot['documentTypeDecision'] = json_safe(kind_decision)
         if doc['kind'] == 'bill' and values.get('reference') is None:
             values['reference'] = values.get('bill_number') or values.get('bill_reference') or values.get('account_number')
         elif doc['kind'] == 'receipt' and values.get('reference') is None:
@@ -600,10 +626,11 @@ def get_document_extraction(document_id: str, request: Request):
     with connect() as db:
         ownership = ' AND (owner_id=%s OR assigned_to=%s)' if user['role'] == 'accountant' else ''
         params = [document_id, user['tenant_id']] + ([user['id'], user['id']] if ownership else [])
-        doc = db.execute('SELECT id,content_revision FROM documents WHERE id=%s AND tenant_id=%s' + ownership, params).fetchone()
+        doc = db.execute('SELECT id,tenant_id,kind,content_revision FROM documents WHERE id=%s AND tenant_id=%s' + ownership, params).fetchone()
         if not doc:
             raise HTTPException(404, "Document not found.")
         extraction = db.execute("SELECT * FROM raw_extractions WHERE document_id=%s AND is_current=true ORDER BY run_number DESC LIMIT 1", (document_id,)).fetchone()
+        kind_decision = chosen_classification(db, doc, extraction)
         fields = db.execute("SELECT * FROM field_predictions WHERE document_id=%s AND extraction_id=%s ORDER BY field_key", (document_id, extraction["id"] if extraction else None)).fetchall() if extraction else []
         items = db.execute("SELECT * FROM line_items WHERE document_id=%s AND extraction_id=%s ORDER BY line_number", (document_id, extraction["id"] if extraction else None)).fetchall() if extraction else []
         line_corrections = db.execute("""SELECT line_item_id,field_key,old_value,new_value,corrected_by,corrected_at
@@ -616,6 +643,8 @@ def get_document_extraction(document_id: str, request: Request):
             ({'value': extraction['raw_json']['predicted_document_type'], 'status': 'classified',
               'reason': 'STRUCTURED_SOURCE_TYPE_CODE', 'evidence': []}
              if extraction['raw_json'].get('predicted_document_type') in {'credit_note','debit_note'} else {})) if extraction else {}),
+        # A person's type choice for this extraction; "classification" stays what reading found.
+        "kindDecision": json_safe(kind_decision) if kind_decision else None,
         "raw": extraction["raw_json"] if extraction else {},
         "warnings": extraction_guidance(extraction["raw_json"] if extraction else {}, items),
         "fields": [prediction_dto(row) for row in fields],
@@ -1038,6 +1067,40 @@ def revalidate_document(document_id: str, request: Request):
     with connect() as db:
         return validate_document(db, document_id, user)
 
+
+class KindChoiceInput(BaseModel):
+    kind: str = Field(min_length=1, max_length=32)
+    expectedContentRevision: int = Field(strict=True, ge=1)
+
+
+def choose_document_kind(document_id: str, data: KindChoiceInput, request: Request):
+    """A person chooses the document type when reading could not settle it, then the checks run again.
+
+    Allowed until the document is submitted. The choice is audited and counts as the classification
+    for the current extraction only (kind_choice); approval by a local admin is still required.
+    """
+    user = require_workspace_user(request, {"local_admin", "accountant"})
+    kind = data.kind.strip().lower()
+    if kind not in CHOOSABLE_KINDS:
+        raise HTTPException(422, "Choose invoice, bill, receipt, credit note or debit note.")
+    with connect() as db:
+        document = _lock_workspace_document(db, document_id, user)
+        if document['status'] not in CHOOSABLE_STATUSES:
+            raise HTTPException(409, "This document has been submitted or approved, so its type cannot be changed here.")
+        if data.expectedContentRevision != document['content_revision']:
+            raise HTTPException(409, "The document changed. Refresh it before choosing its type.")
+        extraction = db.execute('SELECT * FROM raw_extractions WHERE document_id=%s AND is_current=true', (document_id,)).fetchone()
+        if not extraction:
+            raise HTTPException(422, "The document has not been read yet. Wait for reading to finish, or read it again.")
+        try:
+            chosen = choose_kind(db, document, extraction, kind, user)
+        except LookupError as exc:
+            raise HTTPException(409, "The document changed. Refresh it before choosing its type.") from exc
+        validation = validate_document(db, document_id, user)
+    return {"documentId": document_id, "kind": kind.upper(), "code": chosen['document_code'], "kindDetected": True,
+            "previousKind": str(chosen['previous_kind']).upper(), "contentRevision": chosen['content_revision'],
+            "fieldsAdded": chosen['fields_added'], "validation": validation}
+
 def save_document_draft(document_id: str, request: Request):
     user = require_workspace_user(request, {"local_admin", "accountant"})
     with connect() as db:
@@ -1164,16 +1227,88 @@ def document_status_history(document_id: str, request: Request):
         rows = db.execute("SELECT * FROM document_status_history WHERE document_id=%s AND tenant_id=%s ORDER BY created_at", (document_id, user["tenant_id"])).fetchall()
     return [{"id": str(r["id"]), "oldStatus": r["old_status"], "newStatus": r["new_status"], "reason": r["reason"], "createdAt": str(r["created_at"])} for r in rows]
 
+KEEP = object()  # "not supplied": an existing workload row keeps its priority / due date
+
+
+def _assign_documents(db, user, document_ids, assignee_id, *, priority=KEEP, due_at=KEEP, bulk=False):
+    """Give documents to one team member, or take them back when assignee_id is None.
+
+    documents.assigned_to is what every accountant visibility rule reads (Documents list,
+    Today, review, corrections), so it moves together with the workload row in the caller's
+    transaction. The previous assignee loses access unless they own the document. One audit
+    row per document; the new assignee, and a replaced one, get a notification.
+    Validates the assignee and every document before the first write.
+    priority / due_at left as KEEP keep a reassigned document's scheduling (a new row gets
+    'normal' and no due date); due_at=None clears the due date.
+    """
+    keep_priority, keep_due = priority is KEEP, due_at is KEEP
+    priority = "normal" if keep_priority else priority
+    due_at = None if keep_due else due_at
+    tenant_id = user["tenant_id"]
+    if assignee_id is not None:
+        target = db.execute("SELECT id FROM users WHERE id=%s AND tenant_id=%s AND status='active'",
+                            (assignee_id, tenant_id)).fetchone()
+        if not target:
+            raise HTTPException(422, "Invalid team member.")
+        assignee_id = str(target["id"])  # canonical form, so "same person" compares correctly
+    documents = []
+    for document_id in document_ids:
+        document = db.execute("SELECT id,document_code,assigned_to FROM documents WHERE id=%s AND tenant_id=%s FOR UPDATE",
+                              (document_id, tenant_id)).fetchone()
+        if not document:
+            raise HTTPException(404, "Document not found.")
+        documents.append(document)
+    results = []
+    for document in documents:
+        document_id = str(document["id"])
+        previous = str(document["assigned_to"]) if document["assigned_to"] else None
+        if assignee_id is None:
+            db.execute("DELETE FROM workload_assignments WHERE document_id=%s AND tenant_id=%s", (document_id, tenant_id))
+            workload = None
+        else:
+            workload = db.execute("""INSERT INTO workload_assignments(tenant_id,document_id,assigned_to,assigned_by,priority,due_at)
+                VALUES (%s,%s,%s,%s,%s,%s)
+                ON CONFLICT (document_id) DO UPDATE SET assigned_to=EXCLUDED.assigned_to,assigned_by=EXCLUDED.assigned_by,
+                    priority=CASE WHEN %s THEN workload_assignments.priority ELSE EXCLUDED.priority END,
+                    due_at=CASE WHEN %s THEN workload_assignments.due_at ELSE EXCLUDED.due_at END,
+                    completed_at=NULL RETURNING *""",
+                (tenant_id, document_id, assignee_id, user["id"], priority, due_at, keep_priority, keep_due)).fetchone()
+        db.execute("UPDATE documents SET assigned_to=%s WHERE id=%s AND tenant_id=%s", (assignee_id, document_id, tenant_id))
+        _document_action(db, user, document_id, "document.assigned" if assignee_id else "document.unassigned",
+                         {"from": previous, "to": assignee_id, "priority": workload["priority"] if workload else None,
+                          "bulk": bulk})
+        code = document["document_code"] or "A document"
+        if assignee_id and assignee_id != previous:
+            db.execute("INSERT INTO notifications(tenant_id,user_id,type,title,message,resource) VALUES (%s,%s,%s,%s,%s,%s)",
+                       (tenant_id, assignee_id, "document_assigned", "Document assigned to you",
+                        f"{code} is now in your documents.", document_id))
+        if previous and previous != assignee_id:
+            db.execute("INSERT INTO notifications(tenant_id,user_id,type,title,message,resource) VALUES (%s,%s,%s,%s,%s,%s)",
+                       (tenant_id, previous, "document_assigned", "Document reassigned",
+                        f"{code} is no longer assigned to you.", document_id))
+        results.append({"documentId": document_id, "previousAssignee": previous, "workload": workload})
+    return results
+
+
 def assign_workload(document_id: str, data: WorkloadInput, request: Request):
     user = require_workspace_user(request, {"local_admin"})
     with connect() as db:
-        target = db.execute("SELECT id FROM users WHERE id=%s AND tenant_id=%s AND status='active'", (data.userId, user["tenant_id"])).fetchone()
-        if not target: raise HTTPException(422, "Invalid team member.")
-        row = db.execute("""INSERT INTO workload_assignments(tenant_id,document_id,assigned_to,assigned_by,priority,due_at)
-            SELECT tenant_id,id,%s,%s,%s,%s FROM documents WHERE id=%s AND tenant_id=%s
-            ON CONFLICT (document_id) DO UPDATE SET assigned_to=EXCLUDED.assigned_to,assigned_by=EXCLUDED.assigned_by,priority=EXCLUDED.priority,due_at=EXCLUDED.due_at,completed_at=NULL RETURNING *""", (data.userId, user["id"], data.priority, data.dueAt, document_id, user["tenant_id"])).fetchone()
-    if not row: raise HTTPException(404, "Document not found.")
-    return {"id": str(row["id"]), "documentId": str(row["document_id"]), "assignedTo": str(row["assigned_to"]), "priority": row["priority"], "dueAt": str(row["due_at"] or "")}
+        # Only fields the request sent change an existing assignment's scheduling.
+        sent = data.model_fields_set
+        result = _assign_documents(db, user, [document_id], data.userId,
+                                   priority=data.priority if "priority" in sent else KEEP,
+                                   due_at=data.dueAt if "dueAt" in sent else KEEP)[0]
+    row = result["workload"]
+    return {"id": str(row["id"]), "documentId": str(row["document_id"]), "assignedTo": str(row["assigned_to"]),
+            "previousAssignedTo": result["previousAssignee"], "priority": row["priority"], "dueAt": str(row["due_at"] or "")}
+
+
+def unassign_workload(document_id: str, request: Request):
+    """Take a document back from its assignee; its owner keeps it."""
+    user = require_workspace_user(request, {"local_admin"})
+    with connect() as db:
+        result = _assign_documents(db, user, [document_id], None)[0]
+    return {"documentId": result["documentId"], "assignedTo": None, "previousAssignedTo": result["previousAssignee"]}
 
 def list_supplier_matches(document_id: str, request: Request):
     user = require_workspace_user(request)
@@ -1252,15 +1387,16 @@ def document_kind_workflow(document_id: str, request: Request):
 
 def bulk_document_action(data: BulkActionInput, request: Request):
     user = require_workspace_user(request, {"local_admin", "accountant"})
+    if data.action == "assign" and user["role"] != "local_admin":
+        # Same rule as the single-document assignment: only a local admin hands out work.
+        raise HTTPException(403, "Only a local admin can assign documents.")
     ids = list(dict.fromkeys(data.documentIds))
     with connect() as db:
         count = db.execute("SELECT count(*) AS n FROM documents WHERE tenant_id=%s AND id=ANY(%s::uuid[])", (user["tenant_id"], ids)).fetchone()["n"]
         if count != len(ids): raise HTTPException(404, "One or more documents are outside this workspace.")
         if data.action == "assign":
             if not data.userId: raise HTTPException(422, "userId is required.")
-            for document_id in ids:
-                db.execute("""INSERT INTO workload_assignments(tenant_id,document_id,assigned_to,assigned_by)
-                    VALUES (%s,%s,%s,%s) ON CONFLICT (document_id) DO UPDATE SET assigned_to=EXCLUDED.assigned_to,assigned_by=EXCLUDED.assigned_by,completed_at=NULL""", (user["tenant_id"], document_id, data.userId, user["id"]))
+            _assign_documents(db, user, ids, data.userId, bulk=True)
         elif data.action == "tag":
             if not data.tagId: raise HTTPException(422, "tagId is required.")
             for document_id in ids:
@@ -1294,6 +1430,7 @@ def register(router, handlers):
     router.add_api_route('/api/documents/{document_id}/line-items', add_line_item, methods=['POST'], status_code=201)
     router.add_api_route('/api/records/{record_id}/amendments', request_record_amendment, methods=['POST'], status_code=201)
     router.add_api_route('/api/documents/{document_id}/revalidate', revalidate_document, methods=['POST'])
+    router.add_api_route('/api/documents/{document_id}/kind', choose_document_kind, methods=['PATCH'])
     router.add_api_route('/api/documents/{document_id}/validation-review', accept_validation_review, methods=['POST'])
     router.add_api_route('/api/documents/{document_id}/draft', save_document_draft, methods=['POST'])
     router.add_api_route('/api/documents/{document_id}/review', submit_document_review, methods=['POST'])
@@ -1305,6 +1442,7 @@ def register(router, handlers):
     router.add_api_route('/api/documents/{document_id}/tags/{tag_id}', tag_document, methods=['POST'], status_code=201)
     router.add_api_route('/api/documents/{document_id}/status-history', document_status_history, methods=['GET'])
     router.add_api_route('/api/documents/{document_id}/workload', assign_workload, methods=['POST'], status_code=201)
+    router.add_api_route('/api/documents/{document_id}/workload', unassign_workload, methods=['DELETE'])
     router.add_api_route('/api/documents/{document_id}/supplier-matches', list_supplier_matches, methods=['GET'])
     router.add_api_route('/api/documents/{document_id}/customer-matches', list_customer_matches, methods=['GET'])
     router.add_api_route('/api/documents/{document_id}/versions', create_document_version, methods=['POST'], status_code=201)

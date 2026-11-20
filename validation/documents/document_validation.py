@@ -3,6 +3,7 @@ from decimal import Decimal
 import json
 from fastapi import HTTPException
 from services.extraction.contracts.accounting_contract import FIELD_KEYS, record_values
+from services.extraction.persistence.kind_choice import chosen_classification, document_classification
 from validation.documents.engine import EXCEPTION_SEVERITY, validate_invoice_document
 from validation.documents.references import (
     accepted_reviews, customer_catalogue, invoice_references, purchase_order_reference, read_or_unavailable,
@@ -247,7 +248,7 @@ def evaluate_invoice(document, extraction, fields, items, db=None):
         issue('category', 'Explicit AP/AR business direction is required.')
     raw = extraction.get('raw_json') or {}
     if raw.get('mode') == 'module2_public_result':
-        classification = raw.get('document_type') or {}
+        classification = document_classification(raw, chosen_classification(db, document, extraction))
         if classification.get('status') != 'classified' or classification.get('value') != document['kind']:
             issue('document_type', 'Source classification is unknown or disagrees with the selected kind.', severity='high')
     mapping = {'invoice':'invoice_number', 'supplier':'vendor_name', 'date':'invoice_date', 'due':'due_date',
@@ -353,7 +354,8 @@ def evaluate_invoice(document, extraction, fields, items, db=None):
 def evaluate_document(document, extraction, fields, items, db=None):
     """Route effective values by source-verified kind, preserving invoice rules."""
     raw = extraction.get('raw_json') or {}
-    classification = raw.get('document_type') or {}
+    # A person's type choice for this extraction counts as its classification (kind_choice).
+    classification = document_classification(raw, chosen_classification(db, document, extraction))
     is_m2 = raw.get('mode') == 'module2_public_result'
     kind = classification.get('value') if is_m2 else document['kind']
     if kind == 'invoice':
