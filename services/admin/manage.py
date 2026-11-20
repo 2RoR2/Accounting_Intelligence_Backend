@@ -44,9 +44,14 @@ def main():
     from services.admin import demo_company
     demo_company.add_arguments(commands.add_parser(
         "seed-demo-company", help="local only: a demo company from an A1 company pack (see docs/LOCALHOST.md)"))
+    from services.admin import test_users
+    test_users.add_arguments(commands.add_parser(
+        "create-test-users", help="local only: team test accounts from UAT_TEST_EMAILS (see docs/LOCALHOST.md)"))
     args = parser.parse_args()
     if args.command == "seed-demo-company":
         sys.exit(demo_company.run(args))
+    if args.command == "create-test-users":
+        sys.exit(test_users.run(args))
     demo_password = None
     if args.command == "seed-demo-accounts":
         if (os.getenv("APP_ENV", "").lower() != "development"
