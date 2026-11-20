@@ -10,6 +10,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from services.bank.csv_parser import parse_bank_csv
+from services.extraction.pdfium_lock import PDFIUM_LOCK
 
 
 SUPPORTED_STATEMENT_EXTENSIONS = {".csv", ".xlsx", ".pdf"}
@@ -97,15 +98,29 @@ def _pdf_text(content: bytes) -> str:
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as source:
             source.write(content)
             source_name = source.name
-        document = pdfium.PdfDocument(source_name)
-        pages = []
-        for page in document:
-            text_page = page.get_textpage()
-            pages.append(text_page.get_text_range())
-        text = "\n".join(pages)
-        if text.strip():
-            return text
-        return _pdf_ocr_text(document)
+        # pdfium is not thread-safe; API threads share it with the inline extraction queue.
+        with PDFIUM_LOCK:
+            document = pdfium.PdfDocument(source_name)
+        try:
+            with PDFIUM_LOCK:
+                pages = []
+                for index in range(len(document)):
+                    page = document[index]
+                    try:
+                        text_page = page.get_textpage()
+                        try:
+                            pages.append(text_page.get_text_range())
+                        finally:
+                            text_page.close()
+                    finally:
+                        page.close()
+            text = "\n".join(pages)
+            if text.strip():
+                return text
+            return _pdf_ocr_text(document)
+        finally:
+            with PDFIUM_LOCK:
+                document.close()
     except Exception as exc:
         raise ValueError("The PDF bank statement could not be read.") from exc
     finally:
@@ -124,12 +139,22 @@ def _pdf_ocr_text(document) -> str:
         raise ValueError("This PDF has no selectable text and OCR is unavailable.") from exc
     engine = RapidOCR()
     lines = []
-    for page_number, page in enumerate(document):
-        if page_number >= 50:
-            break
-        bitmap = page.render(scale=2.0)
+    with PDFIUM_LOCK:
+        count = len(document)
+    for page_number in range(min(count, 50)):
+        # Render and copy under the lock, then OCR without it.
+        with PDFIUM_LOCK:
+            page = document[page_number]
+            try:
+                bitmap = page.render(scale=2.0)
+                try:
+                    image = bitmap.to_pil().convert("RGB")  # A copy: to_pil() shares the bitmap buffer.
+                finally:
+                    bitmap.close()
+            finally:
+                page.close()
         try:
-            result = engine(bitmap.to_pil())
+            result = engine(image)
             boxes = result.boxes if result.boxes is not None else []
             texts = result.txts if result.txts is not None else []
             items = []
@@ -147,7 +172,7 @@ def _pdf_ocr_text(document) -> str:
                 grouped[-1].append(item)
             lines.extend(" ".join(item[3] for item in group) for group in grouped)
         finally:
-            bitmap.close()
+            image.close()
     if not lines:
         raise ValueError("The PDF has no readable transaction rows. Use a bank statement with selectable text.")
     return "\n".join(lines)
