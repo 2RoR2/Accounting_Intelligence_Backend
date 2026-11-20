@@ -1,4 +1,5 @@
 from __future__ import annotations
+import json
 from main import *
 from main import _lock_upload_identity, _processing_error, _lock_workspace_document, _require_current_extraction, _authorised_document, _bank_row_values, _bank_transaction_dto, _uuid_or_422, _account_dto, _cost_centre_dto
 from decimal import Decimal
@@ -16,8 +17,8 @@ class PeriodInput(BaseModel):
 
 class JournalLineInput(BaseModel):
     accountId: str
-    debit: Decimal = Decimal("0.00")
-    credit: Decimal = Decimal("0.00")
+    debit: Decimal = Field(default=Decimal("0.00"), ge=0, max_digits=18, decimal_places=2)
+    credit: Decimal = Field(default=Decimal("0.00"), ge=0, max_digits=18, decimal_places=2)
     description: str = ""
     sourceField: str | None = None
 
@@ -50,6 +51,13 @@ class SupplierBillPostingInput(BaseModel):
     payableAccountId: str
     journalDate: date
     description: str = "Supplier bill posting"
+
+class SupplierPaymentPostingInput(BaseModel):
+    periodId: str | None = None
+    payableAccountId: str | None = None
+    bankAccountId: str | None = None
+    journalDate: date | None = None
+    description: str = Field(default="Supplier payment settlement", min_length=1, max_length=500)
 
 class CustomerInvoicePostingInput(BaseModel):
     periodId: str
@@ -108,14 +116,35 @@ def record_journal(db, user, data: JournalInput):
         raise HTTPException(422, "Journal must have equal non-zero debit and credit totals.")
     period_id = _uuid_or_422(data.periodId, "period id")
     source_id = _uuid_or_422(data.sourceId, "source id") if data.sourceId else None
-    existing = db.execute("SELECT id,status FROM journal_headers WHERE tenant_id=%s AND idempotency_key=%s", (user["tenant_id"], data.idempotencyKey)).fetchone()
+    if data.sourceType == "settlement":
+        settlement = db.execute("SELECT id FROM settlements WHERE id=%s AND tenant_id=%s FOR UPDATE",
+                                (source_id, user["tenant_id"])).fetchone()
+        if not settlement:
+            raise HTTPException(404, "Settlement not found.")
+        linked = db.execute("""SELECT id,idempotency_key FROM journal_headers
+            WHERE tenant_id=%s AND source_type='settlement' AND source_id=%s""",
+            (user["tenant_id"], source_id)).fetchall()
+        if any(journal["idempotency_key"] != data.idempotencyKey for journal in linked):
+            raise HTTPException(409, "A journal already records this settlement.")
+    key_query = "SELECT id,status,source_type,source_id FROM journal_headers WHERE tenant_id=%s AND idempotency_key=%s"
+    key_params = (user["tenant_id"], data.idempotencyKey)
+    existing = db.execute(key_query, key_params).fetchone()
     if existing:
+        if data.sourceType == "settlement" and (existing["source_type"] != "settlement" or existing["source_id"] != source_id):
+            raise HTTPException(409, "The journal idempotency key belongs to a different source.")
         return {"id": str(existing["id"]), "status": existing["status"], "idempotent": True}
     period = db.execute("SELECT * FROM accounting_periods WHERE id=%s AND tenant_id=%s FOR UPDATE", (period_id, user["tenant_id"])).fetchone()
     if not period or period["status"] != "open" or not (period["starts_on"] <= data.journalDate <= period["ends_on"]):
         raise HTTPException(409, "Journal date must be inside an open accounting period.")
     header = db.execute("""INSERT INTO journal_headers(tenant_id,period_id,idempotency_key,source_type,source_id,journal_date,description,posted_by,status,posted_at)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'posted',now()) RETURNING id""", (user["tenant_id"], period_id, data.idempotencyKey, data.sourceType, source_id, data.journalDate, data.description, user["id"])).fetchone()
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'posted',now())
+        ON CONFLICT (tenant_id,idempotency_key) DO NOTHING RETURNING id""",
+        (user["tenant_id"], period_id, data.idempotencyKey, data.sourceType, source_id, data.journalDate, data.description, user["id"])).fetchone()
+    if header is None:
+        existing = db.execute(key_query, key_params).fetchone()
+        if data.sourceType == "settlement" and (existing["source_type"] != "settlement" or existing["source_id"] != source_id):
+            raise HTTPException(409, "The journal idempotency key belongs to a different source.")
+        return {"id": str(existing["id"]), "status": existing["status"], "idempotent": True}
     for number, line in enumerate(data.lines, 1):
         account_id = _uuid_or_422(line.accountId, "account id")
         if (line.debit > 0) == (line.credit > 0):
@@ -151,6 +180,131 @@ def post_supplier_bill(record_id: str, data: SupplierBillPostingInput, request: 
     result = post_journal(payload, request)
     result.update({"recordId": record_id, "documentId": str(record["document_id"]), "revision": record["revision_number"], "sourceCurrency": record["currency"]})
     return result
+
+def post_supplier_payment(transaction_id: str, data: SupplierPaymentPostingInput, request: Request):
+    user = require_workspace_user(request, {"local_admin"})
+    transaction_id = _uuid_or_422(transaction_id, "bank transaction id")
+
+    with connect() as db:
+        bank = db.execute("""SELECT id,direction,status,signed_amount_decimal,currency
+            FROM bank_transactions WHERE id=%s AND tenant_id=%s FOR UPDATE""",
+            (transaction_id, user["tenant_id"])).fetchone()
+        if not bank:
+            raise HTTPException(404, "Bank transaction not found.")
+        if bank["status"] == "ignored" or bank["direction"] != "money_out" or bank["signed_amount_decimal"] is None:
+            raise HTTPException(409, "Only a money-out bank transaction can post a supplier payment.")
+
+        settlement = db.execute("""SELECT id,direction,amount,currency,status
+            FROM settlements
+            WHERE tenant_id=%s AND source_type='bank_import' AND source_id=%s
+            FOR UPDATE""", (user["tenant_id"], transaction_id)).fetchone()
+        if not settlement or settlement["status"] != "recorded":
+            raise HTTPException(409, "A recorded settlement is required before posting the supplier payment.")
+        if settlement["direction"] != "money_out":
+            raise HTTPException(409, "The linked settlement is not a money-out payment.")
+
+        payment_amount = abs(bank["signed_amount_decimal"])
+        if payment_amount <= 0 or settlement["amount"] != payment_amount:
+            raise HTTPException(409, "The bank transaction and settlement amounts do not agree.")
+        currency = str(settlement["currency"] or "").strip().upper()
+        bank_currency = str(bank["currency"] or "").strip().upper()
+        if not currency or currency != bank_currency:
+            raise HTTPException(409, "The bank transaction and settlement currencies do not agree.")
+
+        idempotency_key = f"supplier-payment:{settlement['id']}"
+        existing_journals = db.execute("""SELECT id,status,source_type,source_id FROM journal_headers
+            WHERE tenant_id=%s AND ((source_type='settlement' AND source_id=%s) OR idempotency_key=%s)
+            FOR UPDATE""", (user["tenant_id"], settlement["id"], idempotency_key)).fetchall()
+        if len(existing_journals) > 1:
+            raise HTTPException(409, "Multiple journals are linked to this supplier payment; review the ledger before continuing.")
+        if existing_journals:
+            existing = existing_journals[0]
+            if existing["source_type"] != "settlement" or existing["source_id"] != settlement["id"]:
+                raise HTTPException(409, "A journal already uses this supplier payment idempotency key.")
+            if existing["status"] != "posted":
+                raise HTTPException(409, "The supplier payment journal exists but is not posted; review it before continuing.")
+            return {
+                "id": str(existing["id"]), "status": existing["status"], "idempotent": True,
+                "recordId": None, "settlementId": str(settlement["id"]),
+                "amount": str(payment_amount), "currency": currency,
+            }
+
+        if currency != "MYR":
+            raise HTTPException(409, "Supplier payment journal posting currently supports MYR only; foreign-currency conversion is not configured.")
+
+        match = db.execute("""SELECT c.record_id,r.category,COALESCE(r.amount_due,r.total_amount) AS amount_due,r.currency,
+                r.is_current,r.validation_status
+            FROM reconciliation_candidates c
+            JOIN standardised_records r ON r.id=c.record_id AND r.tenant_id=c.tenant_id
+            WHERE c.tenant_id=%s AND c.bank_transaction_id=%s AND c.status='confirmed'
+            FOR UPDATE OF r""", (user["tenant_id"], transaction_id)).fetchone()
+        if not match:
+            raise HTTPException(409, "Confirm a reconciliation match to an approved supplier bill first.")
+        if match["category"] != "accounts_payable":
+            raise HTTPException(422, "Supplier payment posting requires an accounts-payable record.")
+        if not match["is_current"] or match["validation_status"] != "passed":
+            raise HTTPException(409, "Only the current approved supplier bill can receive a payment.")
+        if match["amount_due"] is None or match["amount_due"] <= 0:
+            raise HTTPException(409, "The approved supplier bill must have a positive amount due.")
+        if str(match["currency"] or "").strip().upper() != currency:
+            raise HTTPException(409, "The supplier bill and settlement currencies do not agree.")
+        if payment_amount > match["amount_due"]:
+            raise HTTPException(409, "The payment cannot exceed the approved supplier bill amount due.")
+
+        allocations = db.execute("""SELECT COUNT(DISTINCT record_id) FILTER (WHERE status='active') record_count,
+                COALESCE(SUM(amount) FILTER (WHERE status='active'),0) allocated_amount,
+                COALESCE(SUM(amount) FILTER (WHERE status='active' AND record_id=%s),0) record_amount
+            FROM settlement_allocations a
+            WHERE a.tenant_id=%s AND a.settlement_id=%s
+                AND NOT EXISTS (
+                    SELECT 1 FROM settlement_allocations reversal
+                    WHERE reversal.tenant_id=a.tenant_id AND reversal.reverses_allocation_id=a.id
+                )""",
+            (match["record_id"], user["tenant_id"], settlement["id"])).fetchone()
+        if (allocations["record_count"] != 1
+                or allocations["allocated_amount"] != payment_amount
+                or allocations["record_amount"] != payment_amount):
+            raise HTTPException(409, "The settlement must be fully allocated to this supplier bill before posting.")
+
+        if not data.periodId or not data.payableAccountId or not data.bankAccountId or not data.journalDate:
+            raise HTTPException(422, "Choose an open accounting period, payable account, bank account, and journal date.")
+        payable_account_id = _uuid_or_422(data.payableAccountId, "payable account id")
+        bank_account_id = _uuid_or_422(data.bankAccountId, "bank account id")
+        payable_account = db.execute("""SELECT account_type,is_active FROM ledger_accounts
+            WHERE id=%s AND tenant_id=%s FOR SHARE""", (payable_account_id, user["tenant_id"])).fetchone()
+        bank_account = db.execute("""SELECT account_type,is_active FROM ledger_accounts
+            WHERE id=%s AND tenant_id=%s FOR SHARE""", (bank_account_id, user["tenant_id"])).fetchone()
+        if not payable_account or not payable_account["is_active"] or payable_account["account_type"] != "liability":
+            raise HTTPException(422, "Choose an active liability account for accounts payable.")
+        if not bank_account or not bank_account["is_active"] or bank_account["account_type"] != "asset":
+            raise HTTPException(422, "Choose an active asset account for the bank or cash account.")
+
+        result = record_journal(db, user, JournalInput(
+            periodId=data.periodId,
+            idempotencyKey=idempotency_key,
+            sourceType="settlement",
+            sourceId=str(settlement["id"]),
+            journalDate=data.journalDate,
+            description=data.description,
+            lines=[
+                JournalLineInput(accountId=str(payable_account_id), debit=payment_amount,
+                                 description="Accounts payable settlement", sourceField="supplier_payment"),
+                JournalLineInput(accountId=str(bank_account_id), credit=payment_amount,
+                                 description="Bank payment", sourceField="supplier_payment"),
+            ],
+        ))
+        if not result["idempotent"]:
+            db.execute("""INSERT INTO audit_logs(tenant_id,user_id,user_name,role,action,resource,details)
+                VALUES (%s,%s,%s,%s,'ledger.supplier_payment_posted',%s,%s)""",
+                (user["tenant_id"], user["id"], user["name"], user["role"], result["id"],
+                 json.dumps({"transactionId": str(transaction_id), "settlementId": str(settlement["id"]),
+                             "recordId": str(match["record_id"])})))
+
+    return {
+        **result,
+        "recordId": str(match["record_id"]), "settlementId": str(settlement["id"]),
+        "amount": str(payment_amount), "currency": currency,
+    }
 
 def post_customer_invoice(record_id: str, data: CustomerInvoicePostingInput, request: Request):
     user = require_workspace_user(request, {"local_admin"})
@@ -249,6 +403,173 @@ def get_trial_balance(request: Request):
         rows = db.execute("SELECT * FROM internal_trial_balance WHERE tenant_id=%s ORDER BY code", (user["tenant_id"],)).fetchall()
     return [{"accountId": str(r["account_id"]), "code": r["code"], "name": r["name"], "accountType": r["account_type"], "totalDebit": str(r["total_debit"]), "totalCredit": str(r["total_credit"]), "netBalance": str(r["net_balance"])} for r in rows]
 
+def get_profit_and_loss_dashboard(request: Request, fromDate: date, toDate: date, basis: str = "accrual", granularity: str = "month"):
+    user = require_workspace_user(request, {"local_admin", "accountant"})
+    if toDate < fromDate:
+        raise HTTPException(422, "The report end date must be on or after the start date.")
+    if basis not in {"accrual", "cash"}:
+        raise HTTPException(422, "Basis must be accrual or cash.")
+    if granularity not in {"day", "week", "month"}:
+        raise HTTPException(422, "Granularity must be day, week, or month.")
+
+    if basis == "accrual":
+        pnl_sql = """SELECT date_trunc(%s,j.journal_date)::date AS period,
+            COALESCE(sr.currency,settlement.currency,'UNSPECIFIED') AS currency,
+            a.account_type,a.code AS account_code,a.name AS account_name,
+            SUM(CASE WHEN a.account_type='income' THEN l.credit-l.debit ELSE l.debit-l.credit END) AS amount
+            FROM journal_headers j
+            JOIN journal_lines l ON l.journal_id=j.id AND l.tenant_id=j.tenant_id
+            JOIN ledger_accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+            LEFT JOIN journal_headers original ON original.id=j.reversed_journal_id AND original.tenant_id=j.tenant_id
+            LEFT JOIN LATERAL (
+                SELECT record.currency
+                FROM standardised_records record
+                WHERE record.tenant_id=j.tenant_id
+                    AND record.document_id=CASE WHEN j.source_type='reversal' THEN original.source_id ELSE j.source_id END
+                    AND COALESCE(original.source_type,j.source_type) IN ('document','adjustment')
+                    AND COALESCE(original.idempotency_key,j.idempotency_key) IN (
+                        'supplier-bill:'||record.id::text||':revision:'||record.revision_number::text,
+                        'customer-invoice:'||record.id::text||':revision:'||record.revision_number::text,
+                        'adjustment:credit_note:'||record.id::text||':revision:'||record.revision_number::text,
+                        'adjustment:debit_note:'||record.id::text||':revision:'||record.revision_number::text)
+                LIMIT 1
+            ) sr ON true
+            LEFT JOIN settlements settlement ON settlement.tenant_id=j.tenant_id
+                AND settlement.id=CASE WHEN j.source_type='reversal' AND original.source_type='settlement'
+                    THEN original.source_id WHEN j.source_type='settlement' THEN j.source_id END
+            WHERE j.tenant_id=%s AND j.status IN ('posted','reversed')
+                AND j.journal_date BETWEEN %s AND %s AND a.account_type IN ('income','expense')
+                AND COALESCE(original.idempotency_key,j.idempotency_key) NOT LIKE 'opening-balances:%%'
+            GROUP BY period,COALESCE(sr.currency,settlement.currency,'UNSPECIFIED'),a.account_type,a.code,a.name
+            ORDER BY period,COALESCE(sr.currency,settlement.currency,'UNSPECIFIED'),a.account_type,a.code"""
+        pnl_params = (granularity, user["tenant_id"], fromDate, toDate)
+    else:
+        pnl_sql = """WITH active_allocations AS (
+                SELECT a.id,a.settlement_id,a.record_id,a.amount
+                FROM settlement_allocations a
+                WHERE a.tenant_id=%s AND a.status='active'
+                    AND NOT EXISTS (SELECT 1 FROM settlement_allocations reversal
+                        WHERE reversal.tenant_id=a.tenant_id AND reversal.reverses_allocation_id=a.id)
+            ),
+            allocation_rows AS (
+                SELECT date_trunc(%s,s.settlement_date)::date AS period,s.currency,
+                    CASE WHEN r.category='accounts_receivable' THEN 'income' ELSE 'expense' END AS account_type,
+                    CASE WHEN r.category='accounts_receivable' THEN 'ALLOC-AR' ELSE 'ALLOC-AP' END AS account_code,
+                    CASE WHEN r.category='accounts_receivable' THEN 'Allocated customer receipts' ELSE 'Allocated supplier payments' END AS account_name,
+                    SUM(a.amount) AS amount
+                FROM active_allocations a
+                JOIN settlements s ON s.id=a.settlement_id AND s.tenant_id=%s AND s.status='recorded'
+                JOIN standardised_records r ON r.id=a.record_id AND r.tenant_id=s.tenant_id
+                WHERE r.is_current AND r.validation_status='passed' AND s.settlement_date BETWEEN %s AND %s
+                    AND ((r.category='accounts_receivable' AND s.direction='money_in')
+                        OR (r.category='accounts_payable' AND s.direction='money_out'))
+                GROUP BY period,s.currency,account_type,account_code,account_name
+            ),
+            bank_allocated AS (
+                SELECT s.source_id AS bank_transaction_id,SUM(a.amount) AS allocated
+                FROM active_allocations a
+                JOIN settlements s ON s.id=a.settlement_id AND s.tenant_id=%s
+                    AND s.source_type='bank_import' AND s.status='recorded'
+                GROUP BY s.source_id
+            ),
+            latest_coding AS (
+                SELECT DISTINCT ON (d.bank_transaction_id) d.bank_transaction_id,d.account_id,d.decision
+                FROM bank_coding_decisions d
+                WHERE d.tenant_id=%s
+                ORDER BY d.bank_transaction_id,d.created_at DESC,d.id DESC
+            ),
+            coded_rows AS (
+                SELECT date_trunc(%s,b.posted_date)::date AS period,COALESCE(b.currency,'UNSPECIFIED') AS currency,
+                    CASE WHEN account.account_class='revenue' THEN 'income' ELSE 'expense' END AS account_type,
+                    account.code AS account_code,account.name AS account_name,
+                    SUM((CASE WHEN account.account_class='revenue' AND b.direction='money_out' THEN -1
+                        WHEN account.account_class IN ('cogs','expense') AND b.direction='money_in' THEN -1
+                        ELSE 1 END) *
+                        GREATEST(ABS(b.signed_amount_decimal)-COALESCE(allocated.allocated,0),0)) AS amount
+                FROM bank_transactions b
+                JOIN latest_coding coding ON coding.bank_transaction_id=b.id AND coding.decision<>'cleared'
+                JOIN coa_accounts account ON account.id=coding.account_id AND account.tenant_id=b.tenant_id
+                LEFT JOIN bank_allocated allocated ON allocated.bank_transaction_id=b.id
+                WHERE b.tenant_id=%s AND b.status<>'ignored' AND b.posted_date BETWEEN %s AND %s
+                    AND account.account_class IN ('revenue','cogs','expense')
+                    AND GREATEST(ABS(b.signed_amount_decimal)-COALESCE(allocated.allocated,0),0)>0
+                GROUP BY period,COALESCE(b.currency,'UNSPECIFIED'),account_type,account.code,account.name
+            )
+            SELECT period,currency,account_type,account_code,account_name,amount FROM allocation_rows
+            UNION ALL
+            SELECT period,currency,account_type,account_code,account_name,amount FROM coded_rows
+            ORDER BY period,currency,account_type,account_code"""
+        pnl_params = (user["tenant_id"], granularity, user["tenant_id"], fromDate, toDate,
+            user["tenant_id"], user["tenant_id"], granularity, user["tenant_id"], fromDate, toDate)
+
+    with connect() as db:
+        rows = db.execute(pnl_sql, pnl_params).fetchall()
+        aging_rows = db.execute("""WITH active_allocations AS (
+                SELECT a.id,a.record_id,a.amount
+                FROM settlement_allocations a
+                JOIN settlements s ON s.id=a.settlement_id AND s.tenant_id=a.tenant_id AND s.status='recorded'
+                WHERE a.tenant_id=%s AND a.status='active'
+                    AND NOT EXISTS (SELECT 1 FROM settlement_allocations reversal
+                        WHERE reversal.tenant_id=a.tenant_id AND reversal.reverses_allocation_id=a.id)
+            ), allocated AS (
+                SELECT record_id,SUM(amount) AS amount FROM active_allocations GROUP BY record_id
+            ), outstanding AS (
+                SELECT r.id,r.category,r.currency,r.due_date,
+                    GREATEST(COALESCE(r.amount_due,r.total_amount)-COALESCE(allocated.amount,0),0) AS balance
+                FROM standardised_records r
+                LEFT JOIN allocated ON allocated.record_id=r.id
+                WHERE r.tenant_id=%s AND r.is_current AND r.validation_status='passed'
+                    AND r.category IN ('accounts_receivable','accounts_payable')
+                    AND COALESCE(r.amount_due,r.total_amount)>0
+            )
+            SELECT category,currency,
+                CASE WHEN due_date IS NULL THEN 'no_due_date'
+                    WHEN due_date >= (now() AT TIME ZONE 'Asia/Kuala_Lumpur')::date THEN 'not_due'
+                    WHEN due_date >= (now() AT TIME ZONE 'Asia/Kuala_Lumpur')::date-30 THEN '1_30_days'
+                    WHEN due_date >= (now() AT TIME ZONE 'Asia/Kuala_Lumpur')::date-60 THEN '31_60_days'
+                    WHEN due_date >= (now() AT TIME ZONE 'Asia/Kuala_Lumpur')::date-90 THEN '61_90_days'
+                    ELSE 'over_90_days' END AS age_bucket,
+                SUM(balance) AS amount,COUNT(*) FILTER (WHERE balance>0) AS item_count
+            FROM outstanding WHERE balance>0
+            GROUP BY category,currency,age_bucket ORDER BY category,currency,age_bucket""",
+            (user["tenant_id"], user["tenant_id"])).fetchall()
+
+    period_totals = {}
+    currency_totals = {}
+    account_totals = {}
+    for row in rows:
+        currency = row["currency"]
+        account_type = row["account_type"]
+        amount = Decimal(row["amount"] or 0)
+        period_key = (str(row["period"]), currency)
+        period_total = period_totals.setdefault(period_key, {"period": str(row["period"]), "currency": currency, "income": Decimal(0), "expense": Decimal(0)})
+        currency_total = currency_totals.setdefault(currency, {"currency": currency, "income": Decimal(0), "expense": Decimal(0)})
+        account_key = (currency, account_type, row["account_code"], row["account_name"])
+        account_total = account_totals.setdefault(account_key, {"currency": currency, "accountType": account_type, "accountCode": row["account_code"], "accountName": row["account_name"], "amount": Decimal(0)})
+        period_total[account_type] += amount
+        currency_total[account_type] += amount
+        account_total["amount"] += amount
+
+    def amount_text(value):
+        return format(value.quantize(Decimal("0.01")), "f")
+
+    periods = [{"period": row["period"], "currency": row["currency"], "income": amount_text(row["income"]),
+        "expenses": amount_text(row["expense"]), "netProfit": amount_text(row["income"]-row["expense"])}
+        for _, row in sorted(period_totals.items())]
+    totals = [{"currency": row["currency"], "income": amount_text(row["income"]),
+        "expenses": amount_text(row["expense"]), "netProfit": amount_text(row["income"]-row["expense"])}
+        for _, row in sorted(currency_totals.items())]
+    accounts = [{"currency": row["currency"], "accountType": row["accountType"], "accountCode": row["accountCode"],
+        "accountName": row["accountName"], "amount": amount_text(row["amount"])}
+        for _, row in sorted(account_totals.items())]
+    aging = [{"category": row["category"], "currency": row["currency"], "bucket": row["age_bucket"],
+        "amount": amount_text(Decimal(row["amount"] or 0)), "itemCount": int(row["item_count"])}
+        for row in aging_rows]
+    return {"basis": basis, "fromDate": fromDate.isoformat(), "toDate": toDate.isoformat(),
+        "granularity": granularity, "periods": periods, "totals": totals, "accounts": accounts, "aging": aging,
+        "cashBasisNote": "This cash estimate uses allocated settlements and classified bank transactions. Allocations appear as gross amounts." if basis == "cash" else None,
+        "accrualNote": "Accrual results use posted journals and their reversals. Opening balances are excluded." if basis == "accrual" else None}
+
 def list_ledger_journals(request: Request):
     user = require_workspace_user(request, {"super_admin", "local_admin", "accountant"})
     with connect() as db:
@@ -292,11 +613,23 @@ def reverse_allocation(allocation_id: str, request: Request):
     user = require_workspace_user(request, {"local_admin", "accountant"})
     allocation_id = _uuid_or_422(allocation_id, "allocation id")
     with connect() as db:
-        original = db.execute("SELECT * FROM settlement_allocations WHERE id=%s AND tenant_id=%s AND status='active' FOR UPDATE", (allocation_id, user["tenant_id"])).fetchone()
+        original = db.execute("""SELECT a.* FROM settlement_allocations a
+            JOIN settlements s ON s.id=a.settlement_id AND s.tenant_id=a.tenant_id
+            WHERE a.id=%s AND a.tenant_id=%s AND a.status='active' FOR UPDATE OF s""",
+            (allocation_id, user["tenant_id"])).fetchone()
         if not original: raise HTTPException(404, "Active allocation not found.")
+        require_no_posted_settlement_journal(db, user["tenant_id"], original["settlement_id"])
         row = db.execute("""INSERT INTO settlement_allocations(tenant_id,settlement_id,record_id,amount,status,created_by,reversed_at,reversal_reason,reverses_allocation_id)
             VALUES (%s,%s,%s,%s,'reversed',%s,now(),'Allocation undone',%s) RETURNING *""", (user["tenant_id"], original["settlement_id"], original["record_id"], original["amount"], user["id"], original["id"])).fetchone()
     return {"id": str(row["id"]), "reversedAllocationId": allocation_id, "status": "reversed"}
+
+
+def require_no_posted_settlement_journal(db, tenant_id, settlement_id):
+    journal = db.execute("""SELECT id FROM journal_headers
+        WHERE tenant_id=%s AND source_type='settlement' AND source_id=%s AND status='posted'""",
+        (tenant_id, settlement_id)).fetchone()
+    if journal:
+        raise HTTPException(409, "Reverse the posted settlement journal before undoing the allocation.")
 
 def list_chart_of_accounts(request: Request, includeInactive: bool = False):
     user = require_workspace_user(request, {"super_admin", "local_admin", "accountant"})
@@ -384,6 +717,8 @@ def register(router, handlers):
     router.add_api_route('/api/ledger/allocations', create_allocation, methods=['POST'], status_code=201)
     router.add_api_route('/api/ledger/allocations/{allocation_id}/reverse', reverse_allocation, methods=['POST'], status_code=201)
     router.add_api_route('/api/ledger/trial-balance', get_trial_balance, methods=['GET'])
+    router.add_api_route('/api/ledger/journals/from-supplier-payment/{transaction_id}', post_supplier_payment, methods=['POST'], status_code=201)
+    router.add_api_route('/api/ledger/profit-and-loss', get_profit_and_loss_dashboard, methods=['GET'])
     router.add_api_route('/api/ledger/journals', list_ledger_journals, methods=['GET'])
     router.add_api_route('/api/ledger/allocations', list_allocations, methods=['GET'])
     router.add_api_route('/api/chart-of-accounts', list_chart_of_accounts, methods=['GET'])

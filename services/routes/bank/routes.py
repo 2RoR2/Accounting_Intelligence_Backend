@@ -1,5 +1,6 @@
 from __future__ import annotations
 from decimal import Decimal
+from services.routes.accounting.routes import require_no_posted_settlement_journal
 from main import *
 from main import _lock_upload_identity, _processing_error, _lock_workspace_document, _require_current_extraction, _authorised_document, _bank_row_values, _bank_transaction_dto, _uuid_or_422, _account_dto, _cost_centre_dto
 import hashlib
@@ -605,7 +606,7 @@ def decide_reconciliation(data: ReconciliationDecisionInput, request: Request):
             FROM reconciliation_candidates c
             JOIN bank_transactions b ON b.id=c.bank_transaction_id AND b.tenant_id=c.tenant_id
             JOIN standardised_records r ON r.id=c.record_id AND r.tenant_id=c.tenant_id
-            WHERE c.id=%s AND c.tenant_id=%s""", (candidate_id, user["tenant_id"])).fetchone()
+            WHERE c.id=%s AND c.tenant_id=%s FOR UPDATE OF b""", (candidate_id, user["tenant_id"])).fetchone()
         if not candidate:
             raise HTTPException(404, "Reconciliation candidate not found.")
         if data.decision == "confirmed" and not direction_matches(candidate['category'], candidate['direction']):
@@ -628,20 +629,27 @@ def decide_reconciliation(data: ReconciliationDecisionInput, request: Request):
                 DO UPDATE SET source_id=EXCLUDED.source_id
                 RETURNING id""", (user["tenant_id"], f"BANK-{candidate['bank_transaction_id']}", candidate["posted_date"], candidate["direction"], abs(candidate["signed_amount_decimal"]), candidate["currency"], candidate["bank_transaction_id"], user["id"])).fetchone()
             settlement_id = str(settlement["id"])
-            existing_allocation = db.execute("""SELECT id FROM settlement_allocations
-                WHERE tenant_id=%s AND settlement_id=%s AND record_id=%s AND status='active'""", (user["tenant_id"], settlement["id"], candidate["record_id"])).fetchone()
+            existing_allocation = db.execute("""SELECT a.id FROM settlement_allocations a
+                WHERE a.tenant_id=%s AND a.settlement_id=%s AND a.record_id=%s AND a.status='active'
+                  AND NOT EXISTS (SELECT 1 FROM settlement_allocations reversal
+                    WHERE reversal.tenant_id=a.tenant_id AND reversal.reverses_allocation_id=a.id)""",
+                (user["tenant_id"], settlement["id"], candidate["record_id"])).fetchone()
             if not existing_allocation:
                 db.execute("""INSERT INTO settlement_allocations
                     (tenant_id,settlement_id,record_id,amount,created_by)
                     VALUES (%s,%s,%s,%s,%s)""", (user["tenant_id"], settlement["id"], candidate["record_id"], abs(candidate["signed_amount_decimal"]), user["id"]))
         elif data.decision == 'reversed':
             settlement = db.execute("""SELECT id FROM settlements
-                WHERE tenant_id=%s AND source_type='bank_import' AND source_id=%s""", (user["tenant_id"], candidate["bank_transaction_id"])).fetchone()
+                WHERE tenant_id=%s AND source_type='bank_import' AND source_id=%s FOR UPDATE""", (user["tenant_id"], candidate["bank_transaction_id"])).fetchone()
             if settlement:
+                require_no_posted_settlement_journal(db, user["tenant_id"], settlement["id"])
                 settlement_id = str(settlement["id"])
-                allocation = db.execute("""SELECT id,amount FROM settlement_allocations
-                    WHERE tenant_id=%s AND settlement_id=%s AND record_id=%s AND status='active'
-                    ORDER BY created_at DESC FOR UPDATE""", (user["tenant_id"], settlement["id"], candidate["record_id"])).fetchone()
+                allocation = db.execute("""SELECT a.id,a.amount FROM settlement_allocations a
+                    WHERE a.tenant_id=%s AND a.settlement_id=%s AND a.record_id=%s AND a.status='active'
+                      AND NOT EXISTS (SELECT 1 FROM settlement_allocations reversal
+                        WHERE reversal.tenant_id=a.tenant_id AND reversal.reverses_allocation_id=a.id)
+                    ORDER BY a.created_at DESC FOR UPDATE OF a""",
+                    (user["tenant_id"], settlement["id"], candidate["record_id"])).fetchone()
                 if allocation:
                     db.execute("""INSERT INTO settlement_allocations
                         (tenant_id,settlement_id,record_id,amount,status,created_by,reversed_at,reversal_reason,reverses_allocation_id)
