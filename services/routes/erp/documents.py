@@ -178,10 +178,10 @@ def _totals(document_type, lines: list[dict], amount):
         debit = sum((posting.cents(l.get("debit")) for l in lines), Decimal("0"))
         return debit, Decimal("0"), debit
     if lines and document_type not in MONEY_ONLY:
+        if any(posting.line_net(l) < 0 for l in lines):
+            raise HTTPException(422, "A line discount cannot be more than the line amount.")
         subtotal = sum((posting.line_net(l) for l in lines), Decimal("0"))
         tax = sum((posting.cents(l.get("tax")) for l in lines), Decimal("0"))
-        if subtotal < 0:
-            raise HTTPException(422, "A line discount cannot be more than the line amount.")
         return subtotal, tax, subtotal + tax
     total = posting.cents(amount or 0)
     return total, Decimal("0"), total
@@ -264,7 +264,8 @@ def _check_duplicate_of_scanned(db, tenant_id, doc):
     party = "vendor_id" if doc["document_type"] == "bill" else None
     rows = db.execute("""SELECT r.record_code,r.vendor_id,r.supplier_name,r.buyer_name FROM standardised_records r
         WHERE r.tenant_id=%s AND r.is_current AND r.validation_status='passed' AND r.category=%s
-            AND lower(btrim(r.invoice_number))=lower(btrim(%s))""", (tenant_id, category, number)).fetchall()
+            AND lower(btrim(COALESCE(NULLIF(btrim(r.invoice_number),''), r.reference_number)))=lower(btrim(%s))""",
+                      (tenant_id, category, number)).fetchall()
     from validation.matching.vendor_matching import normalize_vendor_name
     wanted = normalize_vendor_name(doc["contact_name"] or "")
     for r in rows:
@@ -302,17 +303,25 @@ def _apply_allocations(db, user, doc):
                 VALUES (%s,%s,%s,%s,%s)""", (user["tenant_id"], doc["id"], target["id"], amount, user["id"]))
         else:
             category, kinds = posting.SCANNED_TYPES[target_type]
-            record = db.execute("""SELECT r.id FROM standardised_records r JOIN documents d ON d.id=r.document_id AND d.tenant_id=r.tenant_id
+            record = db.execute("""SELECT r.id,r.vendor_id,r.supplier_name,r.buyer_name,r.record_code FROM standardised_records r
+                JOIN documents d ON d.id=r.document_id AND d.tenant_id=r.tenant_id
                 WHERE r.id=%s AND r.tenant_id=%s AND r.is_current AND r.validation_status='passed' AND r.category=%s AND d.kind = ANY(%s)""",
                                 (a["targetId"], user["tenant_id"], category, list(kinds))).fetchone()
             if not record:
                 raise HTTPException(409, f"Allocate only to a current approved scanned {target_type}.")
+            if category == "accounts_payable":
+                same = (record["vendor_id"] and record["vendor_id"] == doc["vendor_id"]) or posting._same_party(record["supplier_name"], doc["contact_name"])
+            else:
+                same = posting._same_party(record["buyer_name"], doc["contact_name"])
+            if not same:
+                raise HTTPException(422, f"The scanned {target_type} {record['record_code']} belongs to another contact.")
             if settlement_id is None:
+                scanned_total = sum((posting.cents(x["amount"]) for x in allocations if x["source"] == "scanned"), Decimal("0"))
                 settlement_id = db.execute("""INSERT INTO settlements(tenant_id,settlement_ref,settlement_date,direction,amount,currency,
                         source_type,source_id,created_by)
                     VALUES (%s,%s,%s,%s,%s,%s,'manual_record',%s,%s) RETURNING id""",
                                            (user["tenant_id"], f"ERP-{doc['document_number']}-{str(doc['id'])[:8]}", doc["document_date"],
-                                            "money_in" if doc["document_type"] == "payment" else "money_out", doc["total_amount"],
+                                            "money_in" if doc["document_type"] == "payment" else "money_out", scanned_total,
                                             doc["currency"], doc["id"], user["id"])).fetchone()["id"]
             try:
                 db.execute("SAVEPOINT erp_allocation")
@@ -342,6 +351,10 @@ def _make_ready(db, user, doc):
         if doc["currency"] != "MYR":
             raise HTTPException(409, "Posting supports MYR only; foreign-currency conversion is not configured.")
         _check_duplicate_of_scanned(db, user["tenant_id"], doc)
+        scanned = sorted(a["targetId"] for a in (doc["payload"] or {}).get("allocations", []) if a.get("source") == "scanned")
+        if scanned:  # same lock order as scanned posting: records before the period (Codex review P2)
+            db.execute("SELECT id FROM standardised_records WHERE tenant_id=%s AND id = ANY(%s) ORDER BY id FOR UPDATE",
+                       (user["tenant_id"], scanned))
         plan = posting.plan_for_document(db, user["tenant_id"], doc)
         result = posting.post_plan(db, user, plan, key=f"erp:{doc['id']}", source_type="erp_document", source_id=doc["id"],
                                    journal_date=doc["document_date"],
@@ -441,29 +454,34 @@ def _scanned_rows(db, tenant_id, document_type, *, search=None, contact=None, da
                   AND NOT EXISTS (SELECT 1 FROM settlement_allocations u WHERE u.tenant_id=a.tenant_id AND u.reverses_allocation_id=a.id)),0) AS allocated
         FROM standardised_records r JOIN documents d ON d.id=r.document_id AND d.tenant_id=r.tenant_id
         WHERE r.tenant_id=%s AND r.is_current AND r.validation_status='passed' AND r.category=%s AND d.kind = ANY(%s)
-            AND (%s::uuid IS NULL OR r.vendor_id=%s::uuid)
+            AND (%s::uuid IS NULL OR (r.category='accounts_payable' AND r.vendor_id=%s::uuid)
+                 OR (r.category='accounts_receivable'
+                     AND lower(btrim(COALESCE(r.buyer_name,''))) = lower(btrim((SELECT customer_name FROM customers WHERE id=%s::uuid)))))
             AND (%s::date IS NULL OR r.invoice_date >= %s::date) AND (%s::date IS NULL OR r.invoice_date <= %s::date)
             AND (%s::text IS NULL OR COALESCE(r.invoice_number,'') ILIKE %s OR COALESCE(r.supplier_name,'') ILIKE %s
                  OR COALESCE(r.buyer_name,'') ILIKE %s OR r.record_code ILIKE %s)
         ORDER BY r.invoice_date DESC NULLS LAST LIMIT 1000""",
-                      (tenant_id, category, list(kinds), contact, contact, date_from, date_from, date_to, date_to,
+                      (tenant_id, category, list(kinds), contact, contact, contact, date_from, date_from, date_to, date_to,
                        search, *([f"%{search}%"] * 4 if search else [None] * 4))).fetchall()
     result = []
     for r in rows:
         journal = posting.scanned_posted_journal(db, tenant_id, r)
-        state = "ready" if journal else "approved"
+        posted = bool(journal and journal["status"] == "posted")
+        state = "ready" if posted else "approved"  # a reversed journal no longer counts as posted
         if status and status != state:
             continue
         total = Decimal(r["total_amount"] or 0)
+        due = Decimal(r["amount_due"] if r["amount_due"] is not None else total)
         result.append({"id": str(r["id"]), "source": "scanned", "type": document_type, "number": r["invoice_number"] or r["record_code"],
                        "recordCode": r["record_code"], "documentId": str(r["document_id"]), "fileName": r["original_filename"],
-                       "contactId": str(r["vendor_id"]) if r["vendor_id"] else None,
+                       "contactId": str(r["vendor_id"]) if r["vendor_id"] and category == "accounts_payable" else None,
                        "contactName": r["supplier_name"] if category == "accounts_payable" else r["buyer_name"],
                        "status": state, "documentDate": str(r["invoice_date"]) if r["invoice_date"] else None,
                        "dueDate": str(r["due_date"]) if r["due_date"] else None, "currency": r["currency"],
                        "referenceNo": r["reference_number"], "subtotal": money(r["subtotal"]), "taxAmount": money(r["tax_amount"]),
-                       "amount": money(total), "outstanding": money(max(total - Decimal(r["allocated"]), Decimal("0"))),
-                       "posts": True, "posted": bool(journal), "journalId": str(journal["id"]) if journal else None,
+                       "amount": money(total), "outstanding": money(max(due - Decimal(r["allocated"]), Decimal("0"))),
+                       "posts": True, "posted": posted, "reversed": bool(journal and journal["status"] == "reversed"),
+                       "journalId": str(journal["id"]) if journal else None,
                        "createdAt": str(r["created_at"]), "updatedAt": str(r["created_at"])})
     return result
 
@@ -588,13 +606,13 @@ def _copy(db, user, source, target_type, link_type):
     payload.pop("allocations", None)
     amount = source["total_amount"]
     vendor_id, customer_id = source["vendor_id"], source["customer_id"]
-    if target_type in MONEY_ONLY:  # invoice -> payment: the outstanding amount, allocated to the invoice
+    if link_type == "transfer" and target_type in MONEY_ONLY:  # invoice -> payment: the outstanding amount, allocated to it
         amount = typed_outstanding(db, user["tenant_id"], source["id"])
         if amount <= 0:
             raise HTTPException(409, f"{source['document_number']} has nothing outstanding.")
         payload = {"lines": [], "tags": payload.get("tags", []), "fields": {},
                    "allocations": [{"targetId": str(source["id"]), "source": "typed", "amount": money(amount)}]}
-    elif target_type in {"credit-note", "purchase-credit-note"}:
+    elif link_type == "transfer" and target_type in {"credit-note", "purchase-credit-note"}:
         payload["allocations"] = [{"targetId": str(source["id"]), "source": "typed", "amount": money(source["total_amount"])}]
     payload[f"{link_type}From"] = str(source["id"])
     subtotal, tax, total = _totals(target_type, payload.get("lines", []), amount)
@@ -686,6 +704,7 @@ def post_scanned_record(record_id: str, data: ScannedPostInput, request: Request
             return {"id": str(existing["id"]), "status": existing["status"], "idempotent": True, "recordId": str(record_id)}
         if str(record["currency"]).strip().upper() != "MYR":
             raise HTTPException(409, "Posting supports MYR only; foreign-currency conversion is not configured.")
+        posting.refuse_if_typed_copy(db, user["tenant_id"], record)
         on = data.journalDate or record["invoice_date"]
         if not on:
             raise HTTPException(422, "Choose a journal date; the document has no date.")

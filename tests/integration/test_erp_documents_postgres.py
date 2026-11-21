@@ -381,3 +381,74 @@ def test_record_only_types_and_numbering(company):
     assert copy['status'] == 'draft' and copy['number'] == 'SOX-003' and len(copy['lines']) == 2
     ok(call('DELETE', f"/api/erp/documents/sales-order/{copy['id']}", admin))
     assert journal_count(connect, ids) == 0
+
+
+def test_review_fixes_control_accounts_reversals_duplicates_and_cash_report(company):
+    """Codex review of L2-L4: each P1 and the cash-basis P2."""
+    connect, ids = company
+    admin = ids['admin']
+    # The invoice posts to 1100; then the default receivable changes to 1110. Its payment must still clear 1100.
+    invoice = ok(call('POST', '/api/erp/documents/invoice', admin, json={**invoice_body(ids), 'status': 'ready'}), 201)
+    with connect() as db:
+        other_ar = db.execute("INSERT INTO ledger_accounts(tenant_id,code,name,account_type) VALUES (%s,'1110','Other Receivables','asset') RETURNING id",
+                              (ids['tenant'],)).fetchone()['id']
+    ok(call('PUT', '/api/erp/posting-accounts', admin, json={'accounts': {'receivable': str(other_ar)}}))
+    payment = ok(call('POST', '/api/erp/documents/payment', admin, json={
+        'contactId': str(ids['customer']), 'documentDate': '2026-08-20', 'amount': '400.00', 'bankAccountId': str(ids['bank']),
+        'allocations': [{'targetId': invoice['id'], 'amount': '315.50'}], 'status': 'ready'}), 201)
+    assert shape(connect, payment['journalId']) == [
+        ('1010', Decimal('400.00'), 0), ('1100', 0, Decimal('315.50')), ('1110', 0, Decimal('84.50'))]
+
+    # A typed document's journal is reversed by voiding the document, not from the ledger.
+    refused = call('POST', f"/api/ledger/journals/{payment['journalId']}/reverse", admin)
+    assert refused.status_code == 409 and 'Void the document' in refused.json()['detail']
+
+    # A duplicated payment does not point at the original payment.
+    copy = ok(call('POST', f"/api/erp/documents/payment/{payment['id']}/duplicate", admin), 201)
+    assert copy['allocations'] == []
+
+    # A discount larger than its own line is refused even when another line covers it.
+    bad = call('POST', '/api/erp/documents/invoice', admin, json={**invoice_body(ids), 'lines': [
+        {'description': 'A', 'unitPrice': '10', 'discount': '15'}, {'description': 'B', 'unitPrice': '100'}]})
+    assert bad.status_code == 422
+
+    # Cash basis counts the typed receipt on its date.
+    cash = ok(call('GET', '/api/ledger/profit-and-loss', admin, params={'fromDate': '2026-08-01', 'toDate': '2026-08-31', 'basis': 'cash'}))
+    assert any(a['accountCode'] == 'ALLOC-AR' and a['amount'] == '315.50' for a in cash['accounts'])
+
+
+def test_review_fixes_typed_first_then_scanned_and_counterparty(company):
+    connect, ids = company
+    admin = ids['admin']
+    typed = ok(call('POST', '/api/erp/documents/bill', admin, json={
+        'contactId': str(ids['supplier']), 'documentDate': '2026-08-07', 'referenceNo': 'INV-5501', 'status': 'ready',
+        'lines': [{'description': 'Goods', 'unitPrice': '100', 'tax': '6'}]}), 201)
+    record = _scanned_bill(connect, ids, number='INV-5501')
+    for path, body in ((f'/api/erp/scanned/{record}/post', {}),
+                       (f'/api/ledger/journals/from-supplier-bill/{record}', {
+                           'periodId': str(_period(connect, ids, '2026-08')), 'expenseAccountId': str(ids['accounts']['5000']),
+                           'payableAccountId': str(ids['accounts']['2000']), 'journalDate': '2026-08-07'})):
+        refused = call('POST', path, admin, json=body)
+        assert refused.status_code == 409 and typed['number'] in refused.json()['detail'], refused.text
+    assert journal_count(connect, ids) == 1
+
+    # A payment to another supplier cannot settle this supplier's scanned bill.
+    other = _scanned_bill(connect, ids, number='INV-9000')
+    with connect() as db:
+        stranger = db.execute("INSERT INTO vendors(tenant_id,vendor_name) VALUES (%s,'Another Supplier') RETURNING id", (ids['tenant'],)).fetchone()['id']
+    pay = call('POST', '/api/erp/documents/purchase-payment', admin, json={
+        'contactId': str(stranger), 'documentDate': '2026-08-28', 'amount': '106.00', 'bankAccountId': str(ids['bank']),
+        'allocations': [{'targetId': str(other), 'source': 'scanned', 'amount': '106.00'}], 'status': 'ready'})
+    assert pay.status_code == 422 and 'another contact' in pay.json()['detail']
+
+    # A settlement made by a typed payment cannot be changed from the generic allocation endpoints.
+    paid = ok(call('POST', '/api/erp/documents/purchase-payment', admin, json={
+        'contactId': str(ids['supplier']), 'documentDate': '2026-08-28', 'amount': '150.00', 'bankAccountId': str(ids['bank']),
+        'allocations': [{'targetId': str(other), 'source': 'scanned', 'amount': '106.00'}], 'status': 'ready'}), 201)
+    with connect() as db:
+        settlement = db.execute("SELECT settlement_id FROM erp_document_headers WHERE id=%s", (paid['id'],)).fetchone()['settlement_id']
+        assert db.execute("SELECT amount FROM settlements WHERE id=%s", (settlement,)).fetchone()['amount'] == Decimal('106.00')
+        allocation = db.execute("SELECT id FROM settlement_allocations WHERE settlement_id=%s", (settlement,)).fetchone()['id']
+    assert call('POST', f'/api/ledger/allocations/{allocation}/reverse', admin).status_code == 409
+    assert call('POST', '/api/ledger/allocations', admin, json={
+        'settlementId': str(settlement), 'recordId': str(record), 'amount': '1.00'}).status_code == 409

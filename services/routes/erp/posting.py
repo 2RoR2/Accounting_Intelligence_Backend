@@ -147,6 +147,48 @@ def line_net(line: dict) -> Decimal:
     return cents(Decimal(str(line.get("quantity", 1))) * Decimal(str(line.get("unitPrice", 0)))) - cents(line.get("discount", 0))
 
 
+def _target_control_account(db, tenant_id, allocation, purpose):
+    """The receivable/payable account the allocated invoice or bill was posted to (Codex review P1), or None."""
+    side = "debit" if purpose == "receivable" else "credit"
+    account_type = "asset" if purpose == "receivable" else "liability"
+    if allocation.get("source") == "scanned":
+        record = db.execute("""SELECT r.id,r.revision_number,r.category,d.kind FROM standardised_records r
+            JOIN documents d ON d.id=r.document_id AND d.tenant_id=r.tenant_id WHERE r.id=%s AND r.tenant_id=%s""",
+                            (allocation["targetId"], tenant_id)).fetchone()
+        journal = scanned_posted_journal(db, tenant_id, record) if record else None
+        journal_id = journal["id"] if journal and journal["status"] == "posted" else None
+    else:
+        target = db.execute("SELECT journal_id FROM erp_document_headers WHERE id=%s AND tenant_id=%s",
+                            (allocation["targetId"], tenant_id)).fetchone()
+        journal_id = target["journal_id"] if target else None
+    if not journal_id:
+        return None
+    row = db.execute(f"""SELECT l.account_id FROM journal_lines l JOIN ledger_accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+        WHERE l.journal_id=%s AND l.tenant_id=%s AND l.{side}>0 AND a.account_type=%s ORDER BY l.line_number LIMIT 1""",
+                     (journal_id, tenant_id, account_type)).fetchone()
+    return row["account_id"] if row else None
+
+
+def control_split(db, tenant_id, doc, purpose):
+    """[(account, amount)] for the receivable/payable side of a document: each allocated amount on the account its
+    invoice or bill was posted to, the rest on the default account."""
+    total = cents(doc["total_amount"])
+    parts: dict = {}
+    allocated = Decimal("0")
+    if doc["document_type"] in ALLOCATING_TYPES:
+        for allocation in (doc["payload"] or {}).get("allocations", []):
+            account = _target_control_account(db, tenant_id, allocation, purpose)
+            if account:
+                amount = min(cents(allocation["amount"]), total - allocated)
+                if amount > 0:
+                    parts[account] = parts.get(account, Decimal("0")) + amount
+                    allocated += amount
+    if total - allocated > 0:
+        default = default_account(db, tenant_id, purpose)["id"]
+        parts[default] = parts.get(default, Decimal("0")) + total - allocated
+    return list(parts.items())
+
+
 def plan_for_document(db, tenant_id, doc) -> Plan:
     """The journal lines a typed document posts, by type. Raises 409/422 when it cannot post."""
     kind = doc["document_type"]
@@ -155,34 +197,35 @@ def plan_for_document(db, tenant_id, doc) -> Plan:
     total = cents(doc["total_amount"])
     plan = Plan()
     if kind in {"invoice", "credit-note"}:
-        receivable = default_account(db, tenant_id, "receivable")["id"]
         sign = 1 if kind == "invoice" else -1
-        plan.debit(receivable, sign * total, "Accounts receivable", "total")
+        for account, amount in control_split(db, tenant_id, doc, "receivable"):
+            plan.debit(account, sign * amount, "Accounts receivable", "total")
         for line in lines:
             plan.credit(_line_account(db, tenant_id, line, "revenue"), sign * line_net(line), line.get("description") or "Sales", "line")
         tax = sum((cents(l.get("tax", 0)) for l in lines), Decimal("0"))
         if tax:
             plan.credit(default_account(db, tenant_id, "tax_output")["id"], sign * tax, "SST output tax", "tax")
     elif kind in {"bill", "purchase-credit-note"}:
-        payable = default_account(db, tenant_id, "payable")["id"]
         sign = 1 if kind == "bill" else -1
         for line in lines:
             plan.debit(_line_account(db, tenant_id, line, "expense"), sign * line_net(line), line.get("description") or "Purchases", "line")
         tax = sum((cents(l.get("tax", 0)) for l in lines), Decimal("0"))
         if tax:
             plan.debit(default_account(db, tenant_id, "tax_input")["id"], sign * tax, "SST input tax", "tax")
-        plan.credit(payable, sign * total, "Accounts payable", "total")
+        for account, amount in control_split(db, tenant_id, doc, "payable"):
+            plan.credit(account, sign * amount, "Accounts payable", "total")
     elif kind in {"payment", "refund", "purchase-payment", "purchase-refund"}:
         bank = bank_ledger_account(db, tenant_id, doc["bank_account_id"])["id"]
-        if kind in {"payment", "refund"}:
-            other, label = default_account(db, tenant_id, "receivable")["id"], "Accounts receivable"
-        else:
-            other, label = default_account(db, tenant_id, "payable")["id"], "Accounts payable"
+        purpose = "receivable" if kind in {"payment", "refund"} else "payable"
+        label = "Accounts receivable" if purpose == "receivable" else "Accounts payable"
+        split = control_split(db, tenant_id, doc, purpose)
         if kind in {"payment", "purchase-refund"}:  # money comes in
             plan.debit(bank, total, "Bank", "total")
-            plan.credit(other, total, label, "total")
+            for account, amount in split:
+                plan.credit(account, amount, label, "total")
         else:
-            plan.debit(other, total, label, "total")
+            for account, amount in split:
+                plan.debit(account, amount, label, "total")
             plan.credit(bank, total, "Bank", "total")
     elif kind in {"money-in", "money-out"}:
         bank = bank_ledger_account(db, tenant_id, doc["bank_account_id"])["id"]
@@ -309,12 +352,16 @@ def plan_for_scanned(db, tenant_id, record, account_id=None) -> Plan:
         allowed = {PURPOSE_TYPES[purpose], "asset", "liability", "equity"}
         line_account = ledger_account(db, tenant_id, account_id, expected=allowed, label="posting account")["id"]
     else:
-        coded = db.execute("""SELECT la.id FROM coding_decisions d
-            JOIN coa_accounts c ON c.id=d.account_id AND c.tenant_id=d.tenant_id
-            JOIN ledger_accounts la ON la.tenant_id=c.tenant_id AND la.code=c.code AND la.is_active
-            WHERE d.tenant_id=%s AND d.record_id=%s AND d.line_item_id IS NULL
-            ORDER BY d.created_at DESC LIMIT 1""", (tenant_id, record["id"])).fetchone()
-        line_account = coded["id"] if coded else default_account(db, tenant_id, purpose)["id"]
+        # The latest coding decision wins; if its code has no active ledger account, ask for one (Codex review P2).
+        coded = db.execute("""SELECT c.code,la.id AS ledger_id FROM (SELECT account_id FROM coding_decisions
+                WHERE tenant_id=%s AND record_id=%s AND line_item_id IS NULL ORDER BY created_at DESC, id DESC LIMIT 1) d
+            JOIN coa_accounts c ON c.id=d.account_id AND c.tenant_id=%s
+            LEFT JOIN ledger_accounts la ON la.tenant_id=c.tenant_id AND la.code=c.code AND la.is_active""",
+                           (tenant_id, record["id"], tenant_id)).fetchone()
+        if coded and not coded["ledger_id"]:
+            raise HTTPException(422, f"The document is coded to {coded['code']}, which has no active ledger account. "
+                                     "Choose the posting account.")
+        line_account = coded["ledger_id"] if coded else default_account(db, tenant_id, purpose)["id"]
     sign = -1 if record["kind"] == "credit_note" else 1
     plan = Plan()
     if receivable_side:
@@ -328,3 +375,39 @@ def plan_for_scanned(db, tenant_id, record, account_id=None) -> Plan:
             plan.debit(default_account(db, tenant_id, "tax_input")["id"], sign * tax, "SST input tax", "tax_amount")
         plan.credit(default_account(db, tenant_id, "payable")["id"], sign * total, "Accounts payable", "total_amount")
     return plan
+
+
+def _same_party(name_a, name_b) -> bool:
+    from validation.matching.vendor_matching import normalize_vendor_name
+    a, b = normalize_vendor_name(name_a or ""), normalize_vendor_name(name_b or "")
+    return bool(a) and a == b
+
+
+def scanned_number(record) -> str:
+    """The supplier's / our invoice number on a scanned record (some bills only carry a reference number)."""
+    return (record.get("invoice_number") or record.get("reference_number") or "").strip()
+
+
+def typed_copy_of_scanned(db, tenant_id, record):
+    """A ready typed bill/invoice repeating this approved scanned one (same party and number), or None."""
+    number = scanned_number(record)
+    if not number or record.get("kind") == "credit_note":
+        return None
+    if record["category"] == "accounts_payable":
+        rows = db.execute("""SELECT document_number,vendor_id,contact_name FROM erp_document_headers
+            WHERE tenant_id=%s AND document_type='bill' AND status='ready' AND lower(btrim(reference_no))=lower(%s)""",
+                          (tenant_id, number)).fetchall()
+        party = record.get("supplier_name")
+        return next((r for r in rows if (record.get("vendor_id") and r["vendor_id"] == record["vendor_id"])
+                     or _same_party(r["contact_name"], party)), None)
+    rows = db.execute("""SELECT document_number,contact_name FROM erp_document_headers
+        WHERE tenant_id=%s AND document_type='invoice' AND status='ready' AND lower(btrim(document_number))=lower(%s)""",
+                      (tenant_id, number)).fetchall()
+    return next((r for r in rows if _same_party(r["contact_name"], record.get("buyer_name"))), None)
+
+
+def refuse_if_typed_copy(db, tenant_id, record):
+    copy = typed_copy_of_scanned(db, tenant_id, record)
+    if copy:
+        raise HTTPException(409, f"This document was already entered and posted as {copy['document_number']}; "
+                                 "posting the scanned copy too would count it twice.")
