@@ -244,6 +244,30 @@ def test_an_explicit_correction_posts_a_new_payment_after_its_journal_was_revers
     assert database.journal_inserts[0][1][2] == f"supplier-payment:{SETTLEMENT_ID}:after:{JOURNAL_ID}"
 
 
+def test_a_reversed_manual_settlement_journal_does_not_hide_the_first_payment(monkeypatch):
+    database = FakeDatabase(existing_journal={"id": JOURNAL_ID, "status": "reversed", "source_type": "settlement",
+                                              "source_id": SETTLEMENT_ID, "idempotency_key": "manual:settlement-fix"})
+    payload = _configure(monkeypatch, database)
+
+    result = accounting_routes.post_supplier_payment(str(TRANSACTION_ID), payload, None)
+
+    assert result["idempotent"] is False
+    assert database.journal_inserts[0][1][2] == f"supplier-payment:{SETTLEMENT_ID}"
+
+
+def test_a_repeated_correction_returns_the_correction_it_already_posted(monkeypatch):
+    correction = UUID("10000000-0000-0000-0000-000000000011")
+    database = FakeDatabase(existing_journal={"id": correction, "status": "posted", "source_type": "settlement",
+                                              "source_id": SETTLEMENT_ID,
+                                              "idempotency_key": f"supplier-payment:{SETTLEMENT_ID}:after:{JOURNAL_ID}"})
+    payload = _configure(monkeypatch, database).model_copy(update={"replacesJournalId": str(JOURNAL_ID)})
+
+    result = accounting_routes.post_supplier_payment(str(TRANSACTION_ID), payload, None)
+
+    assert (result["id"], result["idempotent"]) == (str(correction), True)
+    assert database.journal_inserts == []
+
+
 def test_a_payment_against_a_receipt_is_refused(monkeypatch):
     database = FakeDatabase(kind="receipt")
     payload = _configure(monkeypatch, database)

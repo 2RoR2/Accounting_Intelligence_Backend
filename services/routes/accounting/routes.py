@@ -223,10 +223,18 @@ def post_supplier_payment(transaction_id: str, data: SupplierPaymentPostingInput
         effective = [journal for journal in settlement_journals if journal["status"] == "posted"]
         if len(effective) > 1:
             raise HTTPException(409, "Multiple journals are linked to this supplier payment; review the ledger before continuing.")
-        reversed_journals = [journal for journal in settlement_journals if journal["status"] == "reversed"]
         idempotency_key = f"supplier-payment:{settlement['id']}"
+        # Earlier supplier payments only: a manual settlement journal that was posted and reversed is not a payment
+        # this endpoint made, so it must not make the first payment request look already done.
+        reversed_journals = [journal for journal in settlement_journals if journal["status"] == "reversed"
+                             and str(journal["idempotency_key"] or "").startswith(idempotency_key)]
         replaces = str(_uuid_or_422(data.replacesJournalId, "replaced journal id")) if data.replacesJournalId else None
-        if replaces and (effective or not reversed_journals or str(reversed_journals[-1]["id"]) != replaces):
+        repeated_correction = bool(replaces and effective
+                                   and effective[0]["idempotency_key"] == f"{idempotency_key}:after:{replaces}")
+        if repeated_correction:
+            # A retry of a correction whose response was lost: report the correction it already posted (checked below).
+            idempotency_key += f":after:{replaces}"
+        elif replaces and (effective or not reversed_journals or str(reversed_journals[-1]["id"]) != replaces):
             raise HTTPException(409, "Only the latest reversed payment journal for this settlement can be replaced.")
         if not effective and reversed_journals:
             if not replaces:
