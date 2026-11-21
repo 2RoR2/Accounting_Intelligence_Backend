@@ -3525,3 +3525,71 @@ DROP TRIGGER IF EXISTS trg_bank_recon_signoff_record ON bank_reconciliation_peri
 CREATE TRIGGER trg_bank_recon_signoff_record
     AFTER UPDATE ON bank_reconciliation_periods
     FOR EACH ROW EXECUTE FUNCTION bank_recon_signoff_record();
+
+-- ============================================================================
+-- Consolidated migration: 020_ledger_account_report_fields.sql
+-- ============================================================================
+
+-- 020_ledger_account_report_fields.sql
+-- Owner: Aleeya (Module 4). Run AFTER 019. Safe to run twice. No BEGIN or COMMIT: open the file on Neon and press Alt+X.
+--
+-- The chart of accounts file that the team imports (docs/COMPANY_PACKS.md, coa.csv) carries three more facts about each account:
+--   statement       balance_sheet or profit_and_loss
+--   normal_balance  debit or credit (contra accounts such as accumulated depreciation have the opposite one)
+--   report_section  the report line, such as Current assets, Revenue, Cost of sales, Operating expenses
+-- The import checks them but could not keep them, because neither account table had a column for them (the code says so:
+-- "a schema gap for D2 reports"). This adds the three columns to ledger_accounts, the list that journals post to and that the
+-- trial balance reads.
+--
+--   * statement and normal_balance are always filled. A new account that does not give them gets the usual ones from its type,
+--     so the current backend, which does not send them yet, keeps working. The existing accounts are filled the same way.
+--   * report_section may be empty. It cannot be worked out from the type (cost of sales and operating expenses are both
+--     expenses), so it stays empty until the import or a person sets it.
+--   * changing an account's type updates a statement or normal balance that was not changed at the same time.
+
+ALTER TABLE ledger_accounts ADD COLUMN IF NOT EXISTS statement TEXT;
+ALTER TABLE ledger_accounts ADD COLUMN IF NOT EXISTS normal_balance TEXT;
+ALTER TABLE ledger_accounts ADD COLUMN IF NOT EXISTS report_section TEXT;
+
+CREATE OR REPLACE FUNCTION ledger_account_report_defaults() RETURNS trigger AS $$
+DECLARE
+    st TEXT := CASE WHEN NEW.account_type IN ('asset', 'liability', 'equity') THEN 'balance_sheet' ELSE 'profit_and_loss' END;
+    nb TEXT := CASE WHEN NEW.account_type IN ('asset', 'expense') THEN 'debit' ELSE 'credit' END;
+BEGIN
+    IF TG_OP = 'UPDATE' AND NEW.account_type <> OLD.account_type THEN
+        IF NEW.statement IS NOT DISTINCT FROM OLD.statement THEN NEW.statement := st; END IF;
+        IF NEW.normal_balance IS NOT DISTINCT FROM OLD.normal_balance THEN NEW.normal_balance := nb; END IF;
+    END IF;
+    NEW.statement := COALESCE(NEW.statement, st);
+    NEW.normal_balance := COALESCE(NEW.normal_balance, nb);
+    NEW.report_section := NULLIF(btrim(NEW.report_section), '');
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_ledger_account_report_defaults ON ledger_accounts;
+CREATE TRIGGER trg_ledger_account_report_defaults
+    BEFORE INSERT OR UPDATE ON ledger_accounts
+    FOR EACH ROW EXECUTE FUNCTION ledger_account_report_defaults();
+
+-- fill the accounts that already exist (the trigger works out the values)
+UPDATE ledger_accounts SET statement = NULL, normal_balance = NULL WHERE statement IS NULL OR normal_balance IS NULL;
+
+ALTER TABLE ledger_accounts ALTER COLUMN statement SET NOT NULL;
+ALTER TABLE ledger_accounts ALTER COLUMN normal_balance SET NOT NULL;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ck_ledger_accounts_statement') THEN
+        ALTER TABLE ledger_accounts ADD CONSTRAINT ck_ledger_accounts_statement
+            CHECK ((account_type IN ('asset', 'liability', 'equity') AND statement = 'balance_sheet')
+                OR (account_type IN ('income', 'expense') AND statement = 'profit_and_loss'));
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ck_ledger_accounts_normal_balance') THEN
+        ALTER TABLE ledger_accounts ADD CONSTRAINT ck_ledger_accounts_normal_balance CHECK (normal_balance IN ('debit', 'credit'));
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ck_ledger_accounts_report_section') THEN
+        ALTER TABLE ledger_accounts ADD CONSTRAINT ck_ledger_accounts_report_section
+            CHECK (report_section IS NULL OR btrim(report_section) <> '');
+    END IF;
+END $$;
