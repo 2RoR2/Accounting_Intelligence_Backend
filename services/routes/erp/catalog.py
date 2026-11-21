@@ -99,10 +99,15 @@ def _ledger_account(db, tenant_id, value, label, account_type):
     return row
 
 
+def _price(value):
+    """Unit prices keep the stored four decimals (Codex review P2): rounding to cents here would lose RM on big quantities."""
+    return str(Decimal(str(value or 0)).quantize(Decimal("0.0001")))
+
+
 def _product_dto(row):
     return {
         "id": str(row["id"]), "name": row["name"], "sku": row["sku"], "kind": row["kind"],
-        "unit": row["unit"], "salePrice": money(row["sale_price"]), "purchasePrice": money(row["purchase_price"]),
+        "unit": row["unit"], "salePrice": _price(row["sale_price"]), "purchasePrice": _price(row["purchase_price"]),
         "quantity": str(row["quantity"]), "groupName": row["group_name"], "fields": row["fields"] or {},
         "incomeAccountId": str(row["income_account_id"]) if row["income_account_id"] else None,
         "expenseAccountId": str(row["expense_account_id"]) if row["expense_account_id"] else None,

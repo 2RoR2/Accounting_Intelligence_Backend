@@ -140,7 +140,7 @@ def test_product_crud_and_tenant_isolation(workspace):
     }
     created = body(call("POST", PRODUCTS, "accountant", json=payload), 201)
     item = f"{PRODUCTS}/{created['id']}"
-    assert created["salePrice"] == "42.13" and created["purchasePrice"] == "12.00"
+    assert created["salePrice"] == "42.1250" and created["purchasePrice"] == "12.0000"  # four decimals kept
     assert created["quantity"] == "1.250" and created["isActive"] is True
     assert created["incomeAccountId"] == accounts["income"] and created["expenseAccountId"] == accounts["expense"]
     assert body(call("GET", item), 200) == created
