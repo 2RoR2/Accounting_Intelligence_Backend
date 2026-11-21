@@ -49,7 +49,9 @@ def main():
         "reread-documents", help="local only: read a company's stored documents again with the current settings"))
     test_users.add_arguments(commands.add_parser(
         "create-test-users", help="local only: team test accounts from UAT_TEST_EMAILS (see docs/LOCALHOST.md)"))
-    from services.admin import browser_session
+    from services.admin import browser_session, erp_demo
+    erp_demo.add_arguments(commands.add_parser(
+        "seed-erp-demo", help="local only: typed sales/purchases for a seeded demo company, all posted (Plan L9)"))
     browser_session.add_arguments(commands.add_parser(
         "browser-session", help="local only: Playwright cookie file for a synthetic *.demo.test user"))
     args = parser.parse_args()
@@ -57,6 +59,8 @@ def main():
         sys.exit(browser_session.run(args))
     if args.command == "seed-demo-company":
         sys.exit(demo_company.run(args))
+    if args.command == "seed-erp-demo":
+        sys.exit(erp_demo.run(args))
     if args.command == "reread-documents":
         sys.exit(reread.run(args))
     if args.command == "create-test-users":
