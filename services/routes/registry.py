@@ -2,6 +2,7 @@ from .accounting.routes import register as register_accounting
 from .admin.routes import register as register_admin
 from .bank.routes import register as register_bank
 from .documents.routes import register as register_documents
+from .erp.routes import register as register_erp
 from .queue.routes import register as register_queue
 from .reporting.routes import register as register_reporting
 from .review.routes import register as register_review
@@ -18,6 +19,7 @@ def register_component_routes(router, handlers):
     register_admin(router, handlers)
     register_bank(router, handlers)
     register_documents(router, handlers)
+    register_erp(router, handlers)
     register_queue(router, handlers)
     register_reporting(router, handlers)
     register_review(router, handlers)
