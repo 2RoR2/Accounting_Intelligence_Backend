@@ -44,12 +44,16 @@ def main():
     from services.admin import demo_company
     demo_company.add_arguments(commands.add_parser(
         "seed-demo-company", help="local only: a demo company from an A1 company pack (see docs/LOCALHOST.md)"))
-    from services.admin import test_users
+    from services.admin import reread, test_users
+    reread.add_arguments(commands.add_parser(
+        "reread-documents", help="local only: read a company's stored documents again with the current settings"))
     test_users.add_arguments(commands.add_parser(
         "create-test-users", help="local only: team test accounts from UAT_TEST_EMAILS (see docs/LOCALHOST.md)"))
     args = parser.parse_args()
     if args.command == "seed-demo-company":
         sys.exit(demo_company.run(args))
+    if args.command == "reread-documents":
+        sys.exit(reread.run(args))
     if args.command == "create-test-users":
         sys.exit(test_users.run(args))
     demo_password = None
