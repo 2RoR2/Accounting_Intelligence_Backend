@@ -1,7 +1,9 @@
 # Accounting Intelligence — Master Plan
 
-Written 2026-11-12. Planner: Fable. Executor: Opus sessions, one task per session.
+Written 2026-11-12. Planner: Fable until 2026-11-17, then an Opus planner session (see `docs/PLANNER_PLAYBOOK.md`). Executor: Opus sessions, one task per session.
 This file is the single source of truth for what to build, in what order, and how to know it is done.
+
+**Current plan: section 10 (Plan v3, A to Z to UAT).** Sections 5-9 are history and task detail that section 10 refers to.
 
 ---
 
@@ -33,7 +35,7 @@ Out of scope, do not build: tax computation or filing, e-Invoice submission, pay
 | Reading documents | PDF text layer (pypdfium2) or RapidOCR on CPU | `EXTRACTION_ENGINE=lite`; nothing leaves the server |
 | Structuring fields | Hosted text model, masked OCR text only | `AI_EXTRACTION=text`; default provider Gemini Flash-Lite; off by default |
 | Verification | Every model value must be printed in the local OCR rows | `services/extraction/lite/structure.py` |
-| Database + files | Supabase Postgres + S3-compatible storage | Existing schema loads as is |
+| Database + files | Neon Postgres (team branch; separate `uat` branch for the hosted demo) + Neon object storage. Supabase is not used (decided 2026-11-19; older Supabase mentions below are superseded) | Existing schema loads as is |
 | Host | Render free (512 MB) or Cloud Run (1-2 GB) | Decide after P0.7 memory check |
 | Legacy paths | Docling parser, Redis/RQ | Kept behind `EXTRACTION_ENGINE=docling`, `QUEUE_BACKEND=rq` as the report baseline |
 
@@ -390,3 +392,238 @@ First UAT cut = A1-A3, B1-B3, C3, C5, D1-D3. Second cut = the rest.
 ### 9.5 Done means (whole plan)
 
 An accountant can log in, see Today, review and approve a month of documents for the demo company, post them, import the bank statement, reconcile it, close the month and download the month pack, without reading a rule code or a model name, and every number in the pack traces back to an approved document or a bank line.
+
+---
+
+## 10. Plan v3 — A to Z to UAT (added 2026-11-17, current)
+
+Planner from here: an Opus session following `docs/PLANNER_PLAYBOOK.md`. Section 9's phase letters (A-E) and earlier task IDs (P0-P7) are kept as references; this section decides order and status.
+
+### 10.1 Target
+
+- **UAT handover:** end of semester week 12: **Friday 27 Nov 2026** (set 2026-11-17; Jonathan may name a different day). Feature freeze **Thursday 26 Nov, 12:00**: after that only fixes from the walkthrough. Compressed schedule in 10.7; the 10.4 cut line is applied.
+- **Focus:** the accountant's user interface and daily/monthly workflow first, built on the teammates' existing design system (`src/styles/*.css`, `src/components/common/ui`) and existing functions. Change flows and wording, not the look.
+- **Testing accounts:** real team emails receive login codes through Brevo (`EMAIL_PROVIDER=brevo`, `BREVO_*` in `.env`). Emails live only in `.env` or the database, never in the repository.
+
+| Success criterion (brief) | Evidence the plan produces | Task |
+|---|---|---|
+| Extraction accuracy >= 95% on the pilot set | Hold-out and public-set runs with the chosen provider; SAIC pilot set when supplied | I1, I2 |
+| Manual data entry reduced >= 70% | Timed study, manual vs system, same documents; touchless-field rate | I3, I4 |
+| <= 20 s per document | p95 `processing_seconds` on localhost and the hosted UAT environment | I3, I5 |
+| Exception rate < 10%, all exceptions routed | Exception rate on the demo month; every exception visible with a suggested fix | B5, I3 |
+| High-volume concurrent submissions | 50-document concurrent load test | I5 |
+
+### 10.2 Status on 2026-11-17
+
+| Item | State |
+|---|---|
+| Backend #4 slim backend, #5 company packs | Merged into `features` |
+| Frontend #3 plain language + navigation | Merged into `features` |
+| Backend #8 `fix/inline-queue-full-requeue` | **Merged** 2026-11-17 (`4573c3f`), approved by Jonathan. Codex review: no findings |
+| Backend #7 A2+A3 CSV imports + demo company seed | **Merged** 2026-11-17 (`1f2edb1`, from `a34a8a3`) (re-verified 2026-11-17): 0 behind; suite same 56 names, 1397 passed; imports/seed/flood tests 60/60 on local Postgres; P1 seed guard fixed and checked by hand (hostaddr, host=, multi-host, empty host, service, PGHOST all refused). Codex round 2: three P2 for a follow-up PR (opening re-import after reversal, strict CSV quoting, print demo credentials right after user commit) |
+| Backend #6 B3 Today API | **Merged** 2026-11-18 (`7be47a0`, from `c4320ca`). Follow-ups: bank-list server filter (C5), month-end period filters + company-time-zone month bounds (D1) |
+| Frontend #4 B3 Today page | Superseded by R0 (built on its branch); close when R0 merges |
+| Backend #10 E1 local test users | **Ready to merge** at `8a9a1b4`: demo documents shared with test accountants (Today 64 = list 64), Codex P2s fixed (invited-account password, demoted admin TOTP cleared); suite same 56 names at `2961f6b`, test-users unit + Postgres 44/44 without `.env` |
+| Backend #11 #7 review fixes | **Merged** 2026-11-18 (`b4810f6`, from `c7f0723` after update from `features`; suite same 56 names, imports + home Postgres 11/11) |
+| Backend #12 B5a lanes API + bulk submit/approve | **Ready to merge** at `eb9898a`: Codex round-1 fixes (assumed dates no longer verified, per-item precheck boundary, note numbers); suite same 56 names, 1464 passed; lanes Postgres + unit 55/55; Codex round 2: no findings |
+| Backend #13 + Frontend #5 B4a Inbox | #13 **ready to merge** at `dc6c904`: two Codex rounds fixed (pending kind shown as AUTO in list, detail, workflow and register); suite same 56 names, 1423 passed; auto-kind + home Postgres 28/28. Frontend #5 `96da50f`: six Codex P2s fixed (queue keyed on user+tenant, retry/poll race, per-file folder errors, bounded polling, path-aware dedupe, depth-limit report); typecheck/lint/build pass, `npm test` 118/0 fail. Fallback type selector for servers without AUTO left out (moot after #13). #5 waits for its browser check |
+| Backend #14 reread-documents (`0497743`) | Suite same 56 names, 1436 passed; reread 29/29. Codex 2x P2 (recovery/dispatch not limited to selected documents, timeout cannot exit); fix sent. Conflicts with #10 in `manage.py`/`LOCALHOST.md`: update after #10 |
+| Backend #15 F1 choose kind (`c973904`, contains #13) | Suite same 56 names, 1442 passed; 46/46. Codex P1: a person-chosen invoice is left out of duplicate checks; fix sent. Merge #13 first, then #15 shrinks to F1 |
+| Backend #16 pdfium lock (`a57cadd`) | **Ready to merge**: suite same 56 names, 1414 passed; thread-safety tests 2/2; Codex: no findings |
+| Frontend #7 F1/F2 choose type (`4490389`) | typecheck/lint/build pass, `npm test` 106/0 fail. Codex P2: banner ignores the normalised classification; fix sent |
+| Frontend #2 draft `integration/v3.1-plus-20261103` | Stale, conflicts; owner decides close or re-apply |
+| Accuracy | Tuning set 97.24% (not evidence: tuned on it). Hold-out not run. |
+| Not verified | Hosted Render deploy after #4; Brevo login code end to end; full walkthrough on a local database |
+
+### 10.3 The UAT walkthrough (acceptance script for the whole system)
+
+Every task names the steps it changes; E2 automates this script and it is the final gate.
+
+**Daily (accountant)**
+1. Log in with email and the code sent by Brevo.
+2. Today shows: to review, ready to approve, needs fixing (top reasons), bank lines to match, bills due in 7 days, customers overdue, journals waiting to post.
+3. Inbox: drop a day's documents (PDFs, phone photos), or use the camera. Type is detected; each file shows its progress.
+4. Review: document on the left, fields on the right; only "Please check" fields need attention; click a field to see where it was read; keyboard to accept and move on.
+5. Ready lane: select all, approve. Needs-fixing lane: each item shows the reason and a one-click suggested fix.
+6. Post: approved documents become proposed journals (supplier default account, printed tax, payables); post one by one or in bulk.
+7. Bank: import the statement (saved column mapping), confirm suggested matches including partial and combined payments, create expenses for fees.
+8. Contacts: supplier page shows defaults, open items, documents, learned corrections.
+
+**Monthly (accountant / local admin)**
+9. Month-end checklist: every item green or linked to what is left.
+10. Reconciliation statement for the period; lock the period.
+11. Reports: profit and loss, balance sheet, trial balance, general ledger, payables and receivables ageing, recorded tax summary (printed tax only, labelled "not a tax return").
+12. Month pack: one Excel workbook with all reports and open exceptions.
+
+**Admin**
+13. Users and roles, company settings, System page (processing health), evaluation page.
+
+### 10.4 Tasks A to Z, in order
+
+Two lanes run in parallel: one backend executor and one frontend executor. "->" marks a dependency. Section references point to the full spec.
+
+**M0 — Integrate what is open (planner + Jonathan, now)**
+
+- **Z1 Merge queue.** Backend #8 -> #7 -> #6, then frontend #4. For each: update from `features`, run the playbook section 5 gates, Codex review, Jonathan merges. Frontend #2: ask its owner to close it or re-apply wanted parts on top of `features` in a new PR.
+- **Z2 Hosted health check (Jonathan, read-only).** Confirm the Render backend is healthy after #4 changed `render.yaml` to one service; if not, note it for U1.
+
+**M1 — Test foundation**
+
+- **E1 Local full stack with real login codes** (backend lane). `docker compose up -d db`; schema + `manage.py seed-demo-company --pack trading` (from #7); create team test users from an env list (`UAT_TEST_EMAILS`, comma separated, never committed); confirm Brevo delivers the login code; document how privileged roles set up MFA. Update `docs/LOCALHOST.md`. Done when each teammate logs in on localhost with their own email.
+- **E2 Walkthrough automation** (frontend lane, -> E1). Playwright script of the 10.3 steps that already exist, against the seeded demo company; extend it as tasks land. Done when it runs green on current `features` for existing steps and reports missing ones as skipped.
+
+**M2 — Daily workflow, UI first**
+
+- **B4a Inbox** (frontend + small backend `kind=auto`; spec P2.1). -> E1.
+- **B4b Review side by side** (frontend; uses `reviewSignal` from P2.2; spec P2.3). -> B4a.
+- **B5a Lanes API and bulk submit/approve** (backend; spec P3.1, P3.2). Parallel with B4a.
+- **B5b Lanes UI and suggested fixes** (frontend + backend suggestion payloads; spec P3.3, P3.4). -> B5a, B4b.
+- **C1 Contacts hub and supplier memory** (both lanes; specs 9.3 C1, P4.1-P4.3). Supplier defaults (expense account, tax code, terms), learned corrections, account suggestion on each document. -> B5a.
+- **C3 Posting** (both lanes; spec 9.3 C3 / P5.2). Proposed journal on approval, edit, post, bulk post; period locks respected. -> C1.
+
+**M3 — Bank and month-end**
+
+- **C5 Bank reconciliation flow** (both lanes; spec 9.3 C5 / P5.3). Report match precision and recall against the company pack's `expected_matches.csv`. -> C3.
+- **C4 Payables and receivables** (both lanes; spec 9.3 C4). Open items, settlements from bank matches, ageing. -> C5.
+- **C2 Chart of accounts page** (frontend; import comes from #7). Parallel with C5.
+- **D1 Month-end checklist and period lock** (both lanes). -> C5.
+- **D2 Reports** (both lanes; spec 9.3 D2). P&L, BS, TB, GL, ageing and recorded tax summary first; statements and cost-centre views after. -> C3.
+- **D3 Month pack** (backend + one button). -> D2.
+- **D4 Exports and import templates** (spec P6.1, P6.2). Generic Excel/CSV first; vendor templates only if Jonathan supplies them.
+
+**M4 — Intelligence and evidence** (alongside M2-M3 when a lane is free)
+
+- **I1 Accuracy evidence.** Hold-out set and public 35 with each available provider; choose the default; record in `docs/ACCURACY_LOG.md`. Spend limits from section 5A apply.
+- **I2 Accuracy improvements** (only if I1 < 95%). Supplier-memory examples in the prompt (from C1), JSON schema mode, opt-in image fallback (P1.3; Groq `qwen/qwen3.8-27b` accepts images).
+- **I3 Evaluation page** (spec P6.3): the five criteria from real data, "Not measured" until measured.
+- **I4 Effort study.** Two testers, 20 documents, timed manual entry vs system review; touchless-field rate. Result on the evaluation page and in the report.
+- **I5 Load test** (spec P7.2): 50 concurrent documents; throughput, failures, p95 seconds, provider limit events.
+- **I6 Intelligent checks on Today:** duplicates, totals outside a supplier's usual range, unusual bank lines (existing anomaly code), bills due soon, approved documents not yet posted. Each check links to its fix. -> B3 (#6/#4), C1.
+
+**M5 — UAT readiness**
+
+- **U1 Hosted UAT environment** (Jonathan approves each step): separate database (a Neon branch, not the team database), Render backend from `render.yaml`, Vercel frontend `BACKEND_URL`, Brevo sender, AI provider and whether a paid key is used for real documents, keep-alive during UAT hours.
+- **U2 Hardening** (spec P7.4): security review of the full diff since `main`, tenant isolation tests on every new route, rate limits on login and code requests, no document text or secrets in logs. Jonathan rotates the secrets exposed in chat on 2026-11-13 before U1.
+- **U3 Tester guide and feedback form** (spec P7.3), rewritten around 10.3.
+- **U4 Release:** PR `features` -> `main`, tag `uat-1` (Jonathan merges).
+- **U5 UAT support:** triage SAIC feedback into new section 10 tasks.
+
+**Minimum for UAT (cut line).** If time runs short, keep Z1, E1, E2, B4a, B4b, B5a, B5b, C1 (defaults and suggestions only), C3, C5, D1, D2 (P&L, BS, TB, recorded tax), D3, I1, I3, I4, I5, U1-U4. Defer C4 ageing detail, D4 vendor templates, I2 image fallback, and I6 beyond duplicates and due bills.
+
+**Cut line applied 2026-11-17** (UAT on 27 Nov). Deferred until after UAT: C4 ageing detail, D4 vendor templates, I2 image fallback, I6 beyond duplicates and bills due, C2 beyond a read-only chart of accounts list.
+
+### 10.5 Dependencies at a glance
+
+```
+Z1 -> E1 -> E2 (gate for everything after)
+E1 -> B4a -> B4b --+
+      B5a ---------+-> B5b
+      B5a -> C1 -> C3 -> C5 -> C4, D1
+                    C3 -> D2 -> D3
+C1 -> I2, I6     I1 any time after Z1     I3 -> I4, I5     all -> U1 -> U2 -> U3 -> U4
+```
+
+### 10.7 Compressed schedule to UAT (added 2026-11-17)
+
+Operating rules for the last week (override 10.4's "one backend and one frontend executor"):
+
+- Up to two backend and two frontend executors at once, only when their file sets do not overlap; every brief states its file set.
+- Codex reviews every PR in parallel with the planner's verification; the planner collects its findings. If an executor stalls or hits a usage limit, Codex takes the task with the same brief.
+- Merges are batched: the planner asks Jonathan twice a day (midday and evening) with the ready PRs in merge order.
+- Evening status to Jonathan, five lines: done, ready to merge, running, at risk, what is needed from him tomorrow. 10.6 updated daily.
+- If a day slips, cut from the end of M3/M4; never skip E2, U2 or the walkthrough.
+
+| Day | Work |
+|---|---|
+| Tue 17 Nov | Z1 merges (#8, #7, #6, frontend #4). Start E1. |
+| Wed 18 | E1 done; start E2, B4a, B5a. |
+| Thu 19 | B4b, B5b; start C1. Start I1 accuracy runs (script only, no lane conflict). |
+| Fri 20 | C3 posting. |
+| Sat 21 - Sun 22 | C5 bank reconciliation; D2 reports (P&L, BS, TB, recorded tax). |
+| Mon 23 | D1 month-end checklist + lock, D3 month pack, I3 evaluation page. |
+| Tue 24 | I5 load test, U2 hardening. I4 effort study: two people for about an hour (Jonathan books it). |
+| Wed 25 | U1 hosted UAT environment (each step approved by Jonathan; secrets rotated first), U3 tester guide. |
+| Thu 26 | Full walkthrough (E2) on the hosted environment; fix list; freeze at 12:00. |
+| Fri 27 | U4 release PR `features` -> `main`, tag `uat-1` (Jonathan merges); handover. |
+
+**UI redesign (Jonathan, 2026-11-18).** Jonathan asked to bring back the team's earlier look and page names, grouped by when they are used: Daily (Dashboard, Upload, Documents, Exceptions, Money In, Money Out, Reconciliation), Month-end (checklist, Ledger, Reports, Standardised Records, Summary), Company (Contacts, Settings, admin pages, Help). This replaces B2's job-based menu; B1's plain-language sentences stay. Draft: side-session notes `ui-redesign-plan-draft.md`. The work items map onto existing tasks rather than adding effort: R0 navigation + Dashboard (Today merged in; supersedes frontend #4), R1 Documents/Upload = B4a + B5b, R2 Review = B4b, R3 Exceptions grouped per document with suggested fixes = B5b, R4 Banking = C5, R5 Month-end = D1-D3, R6 demo data seeded with AI on (provider decision pending) + reset, R7 polish = U3. Frontend #4 and #5 merge after R0, so they are not redone.
+
+### 10.8 Gaps and improvements (added 2026-11-19, re-orders 10.7)
+
+Jonathan's direction (19 Nov): fix bugs, finish the daily and monthly accounting workflow, a full chart of accounts, more realistic data, evidence for all five success criteria, show only the new architecture, and a demo in which accountants visibly do less work. Merged work stays: build on it, never redo or revert it. Every playbook rule still applies.
+
+**Evidence used.** 46 screenshots of the pre-plan UI (old architecture, still partly on `features`), the `features` branches, 10.2, 10.6 and 10.7.
+- The Summary page shows the SAIC criteria as NOT MET from the old Docling/Qwen benchmark (SC1 90.0%, SC3 p95 39.4 s, SC4 57% first-pass exceptions, SC2 not measured) and names Docling, Qwen mode and saic-eval-qwen. It is the jury's first evidence, and it describes the old architecture.
+- Exceptions: one row per rule finding (EX-002, EX-008), no suggested fix, no assignee. Top causes: currency symbol only, uncertain source value, missing value, supplier not matched.
+- Upload asks for document type and AP/AR by hand. Review shows rule codes, intake ids and worker events. The output stops at "Create standardised record"; nothing reaches a ledger.
+- Documents: raw filenames, many FAILED, 17-100+ s. Contacts: 3, no defaults. Reconciliation: 3 rows, one-to-one only. Money In/Out: duplicate summaries, no P&L. Dashboard: zeros and "failed jobs" shown to accountants. The help tutorial describes the old flow.
+
+**Gaps, in priority order**
+
+| ID | Gap | Work (plan task) | Size |
+|---|---|---|---|
+| G1 | No accounting output: no posting to the chart of accounts, no journals UI, no month-end, no P&L/BS/TB | C3, D1, D2, D3 | L |
+| G2 | Chart of accounts end to end | Expand C2: COA page grouped by type and report section, with balances; add/edit/deactivate; import (from #7) and export; company defaults (AP 2000, AR 1100, bank -> cash account, printed SST -> SST input/output accounts, recorded only, never computed); supplier/customer default account (C1); category -> account suggestion; reports roll up by report section. Load the Malaysian SME COA (64 accounts, company pack `coa.csv`) for every demo company | M |
+| G3 | Exception rate too high (SC4 < 10% on the demo month) | New backend task before I1: company default currency (MYR) as a "check" value, not an exception; supplier/customer auto-match against imported contacts by name and registration, with one-click "add as supplier"; AP vs AR inferred from whether the company is buyer or seller; exceptions grouped per document with a suggested fix (B5b) | M |
+| G4 | Evidence is from the old architecture | Expand I1 + I3: hold-out and public sets with the lite engine and the chosen provider; p95 seconds; replace the old Summary/evaluation content entirely (no Docling/Qwen wording); I4 effort study and I5 load test feed the same page | M |
+| G5 | Unrealistic data | R6 raised to M: seed all three company packs with AI on; dates moved into the current and previous two months so month-end and ageing are meaningful; matching bank statements; a reset command. A demo Dashboard never shows all zeros | M |
+| G6 | Old-architecture surfaces in the accountant UI | Processing health and workers move to the admin System page only; the AI Assist (Qwen) panel becomes "Read again with AI" on the new text provider (#14); the activity tab shows human events (uploaded, corrected, approved, posted); help rewritten around 10.3. Legacy Docling/RQ code stays off by default this week and is removed after UAT, never during the freeze run-up | M |
+| G7 | Known bugs | One backend task (file set `services/queue`, `services/review`, `services/routes/documents`, `services/routes/review`): `assign_workload` never sets `documents.assigned_to`; old-engine failed jobs -> bulk "read again"; display names from extracted identifiers instead of raw filenames; dates without a year and 2019 rows in demo data; Codex follow-ups parked for C5/D1 | S-M |
+| G8 | No demo script | New task P1, last: a 10-minute script on the seeded company. Accountant's day (drop 20 documents -> review only flagged fields -> bulk approve -> post -> match bank) and month-end (checklist -> lock -> month pack), with before/after time from I4 on screen and the five criteria on the evaluation page. Rehearse on the hosted UAT environment Thu 26 | S |
+
+**Remaining days (replaces the 10.7 table from Thu 19; adjust to merges)**
+
+| Day | Work |
+|---|---|
+| Thu 19 | Merges: backend #12, #13, #10, #16, plan #9; frontend #6 (R0), then #5. Start G7 (backend) and B4b (frontend). |
+| Fri 20 | G3 (backend); B5b (frontend, uses G3 suggestions); C1 + G2 data model start. |
+| Sat 21 - Sun 22 | C3 posting with the COA (both lanes); G2 COA page; G5 seed with AI on. |
+| Mon 23 | U1 hosted UAT on the Neon `uat` branch (moved from Wed 25); C5 reconciliation (exact + one-to-many, create-expense); D2 reports by Codex (P&L, BS, TB, GL, recorded tax). |
+| Tue 24 | D1 month-end + lock, D3 month pack; G4 hold-out/public runs + new Summary page; I5 load test; U2 hardening; I4 effort study (Jonathan books two people). |
+| Wed 25 | G6 cleanup + help rewrite; U1 hosted UAT (Jonathan approves each step; secrets rotated first); U3 tester guide. |
+| Thu 26 | E2 full walkthrough on hosted; G8 rehearsal; freeze 12:00. |
+| Fri 27 | U4 release, handover. |
+
+**Cut order if a day slips:** C4 ageing detail, D4 vendor templates, I2 image fallback, cost-centre reports. Never cut G3, G4, G5, E2, U2 or G8.
+
+**Decisions and speed-ups (19 Nov, later; relayed from Jonathan)**
+- Stay on Neon for the database and object storage. Supabase is not used; older mentions in sections 2, 5, 7 and 8 are superseded.
+- Hosted demo database: a Neon branch named `uat`, copied from the team database. Demo resets and the seed run only against `uat`; the team branch is never written to. U1 points at `uat`. *(Awaiting Jonathan's confirmation in the planner session before the branch is created.)*
+- Standing merge approval for the planner into `features` when: the section 5 gates pass at the merged head, Codex has no open P1 or blocking finding, the PR is up to date with `features`, and merge order holds. Every merge is reported with its link and commit. Still needs Jonathan each time: anything into `main`, deployments, secrets, shared-database changes beyond `uat`, paid AI usage. *(Awaiting confirmation in the planner session.)*
+- Demo accounts: each teammate signs in with their own email via Brevo (`manage.py create-test-users`, #10, with demo documents assigned). Teammates are accountants, Jonathan is local admin, and one person is super admin (admins need an authenticator app). Emails live only in `.env` or the `uat` database, never in the repo or notes. If presenters demo at the same time, each gets a different demo company (trading, services, F&B). Reset the demo the night before.
+- U1 moves from Wed 25 to **Mon 23**; secrets must be rotated by Sun 22.
+- Codex is a second builder: D2 reports (backend + frontend, own file set) go to Codex once C3 posting and the G2 chart-of-accounts model exist; Opus takes C3 and G2.
+- Cut now: reconciliation = exact and one-to-many matches only (no partial or combined payments); ageing = a simple list by due date; skip I2 image fallback and cost-centre reports.
+- AI-on demo seed (G5/R6): if Jonathan doesn't choose by end of 19 Nov, use Groq `openai/gpt-oss-120b` with Gemini as fallback, free tiers only.
+- Target: most features done by Wed 25; freeze Thu 26 12:00; release Fri 27.
+- **Focus (Jonathan, 19 Nov): the accountant's screens first** (Dashboard, Upload, Documents, Review, Exceptions, posting, bank, month-end as the accountant sees them). The local admin's approval flow comes second, if there is capacity. Codex is the backup builder.
+- Team demo accounts already exist in the team database (shared password, test only; use a different one on the hosted demo). The `uat` branch copy carries them over, so no emails are re-entered or written anywhere.
+- **Risk: the Neon project has used 82.4% of its monthly network transfer (19 Nov).** The `uat` branch shares the allowance. Every test, seed and benchmark runs on local Docker Postgres, never on Neon. The hosted demo keeps polling light, and a top-up or plan upgrade is a paid decision for Jonathan if usage climbs.
+
+### 10.6 Handoff log
+
+- 2026-11-17 (Fable): Plan v3 and `docs/PLANNER_PLAYBOOK.md` written. Open PRs: backend #6, #7, #8; frontend #4, #2 (draft, stale). Next: Z1 merge queue, starting with backend #8. Blockers on Jonathan: week 12 date in 10.1, merge approvals, Docker Desktop running for E1, secret rotation before U1.
+- 2026-11-17 (Opus planner): Opened backend #9 (this plan) into `features`. Z1 verified #8, #7, #6 (ready; #6 needs a one-line `registry.py` update after #7) and frontend #4 (unit gates pass; browser check waits for E1). Evidence in 10.2. Frontend #2 is Jonathan's own draft: close or re-apply. Running sessions: none. Blockers on Jonathan: "merge #8", then "merge #7"; UAT date for 10.1; optional Codex review of #7 (largest diff). Next: after #7 merges, owner b3-today updates #6; start E1 (Docker is running).
+- 2026-11-17 (Opus planner, later): UAT set to Fri 27 Nov, freeze Thu 26 Nov 12:00; cut line applied; compressed schedule and rules in 10.7. Codex reviews of #8, #7, #6 running (`codex review --base origin/features` in detached verification worktrees). E1 brief proposed (branch `planv3/e1-local-login`), waiting for Jonathan to start it. Blockers on Jonathan: "merge #8", "merge #7"; start E1.
+- 2026-11-17 (Opus planner, evening): #8 merged (`4573c3f`) on Jonathan's "merge #8". #7 updated from `features` (`bf14fe2`) and gates re-run green, but Codex found one P1 + three P2 (list in side-session notes `z1-codex-findings.md`); #6 has four P2 count bugs. Fix requests sent to the owning sessions (not yet picked up). Next: re-verify #7 after its fix, then ask "merge #7"; then #6 fix + `registry.py` update; frontend #4 browser check after E1. E1 card still waiting to be started.
+- 2026-11-17 (Opus planner, night): #7 re-verified, ready (waits for "merge #7"). #6 round-1 fixes verified; round-2 small fixes requested (with `registry.py` after #7). #4 unit gates pass at `b89372e`. E1 asked to push as a draft PR; waits for #7 and `UAT_TEST_EMAILS`/`UAT_TEST_PASSWORD` in `.env`. Proposed B5a (`planv3/b5a-lanes-bulk`, files: new `services/review/readiness.py`, `services/routes/review/lanes.py`, one call in `review/routes.py`) and B4a (frontend `planv3/b4a-inbox` upload pages + `inbox/` components; backend `planv3/b4a-kind-auto` `upload_document` only). Follow-ups noted: reversed-allocation pattern also in `search_bank_match_records` and `settlement_allocation_guard` (C5); month-end drill-down period filters (D1). No session or Codex run has failed.
+- 2026-11-17 (Opus planner): #7 merged (`1f2edb1`) on Jonathan's "merge #7". Sent: #6 owner to update from `features` (`registry.py`) + two link fixes; E1 to finish its subcommand and docs; #7 owner to open a follow-up PR (`planv3/a2a3-review-fixes`) for the three round-2 P2s. Next merge: #6 after re-verify.
+
+- 2026-11-18 (Opus planner): #6 ready at `c4320ca` (Codex round 3 P2s moved to C5/D1); #11 ready at `87c0015`; E1 draft #10 complete apart from the Brevo send and browser login (needs `.env` values). B5a and B4a hit the usage limit overnight and were resumed. Ask: "merge #6", "merge #11". Next: #4 browser check once E1 login works, then "merge #4".
+- 2026-11-18 (Opus planner): #6 merged (`7be47a0`) and #11 merged (`b4810f6`) on Jonathan's "merge #6 and #11". B5a opened #12; updated and verified, Codex running. Next merges: #12 after Codex; frontend #4 after its browser check; #10 after Brevo + login. Then start B4b and B5b.
+- 2026-11-18 (Opus planner, later): #12 ready (Codex clean). #13 and frontend #5 back to B4a for five Codex P2s. E1: Brevo send works; Jonathan to sign in on localhost. Next: "merge #12"; then start B4b (-> #5) and B5b (-> #12, B4b) and C1 (-> #12) per 10.7.
+- 2026-11-18 (Opus planner): B4a fixes verified; #13 ready. Codex rounds stopped after round 2 (findings were getting smaller). Ready: "merge #12", "merge #13". Waiting on Jonathan: E1 browser sign-in, which unblocks the browser checks of frontend #4 and #5 and the merge of #10.
+- 2026-11-18 (Opus planner): E1 done; Jonathan signed in on localhost (real Brevo code) and reached Today. Today showed 0 because accountants see only owned/assigned documents; E1 adds `--assign-demo-documents` to #10. Jonathan asked E1 for the UI redesign; E1 runs R0 (`planv3/r0-dashboard-nav`) and owns the nav, app shell and Dashboard files. Ready: "merge #12", "merge #13". Open decision: AI provider for seeding the demo with AI on (R6).
+- 2026-11-18 (Opus planner): #10 at `2961f6b` shares the seeded documents with the test accountants (Today as Jonathan: to review 64 = list 64) and has Codex's two P2s fixed (invited account gets a password; demoted admin loses TOTP). One new Postgres test needs `AUTH_SECRET` from `.env`; fix requested. Found: `assign_workload` never sets `documents.assigned_to`, so assigning work through the endpoint does not change what an accountant sees (B5b/C1). E1 now on R0.
+- 2026-11-18 (Opus planner): #10 ready at `8a9a1b4`. Frontend #6 (R0 dashboard + menu, replaces #4) passes gates at `3020205`, screenshots reviewed; Codex running; Jonathan to approve the look. Ready to merge: #12, #13, #10 (no shared files).
+- 2026-11-18 (Opus planner): Frontend #6 (R0) ready at `a18df75` after Codex P2 fixes (dashboard polls every 30 s while visible; category selector locked while a dashboard filter is active; unavailable figures stay visible, all-clear only when every figure is known zero). Gates pass, merges cleanly with #5; adds optional `disabled`/`title` props to the shared `Filter` UI component. Needs Jonathan's OK on the look. Merge order: backend #12, #13, #10 (any order); then frontend #6 (close #4), then #5 rebased.
+- 2026-11-19 (Opus planner): New rule in the playbook (one branch and one PR per task; executors never start sessions or branches). #14/#15/#16 and frontend #7 came from sessions started by B4a; all four verified. Ready in merge order: backend #12, #13, #10, #16 (no shared files), plan #9; frontend #6 (R0, then close #4). Fixes pending: #15 (P1), #14, frontend #7, frontend #5 (rebase onto R0 + browser check). Branches of merged PRs to delete (needs Jonathan): backend `planv3/a2a3-review-fixes`, `fix/inline-queue-full-requeue`, `claude/planv2-a2-a3-imports-seed-418791`, `planv2/b3-today`, `planv2/a1-company-pack`, `phase0/slim-private-extraction`; frontend `planv2/b1-b2-plain-ui`.
+- 2026-11-19 (Opus planner): Added 10.8 (gaps G1-G8 from the old-UI screenshots and Jonathan's direction); remaining days re-ordered by it. Proposed G7 (bug sweep, backend) and B4b (review, frontend). Merge list unchanged: #12, #13, #10, #16, #9, frontend #6.
+- 2026-11-19 (Opus planner): Recorded Jonathan's relayed decisions (Neon only, `uat` branch, standing merge approval, demo accounts, U1 moved to Mon 23, Codex builds D2, cuts). Standing merge approval and the `uat` branch wait for his confirmation in the planner session. The Neon MCP needs authorising (`/mcp`) before the planner can create `uat`.
+- 2026-11-20 (Opus planner): Playbook: Codex-status rule added. #17 (G7) gates pass and fix 2 failing tests; Codex 2x P2, sent. Frontend #8 (B4b) gates pass; Codex 2x P1 (submits a revision the accountant never saw; edits lost during save) + 5x P2, sent. Sessions that hit the usage limit (choose-type #15/#7, reread #14, B4a #5) resumed. Still waiting on Jonathan: confirmation of standing merge approval and the Neon `uat` branch (Neon MCP needs /mcp authorisation).
+- 2026-11-20 (Opus planner): #14 at `a58dfe2`: round-1 Codex fixes verified (suite same 56 names, reread 33/33); round 2 found three P2 races, sent as the final round. **First SC3 evidence on the new architecture:** E1 local re-read of the 64 trading-pack documents with AI on (text mode, INLINE_WORKERS=1, 19 Nov 08:52-09:07 UTC at `0497743`): 64/64 read, 43 extracted and 21 exceptions, processing_seconds mean 12.7 s, **p95 18.9 s** (target <= 20 s). Local laptop only; the hosted measurement comes with U1/I5.
+- 2026-11-20 (Opus planner): #15 `ac77003` P1 (duplicate check skipped person-chosen invoices) fixed; Codex confirms it closed. Round-2 P2s sent as the final round (duplicate check must fail closed if type history is unavailable; bill number editable after choosing bill; frontend #7 "unread" label on read documents). AI Assist profile finding skipped (panel replaced in G6). #17 `ddfca2e` ready apart from the update after #13 (conflict in `documents/routes.py`). Merge chain once approved: #12, #13, #10, #16, #9, frontend #6; then #15 and #17 (after update), #14 (after #10), frontend #5, #7, #8 after their fixes.
+- 2026-11-20 (Opus planner): #14 `f9f0656` verified (reread 36/36, suite same 56 names); ready after #10 + update. Frontend #8 `a94d587`: gates pass (119/0); original P1s closed, but Codex round 2 found two new P1s (Enter overwrites a correction with the machine candidate; line items editable during save) + 2 P2; sent to B4b.
+- 2026-11-20 (Opus planner): #15 `e4a0a14` final round verified (duplicate check fails closed; bill number correctable; suite same 56 names, 1444 passed; 50/50 Postgres). Frontend #7 `60a62d4` verified ("unread" decided from the result; 108/0, build clean). Both ready: #15 after #13 merges + update; frontend #7 after #6.
+- 2026-11-20 (Opus planner): Frontend #8 `3fdf514`: both P1s closed (Codex), gates pass (123/0); last three P2s (candidate controls and navigation mid-save, unknown page caption) with B4b, resumed after the usage limit. **At risk:** nothing has merged since #11 on 18 Nov; 11 PRs are verified or nearly so but wait on Jonathan's merge decision. Fri 20 work (G3, B5b, C1+G2) is held so the queue does not grow (playbook rule 3).
+- 2026-11-20 (Opus planner): Frontend #8 `919ea52` ready: all Codex findings fixed (P1s confirmed closed by Codex; last P2s verified by tests); typecheck/lint/build pass, `npm test` 126/0 fail. Merges after #6 (it does not depend on #7, #5).

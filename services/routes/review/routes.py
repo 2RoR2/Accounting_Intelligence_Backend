@@ -91,3 +91,5 @@ def register(router, handlers):
     router.add_api_route('/api/notifications', list_notifications, methods=['GET'])
     router.add_api_route('/api/notifications/{notification_id}/read', mark_notification_read, methods=['PATCH'])
     router.add_api_route('/api/workload', list_workload, methods=['GET'])
+    from .lanes import register as register_lanes  # Review lanes and bulk submit / approve (B5a).
+    register_lanes(router)

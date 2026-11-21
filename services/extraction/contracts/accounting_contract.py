@@ -316,15 +316,19 @@ def json_safe(value):
     return value
 
 
-def approved_snapshot(document, extraction, fields, items):
-    """Build a new snapshot only; callers must enforce actual approval gates."""
+def approved_snapshot(document, extraction, fields, items, classification=None):
+    """Build a new snapshot only; callers must enforce actual approval gates.
+
+    ``classification`` is a person's type choice for this extraction (kind_choice); when
+    given it is what the type gate checks. The extraction itself is copied unchanged.
+    """
     if document.get('kind') not in {'invoice', 'bill', 'receipt', 'credit_note', 'debit_note'}:
         raise ValueError('Document kind must be explicitly confirmed.')
     if document.get('category') not in {'accounts_payable', 'accounts_receivable'}:
         raise ValueError('Business direction must be explicitly confirmed.')
     raw = extraction.get('raw_json') or {}
     if raw.get('mode') == 'module2_public_result':
-        classification = raw.get('document_type') or {}
+        classification = classification or raw.get('document_type') or {}
         if classification.get('status') != 'classified' or classification.get('value') != document['kind']:
             raise ValueError('Unknown or conflicting document classification requires review.')
     values = record_values(fields)

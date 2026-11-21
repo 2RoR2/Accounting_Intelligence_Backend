@@ -98,6 +98,106 @@ set `AI_EXTRACTION=text` with a provider key (section 7) to see documents reach 
 pack's bank layout (`dr_cr`) is not readable by the bank CSV parser yet (task C5), so the seed
 imports those rows through the bank import's JSON form instead.
 
+### Re-read the demo documents after turning AI on
+
+Re-running the seed skips documents that already exist, and "Read again" in the app only takes
+failed documents. After you set `AI_EXTRACTION=text` and a provider key (section 7), read the
+stored documents again with the new settings:
+
+```powershell
+.venv\Scripts\python services\admin\manage.py reread-documents --pack trading --dry-run
+.venv\Scripts\python services\admin\manage.py reread-documents --pack trading
+```
+
+`--pack` names the seeded company; use `--company "<exact name>"` for any other company. The
+command has the same local-only guard as the seed (`APP_ENV=development`, a `127.0.0.1`/`localhost`
+`DATABASE_URL`, no `S3_BUCKET`). It prints one line per document and a summary; `--dry-run`
+changes nothing. By default it re-reads documents in `exception` ("needs fixing"), `extracted` or
+`failed`; narrow that with `--status exception,failed` and `--limit 5`. It never touches a document
+that someone corrected, submitted, reviewed or approved, one that already has an open job, or one
+past review. Each re-read is a new extraction attempt in the normal queue (earlier attempts are
+kept and the audit log records `extraction.reread_scheduled`). The command then runs the reading
+in its own process with its own settings and waits (`--timeout-minutes`, default 30). Until then
+it holds the jobs, so a backend that is running with other settings does not take them. Finally
+it prints the new statuses with the average and p95 reading time of the documents it read.
+It dispatches only the documents it listed, never other waiting jobs of the company. At the
+timeout (or Ctrl+C) it stops handing out work, closes the unfinished jobs, marks those documents
+`failed`, lists them and exits with code 3 without waiting for a reading in progress; run it
+again with `--status failed` to finish them. The timeout counts from the moment the first job is
+queued, and nothing new starts after it. A document that cannot be handed to a worker is listed
+and marked `failed` while the others carry on. `--no-wait` queues the jobs without a hold and
+leaves them to the running backend.
+
+### UAT test accounts: each teammate signs in with their own email (plan v3, E1)
+
+Real sign-in codes sent to real team addresses, against a local database. The addresses live only
+in your `.env` (git-ignored) and in the local database, never in the repository.
+
+Add to `.env` (the variable names are in `.env.example`):
+
+| Variable | Set it to |
+|---|---|
+| `APP_ENV` | `development` |
+| `EMAIL_PROVIDER` | `brevo` |
+| `BREVO_API_KEY`, `BREVO_FROM_EMAIL`, `BREVO_FROM_NAME` | the team's Brevo key and a sender address verified in Brevo |
+| `UAT_TEST_EMAILS` | comma separated `email` or `email:role`. The role is `accountant` (the default), `local_admin` or `super_admin`, and at least one entry must be a `local_admin`. Shape: `you@example.com:local_admin,teammate@example.com` |
+| `UAT_TEST_PASSWORD` | optional: the password new test users get (8+ characters, upper and lower case, a number and a symbol). Without it the command asks for one. |
+
+From an empty database to a signed-in teammate:
+
+```powershell
+docker compose up -d db
+.venv\Scripts\python services\admin\manage.py migrate
+.venv\Scripts\python services\admin\manage.py seed-demo-company --pack trading
+.venv\Scripts\python services\admin\manage.py create-test-users
+.venv\Scripts\python -m uvicorn main:app --host 127.0.0.1 --port 8000
+```
+
+Then start the frontend in a second terminal (section 5, with `BACKEND_URL=http://127.0.0.1:8000`).
+
+`create-test-users` adds every `UAT_TEST_EMAILS` address to the trading demo company. Use
+`--pack services` or `--pack fnb` for the other demo companies, or `--company "Exact name"` for any
+company. It prints each address masked (`f***@e***.com`) with what it did: `create`, `update` or
+`unchanged`.
+
+- **Running it again:** after you change the list, it creates the new addresses and applies role
+  changes; everyone else is left alone. Taking an address out of the list does not delete its
+  account.
+- **Passwords:** existing users keep their password unless you add `--reset-passwords`, which also
+  signs them out.
+- **Work to do:** an accountant sees only documents they own or are assigned, and the seeded
+  documents belong to the demo accountant. So the command shares the company's unassigned
+  documents among the test accountants, in turn. Add `--no-assign` to skip this. Documents
+  someone already holds are left alone.
+- **Limits:** it never moves an account that belongs to another company, and it raises the
+  company's seat limit when the list needs more seats. It refuses to run against anything but a
+  local database, with the same check as `seed-demo-company`.
+
+Then open <http://localhost:3000> and sign in with your email and the test password:
+
+- **Accountant:** a 6-digit code arrives by email from the Brevo sender. It is valid for 60
+  seconds; use "Resend code" if it expires. Check the spam folder the first time.
+- **Local admin or super admin:** the first sign-in shows a QR code. Scan it with an authenticator
+  app (Google Authenticator, Microsoft Authenticator, 1Password, Bitwarden, ...) and type the
+  6-digit code within 60 seconds. Later sign-ins ask for the app's current code. The codes depend
+  on the clock: if they are refused, check that the phone and the laptop set their time
+  automatically.
+
+For a lost or new phone, or an authenticator that stopped working, reset the authenticator. One
+cause: `AUTH_SECRET` encrypts the stored authenticator secrets, so changing it breaks them all.
+
+```powershell
+.venv\Scripts\python services\admin\manage.py reset-mfa --email <their email>
+```
+
+This clears the authenticator and signs that user out everywhere; the next sign-in shows a new QR
+code. It works only for active local admins and super admins (accountants have no authenticator).
+
+If an accountant sees "Unable to send sign-in code" (HTTP 503), the email settings are wrong or
+Brevo refused the message. Check `EMAIL_PROVIDER` and `BREVO_API_KEY`, check that
+`BREVO_FROM_EMAIL` is a verified sender, and look for the API log line
+`Login OTP delivery failed: ... (HTTP <status>)`.
+
 Or create your own accounts:
 
 ```powershell

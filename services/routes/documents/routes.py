@@ -108,6 +108,8 @@ from database.object_storage.object_store import local_storage_root, document_ke
 from validation.documents.document_validation import validation_outcome
 from validation.documents.references import accepted_reviews, REVIEW_ACTION
 from services.extraction.contracts.accounting_contract import effective_value, json_safe
+from services.extraction.persistence.auto_kind import read_kind, stored_kind_or_auto
+from services.extraction.persistence.kind_choice import CHOOSABLE_KINDS, CHOOSABLE_STATUSES, choose_kind, chosen_classification
 from services.extraction.contracts.currency_review import build_currency_review, decision_details
 from starlette.background import BackgroundTask
 
@@ -131,6 +133,8 @@ CORRECTABLE_FIELDS = CORRECTABLE_MONEY_FIELDS | frozenset({
     'payment_terms', 'received_date', 'expense_category', 'payment_reference',
     'purchase_order_number', 'goods_receipt_reference',
     'bill_reference', 'receipt_number',
+    # The printed bill number: the reader's key for bills, and the empty field a type choice adds.
+    'bill_number',
 })
 
 def list_documents(
@@ -243,7 +247,7 @@ def list_documents(
             WHERE {' AND '.join(clauses)}
             ORDER BY d.uploaded_at DESC
         """, params).fetchall()
-    return [{"id": str(r["id"]), "code": r["document_code"], "name": _display_filename(r["original_filename"], r["detected_identifier"], r["buyer_name"] if r["category"] == "accounts_receivable" else r["supplier_name"]), "originalFilename": r["original_filename"], "tenantId": str(r["tenant_id"]), "ownerId": str(r["owner_id"]), "assignedTo": str(r["assigned_to"]) if r["assigned_to"] else None, "kind": r["kind"].upper(), "category": r["category"].upper(), "status": r["status"].upper(), "mimeType": r["mime_type"], "fileSize": r["file_size_bytes"], "seconds": float(r["processing_seconds"]) if r["processing_seconds"] is not None else 0, "totalAmount": float(r["total_amount"]) if r["total_amount"] is not None else None, "supplier": r["supplier_name"], "customer": r["buyer_name"], "dueDate": r["due_date_value"], "createdAt": str(r["uploaded_at"]), "updatedAt": str(r["updated_at"])} for r in rows]
+    return [{"id": str(r["id"]), "code": r["document_code"], "name": _display_filename(r["original_filename"], r["detected_identifier"], r["buyer_name"] if r["category"] == "accounts_receivable" else r["supplier_name"]), "originalFilename": r["original_filename"], "tenantId": str(r["tenant_id"]), "ownerId": str(r["owner_id"]), "assignedTo": str(r["assigned_to"]) if r["assigned_to"] else None, **read_kind(r), "category": r["category"].upper(), "status": r["status"].upper(), "mimeType": r["mime_type"], "fileSize": r["file_size_bytes"], "seconds": float(r["processing_seconds"]) if r["processing_seconds"] is not None else 0, "totalAmount": float(r["total_amount"]) if r["total_amount"] is not None else None, "supplier": r["supplier_name"], "customer": r["buyer_name"], "dueDate": r["due_date_value"], "createdAt": str(r["uploaded_at"]), "updatedAt": str(r["updated_at"])} for r in rows]
 
 def get_document_detail(document_id: str, request: Request):
     user = require_workspace_user(request)
@@ -255,7 +259,7 @@ def get_document_detail(document_id: str, request: Request):
         r = db.execute(f"SELECT * FROM documents WHERE id=%s AND (%s IS NULL OR tenant_id=%s){visibility}", params).fetchone()
     if not r:
         raise HTTPException(404, "Document not found.")
-    return {"id": str(r["id"]), "code": r["document_code"], "name": r["original_filename"], "tenantId": str(r["tenant_id"]), "ownerId": str(r["owner_id"]), "assignedTo": str(r["assigned_to"]) if r["assigned_to"] else None, "kind": r["kind"].upper(), "category": r["category"].upper(), "status": r["status"].upper(), "mimeType": r["mime_type"], "fileSize": r["file_size_bytes"], "contentRevision": r["content_revision"], "createdAt": str(r["uploaded_at"]), "updatedAt": str(r["updated_at"])}
+    return {"id": str(r["id"]), "code": r["document_code"], "name": r["original_filename"], "tenantId": str(r["tenant_id"]), "ownerId": str(r["owner_id"]), "assignedTo": str(r["assigned_to"]) if r["assigned_to"] else None, **read_kind(r), "category": r["category"].upper(), "status": r["status"].upper(), "mimeType": r["mime_type"], "fileSize": r["file_size_bytes"], "contentRevision": r["content_revision"], "createdAt": str(r["uploaded_at"]), "updatedAt": str(r["updated_at"])}
 
 def get_document_file(document_id: str, request: Request):
     """Return an authorised private source file for preview/download."""
@@ -443,8 +447,13 @@ def support_view(record_id: str, data: CompanyReviewInput, request: Request):
 
 async def upload_document(request: Request, file: UploadFile = File(...), kind: str = "invoice", category: str = "accounts_payable"):
     user = require_workspace_user(request, {"local_admin", "accountant"})
-    if kind not in {"invoice", "bill", "receipt", "credit_note", "debit_note"} or category not in {"accounts_payable", "accounts_receivable"}:
+    from services.extraction.persistence.auto_kind import AUTO_KIND, PLACEHOLDER_KIND, pending_document_code
+    if kind not in {"invoice", "bill", "receipt", "credit_note", "debit_note", AUTO_KIND} or category not in {"accounts_payable", "accounts_receivable"}:
         raise HTTPException(422, "Invalid document kind or category.")
+    # kind=auto: the type is detected during reading. Until then the row keeps an
+    # allowed placeholder kind and a neutral DOC_ code, which marks it as not yet typed.
+    auto_kind = kind == AUTO_KIND
+    stored_kind = PLACEHOLDER_KIND if auto_kind else kind
     data = await file.read()
     if len(data) > 20 * 1024 * 1024:
         raise HTTPException(413, "This file exceeds the 20 MB limit. Choose a smaller file.")
@@ -481,9 +490,11 @@ async def upload_document(request: Request, file: UploadFile = File(...), kind: 
             duplicate = db.execute("SELECT id,document_code,original_filename FROM documents WHERE tenant_id=%s AND file_hash_sha256=%s ORDER BY uploaded_at,id LIMIT 1", (tenant_id, file_hash)).fetchone()
             if duplicate:
                 raise HTTPException(409, {"message": "This document is already uploaded.", "existingDocumentId": str(duplicate["id"]), "existingDocumentCode": duplicate["document_code"], "existingFilename": duplicate["original_filename"]})
-            row = db.execute("""INSERT INTO documents(id,tenant_id,owner_id,original_filename,kind,category,storage_path,mime_type,file_size_bytes,file_hash_sha256,status)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'queued') RETURNING *""",
-                (upload_id, tenant_id, user["id"], original_filename, kind, category, storage_value, file.content_type or "application/octet-stream", len(data), file_hash)).fetchone()
+            # An empty document_code lets the trigger assign KIND_100001; auto uploads pass DOC_ instead.
+            row = db.execute("""INSERT INTO documents(id,tenant_id,owner_id,original_filename,kind,category,storage_path,mime_type,file_size_bytes,file_hash_sha256,status,document_code)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'queued',%s) RETURNING *""",
+                (upload_id, tenant_id, user["id"], original_filename, stored_kind, category, storage_value, file.content_type or "application/octet-stream", len(data), file_hash,
+                 pending_document_code(upload_id) if auto_kind else '')).fetchone()
             # Upload and durable scheduling commit together. Dispatch only when
             # worker capacity is available; waiting is not active extraction.
             job = attempts.schedule_document(db,str(row['id']),str(tenant_id))
@@ -505,7 +516,7 @@ async def upload_document(request: Request, file: UploadFile = File(...), kind: 
         _processing_error(exc,row['id'],job['id'])
     return {"id":str(row["id"]),"code":row["document_code"],"name":row["original_filename"],
             "tenantId":str(row["tenant_id"]),"ownerId":str(row["owner_id"]),
-            "kind":kind.upper(),"category":category.upper(),**queued}
+            "kind":kind.upper(),"category":category.upper(),"kindDetected":not auto_kind,**queued}
 
 def standardise_document(document_id: str, request: Request):
     user = require_workspace_user(request, {"local_admin", "accountant"})
@@ -540,10 +551,13 @@ def standardise_document(document_id: str, request: Request):
         items = db.execute("SELECT * FROM line_items WHERE document_id=%s AND extraction_id=%s ORDER BY line_number", (document_id, extraction['id'])).fetchall()
         try:
             values = record_values(fields)
-            snapshot = approved_snapshot(doc, extraction, fields, items)
+            kind_decision = chosen_classification(db, doc, extraction)
+            snapshot = approved_snapshot(doc, extraction, fields, items, classification=kind_decision)
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
         snapshot['validationReviews'] = json_safe(list(accepted_reviews(db, doc).values()))
+        if kind_decision:
+            snapshot['documentTypeDecision'] = json_safe(kind_decision)
         if doc['kind'] == 'bill' and values.get('reference') is None:
             values['reference'] = values.get('bill_number') or values.get('bill_reference') or values.get('account_number')
         elif doc['kind'] == 'receipt' and values.get('reference') is None:
@@ -612,10 +626,11 @@ def get_document_extraction(document_id: str, request: Request):
     with connect() as db:
         ownership = ' AND (owner_id=%s OR assigned_to=%s)' if user['role'] == 'accountant' else ''
         params = [document_id, user['tenant_id']] + ([user['id'], user['id']] if ownership else [])
-        doc = db.execute('SELECT id,content_revision FROM documents WHERE id=%s AND tenant_id=%s' + ownership, params).fetchone()
+        doc = db.execute('SELECT id,tenant_id,kind,content_revision FROM documents WHERE id=%s AND tenant_id=%s' + ownership, params).fetchone()
         if not doc:
             raise HTTPException(404, "Document not found.")
         extraction = db.execute("SELECT * FROM raw_extractions WHERE document_id=%s AND is_current=true ORDER BY run_number DESC LIMIT 1", (document_id,)).fetchone()
+        kind_decision = chosen_classification(db, doc, extraction)
         fields = db.execute("SELECT * FROM field_predictions WHERE document_id=%s AND extraction_id=%s ORDER BY field_key", (document_id, extraction["id"] if extraction else None)).fetchall() if extraction else []
         items = db.execute("SELECT * FROM line_items WHERE document_id=%s AND extraction_id=%s ORDER BY line_number", (document_id, extraction["id"] if extraction else None)).fetchall() if extraction else []
         line_corrections = db.execute("""SELECT line_item_id,field_key,old_value,new_value,corrected_by,corrected_at
@@ -628,6 +643,8 @@ def get_document_extraction(document_id: str, request: Request):
             ({'value': extraction['raw_json']['predicted_document_type'], 'status': 'classified',
               'reason': 'STRUCTURED_SOURCE_TYPE_CODE', 'evidence': []}
              if extraction['raw_json'].get('predicted_document_type') in {'credit_note','debit_note'} else {})) if extraction else {}),
+        # A person's type choice for this extraction; "classification" stays what reading found.
+        "kindDecision": json_safe(kind_decision) if kind_decision else None,
         "raw": extraction["raw_json"] if extraction else {},
         "warnings": extraction_guidance(extraction["raw_json"] if extraction else {}, items),
         "fields": [prediction_dto(row) for row in fields],
@@ -1050,6 +1067,40 @@ def revalidate_document(document_id: str, request: Request):
     with connect() as db:
         return validate_document(db, document_id, user)
 
+
+class KindChoiceInput(BaseModel):
+    kind: str = Field(min_length=1, max_length=32)
+    expectedContentRevision: int = Field(strict=True, ge=1)
+
+
+def choose_document_kind(document_id: str, data: KindChoiceInput, request: Request):
+    """A person chooses the document type when reading could not settle it, then the checks run again.
+
+    Allowed until the document is submitted. The choice is audited and counts as the classification
+    for the current extraction only (kind_choice); approval by a local admin is still required.
+    """
+    user = require_workspace_user(request, {"local_admin", "accountant"})
+    kind = data.kind.strip().lower()
+    if kind not in CHOOSABLE_KINDS:
+        raise HTTPException(422, "Choose invoice, bill, receipt, credit note or debit note.")
+    with connect() as db:
+        document = _lock_workspace_document(db, document_id, user)
+        if document['status'] not in CHOOSABLE_STATUSES:
+            raise HTTPException(409, "This document has been submitted or approved, so its type cannot be changed here.")
+        if data.expectedContentRevision != document['content_revision']:
+            raise HTTPException(409, "The document changed. Refresh it before choosing its type.")
+        extraction = db.execute('SELECT * FROM raw_extractions WHERE document_id=%s AND is_current=true', (document_id,)).fetchone()
+        if not extraction:
+            raise HTTPException(422, "The document has not been read yet. Wait for reading to finish, or read it again.")
+        try:
+            chosen = choose_kind(db, document, extraction, kind, user)
+        except LookupError as exc:
+            raise HTTPException(409, "The document changed. Refresh it before choosing its type.") from exc
+        validation = validate_document(db, document_id, user)
+    return {"documentId": document_id, "kind": kind.upper(), "code": chosen['document_code'], "kindDetected": True,
+            "previousKind": str(chosen['previous_kind']).upper(), "contentRevision": chosen['content_revision'],
+            "fieldsAdded": chosen['fields_added'], "validation": validation}
+
 def save_document_draft(document_id: str, request: Request):
     user = require_workspace_user(request, {"local_admin", "accountant"})
     with connect() as db:
@@ -1317,7 +1368,7 @@ def download_document_version(document_id: str, version_id: str, request: Reques
 def document_kind_workflow(document_id: str, request: Request):
     user = require_workspace_user(request)
     with connect() as db:
-        doc = db.execute("SELECT id,kind,status,updated_at FROM documents WHERE id=%s AND tenant_id=%s", (document_id, user["tenant_id"])).fetchone()
+        doc = db.execute("SELECT id,kind,document_code,status,updated_at FROM documents WHERE id=%s AND tenant_id=%s", (document_id, user["tenant_id"])).fetchone()
         if not doc: raise HTTPException(404, "Document not found.")
         fields = db.execute("""SELECT field_key,current_value,normalized_value FROM field_predictions
             WHERE document_id=%s ORDER BY created_at DESC""", (document_id,)).fetchall()
@@ -1332,7 +1383,7 @@ def document_kind_workflow(document_id: str, request: Request):
             FROM document_reconciliations r JOIN documents d ON d.id=r.related_document_id
             WHERE r.tenant_id=%s AND r.source_document_id=%s""", (user["tenant_id"], document_id)).fetchall()
     due = values.get("due") or values.get("due_date")
-    return {"kind": doc["kind"].upper(), "fields": values, "overdue": bool(due and str(due) < datetime.now(timezone.utc).date().isoformat()), "duplicates": [{"id": str(r["id"]), "code": r["document_code"], "name": r["original_filename"], "kind": r["kind"]} for r in duplicates], "relatedNotes": [{"id": str(r["id"]), "relationType": r["relation_type"], "amount": r["amount"], "code": r["document_code"], "kind": r["kind"]} for r in links]}
+    return {**read_kind(doc), "fields": values, "overdue": bool(due and str(due) < datetime.now(timezone.utc).date().isoformat()), "duplicates": [{"id": str(r["id"]), "code": r["document_code"], "name": r["original_filename"], "kind": stored_kind_or_auto(r)} for r in duplicates], "relatedNotes": [{"id": str(r["id"]), "relationType": r["relation_type"], "amount": r["amount"], "code": r["document_code"], "kind": stored_kind_or_auto(r)} for r in links]}
 
 def bulk_document_action(data: BulkActionInput, request: Request):
     user = require_workspace_user(request, {"local_admin", "accountant"})
@@ -1379,6 +1430,7 @@ def register(router, handlers):
     router.add_api_route('/api/documents/{document_id}/line-items', add_line_item, methods=['POST'], status_code=201)
     router.add_api_route('/api/records/{record_id}/amendments', request_record_amendment, methods=['POST'], status_code=201)
     router.add_api_route('/api/documents/{document_id}/revalidate', revalidate_document, methods=['POST'])
+    router.add_api_route('/api/documents/{document_id}/kind', choose_document_kind, methods=['PATCH'])
     router.add_api_route('/api/documents/{document_id}/validation-review', accept_validation_review, methods=['POST'])
     router.add_api_route('/api/documents/{document_id}/draft', save_document_draft, methods=['POST'])
     router.add_api_route('/api/documents/{document_id}/review', submit_document_review, methods=['POST'])
