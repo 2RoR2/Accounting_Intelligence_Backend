@@ -322,3 +322,33 @@ def test_read_again_uses_the_reread_path_and_refuses_review_history(company):
         actions = [r['action'] for r in db.execute(
             "SELECT action FROM audit_logs WHERE resource=%s ORDER BY created_at", (fresh,)).fetchall()]
     assert actions == ['extraction.reread_scheduled', 'extraction.read_again_requested']
+
+
+def test_undetected_auto_upload_lists_with_readable_name_and_kind_auto(company):
+    from services.extraction.persistence.auto_kind import pending_document_code
+    connect, ids = company
+    admin = _as(ids['admin'], ids['tenant'], 'local_admin')
+    with connect() as db:
+        def auto_upload():
+            document_id = uuid4()
+            # As upload_document(kind=auto) stores it: placeholder kind and a DOC_ code until the type is detected.
+            db.execute("""INSERT INTO documents(id,tenant_id,owner_id,original_filename,kind,category,storage_path,mime_type,
+                    file_size_bytes,file_hash_sha256,status,uploaded_at,document_code)
+                VALUES (%s,%s,%s,'images (3).png','invoice','accounts_payable','synthetic/none.png','image/png',100,%s,
+                    'exception',%s,%s)""",
+                       (document_id, ids['tenant'], ids['admin'], _hash(), TODAY, pending_document_code(document_id)))
+            return document_id
+
+        read, unread = auto_upload(), auto_upload()
+        extraction = db.execute("""INSERT INTO raw_extractions(document_id,run_number,is_current,routing_decision,raw_json)
+            VALUES (%s,1,true,'parser_only','{}') RETURNING id""", (read,)).fetchone()['id']
+        for key, value in (('supplier', 'Kedai Runcit Ah Seng'), ('receipt', 'CS054592')):
+            db.execute("""INSERT INTO field_predictions(extraction_id,document_id,field_key,field_label,extraction_state,
+                    raw_value,normalized_value) VALUES (%s,%s,%s,%s,'resolved',%s,%s)""", (extraction, read, key, key, value, value))
+    rows = _listing(connect, admin)
+    assert {k: rows[str(read)][k] for k in ('name', 'originalFilename', 'kind', 'kindDetected')} == \
+        {'name': 'Kedai Runcit Ah Seng CS054592', 'originalFilename': 'images (3).png', 'kind': 'AUTO', 'kindDetected': False}
+    assert {k: rows[str(unread)][k] for k in ('name', 'kind', 'kindDetected')} == \
+        {'name': 'images (3).png', 'kind': 'AUTO', 'kindDetected': False}
+    # A typed document keeps its stored kind alongside the readable name.
+    assert (rows[str(ids['work'][0])]['kind'], rows[str(ids['work'][0])]['kindDetected']) == ('BILL', True)
