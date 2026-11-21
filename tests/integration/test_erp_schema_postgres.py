@@ -146,3 +146,37 @@ def test_tenant_scoped_keys_and_new_journal_source():
         with pytest.raises(psycopg.errors.CheckViolation):  # a posted document cannot go back to draft
             db.execute("UPDATE erp_document_headers SET status='draft' WHERE id=%s", (document,))
         db.rollback()
+
+
+def test_database_with_latest_update_prototype_tables_is_upgraded_without_losing_data():
+    """A database that served latest_update's request-time ERP tables: they become legacy_*, contacts join the shared lists."""
+    prototype = (Path(__file__).resolve().parent / 'fixtures' / 'latest_update_erp_prototype.sql').read_text(encoding='utf-8')
+    with scratch_database() as url, psycopg.connect(url, row_factory=dict_row) as db:
+        db.execute(_previous_schema())
+        db.execute("CREATE TABLE schema_migrations (name TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())")
+        for migration in sorted(MIGRATIONS.glob('*.sql')):
+            if migration.name < '20261122':
+                db.execute("INSERT INTO schema_migrations(name) VALUES (%s)", (migration.name,))
+        db.execute(prototype)
+        tenant = db.execute("INSERT INTO tenants(name,registration_number,admin_email) VALUES ('Proto','P1','a@x.test') RETURNING id").fetchone()['id']
+        db.execute("INSERT INTO vendors(tenant_id,vendor_name) VALUES (%s,'Existing Supplier')", (tenant,))
+        db.execute("""INSERT INTO erp_contacts(tenant_id,kind,legal_name,email) VALUES
+            (%s,'supplier','Existing Supplier','dup@x.test'),(%s,'supplier','New Supplier','new@x.test'),
+            (%s,'customer','Typed Customer',NULL),(%s,'employee','Staff One',NULL)""", (tenant,) * 4)
+        db.execute("""INSERT INTO erp_document_headers(tenant_id,document_type,document_number,total_amount)
+            VALUES (%s,'invoice','IV-00001',100)""", (tenant,))
+        db.commit()
+        assert apply_migrations(db, SCHEMA, MIGRATIONS) == ['20261122_erp_module.sql']
+        check_runtime_schema(db)
+        tables = _tables(db)
+        assert {'legacy_erp_contacts', 'legacy_erp_document_headers'} <= tables and ERP_TABLES <= tables
+        assert db.execute("SELECT count(*) AS n FROM legacy_erp_document_headers").fetchone()['n'] == 1
+        vendors = {r['vendor_name']: r['email'] for r in db.execute("SELECT vendor_name,email FROM vendors WHERE tenant_id=%s", (tenant,))}
+        assert vendors == {'Existing Supplier': None, 'New Supplier': 'new@x.test'}  # the existing row wins
+        assert db.execute("SELECT customer_name FROM customers WHERE tenant_id=%s", (tenant,)).fetchone()['customer_name'] == 'Typed Customer'
+        assert db.execute("SELECT legal_name FROM erp_employees WHERE tenant_id=%s", (tenant,)).fetchone()['legal_name'] == 'Staff One'
+        vendor = db.execute("SELECT id FROM vendors WHERE tenant_id=%s AND vendor_name='New Supplier'", (tenant,)).fetchone()['id']
+        db.execute("INSERT INTO erp_document_headers(tenant_id,document_type,document_number,vendor_id) VALUES (%s,'bill','BL-1',%s)",
+                   (tenant, vendor))
+        db.commit()
+        assert apply_migrations(db, SCHEMA, MIGRATIONS) == []

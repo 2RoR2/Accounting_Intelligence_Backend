@@ -3591,6 +3591,45 @@ CREATE TABLE IF NOT EXISTS erp_employees (
     UNIQUE (id, tenant_id)
 );
 
+-- ---------------------------------------------------------------- latest_update prototype tables
+-- A database that served latest_update's ERP requests already has request-time versions of these tables
+-- with other columns. They are kept, renamed legacy_*, so no data is lost and the tables below can be
+-- created; their contacts are copied into the shared lists (same name = same contact, skipped).
+DO $$
+DECLARE
+    t TEXT;
+    prototype BOOLEAN;
+BEGIN
+    prototype := to_regclass('public.erp_contacts') IS NOT NULL
+        OR (to_regclass('public.erp_document_headers') IS NOT NULL AND NOT EXISTS (
+            SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='erp_document_headers' AND column_name='vendor_id'));
+    IF prototype THEN
+        FOREACH t IN ARRAY ARRAY['erp_contacts','erp_products','erp_catalog_entries','erp_document_headers','erp_document_links',
+                                 'erp_document_events','erp_document_shares','erp_number_counters',
+                                 'myinvois_consolidated_documents','myinvois_consolidated_submissions'] LOOP
+            IF to_regclass('public.' || t) IS NOT NULL AND to_regclass('public.legacy_' || t) IS NULL THEN
+                EXECUTE format('ALTER TABLE %I RENAME TO %I', t, 'legacy_' || t);
+            END IF;
+        END LOOP;
+        FOREACH t IN ARRAY ARRAY['idx_erp_documents_list','idx_erp_contacts_list','idx_erp_products_list'] LOOP
+            IF to_regclass('public.' || t) IS NOT NULL AND to_regclass('public.legacy_' || t) IS NULL THEN
+                EXECUTE format('ALTER INDEX %I RENAME TO %I', t, 'legacy_' || t);
+            END IF;
+        END LOOP;
+    END IF;
+    IF to_regclass('public.legacy_erp_contacts') IS NOT NULL THEN
+        INSERT INTO vendors(tenant_id,vendor_name,registration_number,address,contact_code,email,phone,city,state,postcode,fields,is_active)
+            SELECT tenant_id,legal_name,registration_number,address,code,email,phone,city,state,postcode,fields,is_active
+            FROM legacy_erp_contacts WHERE kind='supplier' ON CONFLICT (tenant_id, vendor_name) DO NOTHING;
+        INSERT INTO customers(tenant_id,customer_name,registration_number,address,contact_code,email,phone,city,state,postcode,fields,is_active)
+            SELECT tenant_id,legal_name,registration_number,address,code,email,phone,city,state,postcode,fields,is_active
+            FROM legacy_erp_contacts WHERE kind='customer' ON CONFLICT (tenant_id, customer_name) DO NOTHING;
+        INSERT INTO erp_employees(tenant_id,legal_name,registration_number,address,contact_code,email,phone,city,state,postcode,fields,is_active)
+            SELECT tenant_id,legal_name,registration_number,address,code,email,phone,city,state,postcode,fields,is_active
+            FROM legacy_erp_contacts WHERE kind='employee' ON CONFLICT (tenant_id, legal_name) DO NOTHING;
+    END IF;
+END $$;
+
 -- ---------------------------------------------------------------- products and catalog (L3)
 CREATE TABLE IF NOT EXISTS erp_products (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
