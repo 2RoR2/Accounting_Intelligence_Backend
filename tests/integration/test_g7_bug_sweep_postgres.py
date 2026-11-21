@@ -304,3 +304,21 @@ def test_document_list_shows_supplier_and_number_and_keeps_the_filename(company)
     assert rows[str(document)]['originalFilename'] == 'images (2).png'
     # Nothing read yet: the original filename stays.
     assert rows[str(ids['work'][1])]['name'] == 'images (2).png'
+
+
+def test_read_again_uses_the_reread_path_and_refuses_review_history(company):
+    connect, ids = company
+    admin = _as(ids['admin'], ids['tenant'], 'local_admin')
+    reviewed, fresh = str(ids['failed'][0]), str(ids['failed'][1])
+    with connect() as db:
+        db.execute("""INSERT INTO review_submissions(document_id,tenant_id,submitted_by,decision,content_revision)
+            VALUES (%s,%s,%s,'submitted',1)""", (reviewed, ids['tenant'], ids['admin']))
+    result, _ = _read_again(connect, admin, documentIds=[reviewed, fresh])
+    outcome = {r['id']: (r['outcome'], r.get('reasonCode')) for r in result['results']}
+    assert outcome == {reviewed: ('skipped', 'REVIEW_HISTORY'), fresh: ('queued', None)}
+    assert _one(connect, "SELECT status FROM documents WHERE id=%s", (reviewed,))['status'] == 'failed'
+    # #14's schedule_reread audits the system side; read-again adds the user's row.
+    with connect() as db:
+        actions = [r['action'] for r in db.execute(
+            "SELECT action FROM audit_logs WHERE resource=%s ORDER BY created_at", (fresh,)).fetchall()]
+    assert actions == ['extraction.reread_scheduled', 'extraction.read_again_requested']

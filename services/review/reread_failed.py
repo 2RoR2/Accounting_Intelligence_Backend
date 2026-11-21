@@ -1,8 +1,8 @@
 """Read failed documents again, in bulk, with the current reading settings (plan v3, G7).
 
 Documents the old engine (or a provider outage) left FAILED are queued for a fresh
-extraction attempt through the same durable path as the single-document retry
-(`attempts.reserve_dispatch(retry=True)`): earlier attempts are kept, the document goes
+extraction attempt through the re-read path of `manage.py reread-documents`
+(`attempts.schedule_reread`): earlier attempts are kept, the document goes
 back to `queued`, and whichever reader the API runs now (lite engine, current AI setting)
 reads it. Nothing is approved or posted.
 
@@ -42,8 +42,8 @@ REASONS = {
     "ATTEMPT_BUDGET_USED": f"Already read again {READ_AGAIN_LIMIT} times; open it to check the file.",
     "AMENDMENT_REQUIRED": "Already reviewed or approved; it needs an amendment instead.",
     "JOB_ALREADY_OPEN": "Already being read.",
-    "DOCUMENT_NOT_RETRYABLE": "Its status changed before it could be queued.",
-    "JOB_NOT_DISPATCHABLE": "Its reading job could not be queued.",
+    "REVIEW_HISTORY": "Has corrections or review history; it needs an amendment instead.",
+    "DOCUMENT_NOT_REREADABLE": "Its status changed before it could be queued.",
     "ERROR": "Could not be queued; try again.",
 }
 
@@ -125,7 +125,9 @@ def _queue_one(user, document):
                           (tenant_id, document_id, AUDIT_ACTION)).fetchone()["n"]
         if used >= READ_AGAIN_LIMIT:
             raise attempts.AttemptRejected("ATTEMPT_BUDGET_USED")
-        job = attempts.reserve_dispatch(db, document_id, tenant_id, retry=True, defer=True)
+        # The same re-read path as `manage.py reread-documents` (#14): keeps earlier attempts,
+        # refuses review history and open jobs, audits extraction.reread_scheduled.
+        job = attempts.schedule_reread(db, document_id, tenant_id)
         db.execute("""INSERT INTO audit_logs(tenant_id,user_id,user_name,role,action,resource,details)
             VALUES (%s,%s,%s,%s,%s,%s,%s)""",
             (tenant_id, user["id"], user.get("name", "Workspace user"), user["role"], AUDIT_ACTION, document_id,
