@@ -331,3 +331,22 @@ def test_a_journal_in_a_closed_period_cannot_be_reversed(ledger):
             with connect() as db:
                 db.execute("UPDATE accounting_periods SET status='open' WHERE id=%s", (ids['period'],))
     assert error.value.status_code == 409 and 'is closed' in error.value.detail
+
+
+def test_coding_a_bank_line_without_a_suggestion_is_saved_as_manual(ledger):
+    """The review screen sends decision 'accepted' with no suggestion; that used to break the table check (503)."""
+    from services.routes.bank import routes as bank
+    connect, ids = ledger
+    with connect() as db:
+        account = db.execute("INSERT INTO coa_accounts(tenant_id,code,name,account_class) VALUES (%s,'6230','Bank charges','expense') RETURNING id",
+                             (ids['tenant'],)).fetchone()['id']
+        imported = db.execute("""INSERT INTO bank_imports(tenant_id,source_bank_account_ref,source_hash,input_format,mapping_version,imported_by,status)
+            VALUES (%s,'1234','{}','csv','v1',%s,'confirmed') RETURNING id""".format('a' * 64), (ids['tenant'], ids['admin'])).fetchone()['id']
+        line = db.execute("""INSERT INTO bank_transactions(tenant_id,import_id,source_row,posted_date,description,debit_decimal,
+                signed_amount_decimal,direction,currency,fingerprint)
+            VALUES (%s,%s,1,%s,'SERVICE CHARGE','5.00','-5.00','money_out','MYR',%s) RETURNING id""",
+                          (ids['tenant'], imported, DAY, 'b' * 64)).fetchone()['id']
+    user = {'tenant_id': ids['tenant'], 'id': ids['admin'], 'name': 'Admin', 'role': 'local_admin'}
+    with patch.multiple(bank, connect=connect, require_workspace_user=lambda *_args: user):
+        saved = bank.code_bank_transaction(str(line), bank.BankCodingInput(accountId=str(account), decision='accepted'), None)
+    assert saved['decision'] == 'manual' and saved['reason'] == 'Account chosen by the reviewer'
