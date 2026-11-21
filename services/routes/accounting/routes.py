@@ -71,7 +71,8 @@ class AdjustmentPostingInput(BaseModel):
     periodId: str
     debitAccountId: str
     creditAccountId: str
-    amount: Decimal = Field(gt=0)
+    # Same precision as a journal line, so a bad amount is a 422 here rather than an error building the lines.
+    amount: Decimal = Field(gt=0, max_digits=18, decimal_places=2)
     journalDate: date
     adjustmentKind: str
     description: str = "Approved document adjustment"
@@ -123,7 +124,7 @@ def record_journal(db, user, data: JournalInput):
         if not settlement:
             raise HTTPException(404, "Settlement not found.")
         linked = db.execute("""SELECT id,idempotency_key FROM journal_headers
-            WHERE tenant_id=%s AND source_type='settlement' AND source_id=%s""",
+            WHERE tenant_id=%s AND source_type='settlement' AND source_id=%s AND status='posted'""",
             (user["tenant_id"], source_id)).fetchall()
         if any(journal["idempotency_key"] != data.idempotencyKey for journal in linked):
             raise HTTPException(409, "A journal already records this settlement.")
@@ -212,18 +213,24 @@ def post_supplier_payment(transaction_id: str, data: SupplierPaymentPostingInput
         if not currency or currency != bank_currency:
             raise HTTPException(409, "The bank transaction and settlement currencies do not agree.")
 
-        idempotency_key = f"supplier-payment:{settlement['id']}"
-        existing_journals = db.execute("""SELECT id,status,source_type,source_id FROM journal_headers
-            WHERE tenant_id=%s AND ((source_type='settlement' AND source_id=%s) OR idempotency_key=%s)
-            FOR UPDATE""", (user["tenant_id"], settlement["id"], idempotency_key)).fetchall()
-        if len(existing_journals) > 1:
+        # One effective (posted) journal per settlement. A reversed one no longer counts, so a corrected payment
+        # can be posted after a reversal; its key names the reversed journal, so retries stay idempotent.
+        settlement_journals = db.execute("""SELECT id,status,idempotency_key FROM journal_headers
+            WHERE tenant_id=%s AND source_type='settlement' AND source_id=%s
+            ORDER BY posted_at, id FOR UPDATE""", (user["tenant_id"], settlement["id"])).fetchall()
+        effective = [journal for journal in settlement_journals if journal["status"] == "posted"]
+        if len(effective) > 1:
             raise HTTPException(409, "Multiple journals are linked to this supplier payment; review the ledger before continuing.")
-        if existing_journals:
-            existing = existing_journals[0]
-            if existing["source_type"] != "settlement" or existing["source_id"] != settlement["id"]:
-                raise HTTPException(409, "A journal already uses this supplier payment idempotency key.")
-            if existing["status"] != "posted":
-                raise HTTPException(409, "The supplier payment journal exists but is not posted; review it before continuing.")
+        reversed_journals = [journal for journal in settlement_journals if journal["status"] == "reversed"]
+        idempotency_key = f"supplier-payment:{settlement['id']}"
+        if not effective and reversed_journals:
+            idempotency_key += f":after:{reversed_journals[-1]['id']}"
+        taken = db.execute("""SELECT source_type,source_id FROM journal_headers WHERE tenant_id=%s AND idempotency_key=%s""",
+                           (user["tenant_id"], idempotency_key)).fetchone()
+        if taken and (taken["source_type"] != "settlement" or taken["source_id"] != settlement["id"]):
+            raise HTTPException(409, "A journal already uses this supplier payment idempotency key.")
+        if effective:
+            existing = effective[0]
             return {
                 "id": str(existing["id"]), "status": existing["status"], "idempotent": True,
                 "recordId": None, "settlementId": str(settlement["id"]),
@@ -233,7 +240,7 @@ def post_supplier_payment(transaction_id: str, data: SupplierPaymentPostingInput
         if currency != "MYR":
             raise HTTPException(409, "Supplier payment journal posting currently supports MYR only; foreign-currency conversion is not configured.")
 
-        match = db.execute("""SELECT c.record_id,r.category,COALESCE(r.amount_due,r.total_amount) AS amount_due,r.currency,
+        match = db.execute("""SELECT c.record_id,r.document_id,r.category,COALESCE(r.amount_due,r.total_amount) AS amount_due,r.currency,
                 r.is_current,r.validation_status
             FROM reconciliation_candidates c
             JOIN standardised_records r ON r.id=c.record_id AND r.tenant_id=c.tenant_id
@@ -267,9 +274,19 @@ def post_supplier_payment(transaction_id: str, data: SupplierPaymentPostingInput
                 or allocations["record_amount"] != payment_amount):
             raise HTTPException(409, "The settlement must be fully allocated to this supplier bill before posting.")
 
-        if not data.periodId or not data.payableAccountId or not data.bankAccountId or not data.journalDate:
+        # When the bill was posted, the payment must clear the payable account that bill credited.
+        bill_payable = db.execute("""SELECT l.account_id FROM journal_headers j
+            JOIN journal_lines l ON l.journal_id=j.id AND l.tenant_id=j.tenant_id
+            JOIN ledger_accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+            WHERE j.tenant_id=%s AND j.source_type='document' AND j.source_id=%s AND j.status='posted'
+                AND l.credit>0 AND a.account_type='liability'
+            ORDER BY j.posted_at DESC, l.line_number LIMIT 1""", (user["tenant_id"], match["document_id"])).fetchone()
+        payable_account_text = data.payableAccountId or (str(bill_payable["account_id"]) if bill_payable else None)
+        if not data.periodId or not payable_account_text or not data.bankAccountId or not data.journalDate:
             raise HTTPException(422, "Choose an open accounting period, payable account, bank account, and journal date.")
-        payable_account_id = _uuid_or_422(data.payableAccountId, "payable account id")
+        payable_account_id = _uuid_or_422(payable_account_text, "payable account id")
+        if bill_payable and str(payable_account_id) != str(bill_payable["account_id"]):
+            raise HTTPException(422, "Use the payable account this supplier bill was posted to.")
         bank_account_id = _uuid_or_422(data.bankAccountId, "bank account id")
         payable_account = db.execute("""SELECT account_type,is_active FROM ledger_accounts
             WHERE id=%s AND tenant_id=%s FOR SHARE""", (payable_account_id, user["tenant_id"])).fetchone()
@@ -363,6 +380,9 @@ def reverse_journal(journal_id: str, request: Request):
     with connect() as db:
         row = db.execute("SELECT * FROM journal_headers WHERE id=%s AND tenant_id=%s FOR UPDATE", (journal_id, user["tenant_id"])).fetchone()
         if not row or row["status"] != "posted": raise HTTPException(409, "Only a posted journal can be reversed.")
+        if row["source_type"] == "reversal" or row["reversed_journal_id"]:
+            # Keeps one level of reversal: the report's currency, the settlement lock and corrections all rely on it.
+            raise HTTPException(409, "A reversal cannot be reversed. Post the corrected entry again instead.")
         if db.execute("SELECT 1 FROM journal_headers WHERE reversed_journal_id=%s AND tenant_id=%s", (journal_id, user["tenant_id"])).fetchone():
             raise HTTPException(409, "This journal has already been reversed.")
         lines = db.execute("SELECT * FROM journal_lines WHERE journal_id=%s AND tenant_id=%s ORDER BY line_number", (journal_id, user["tenant_id"])).fetchall()
@@ -467,10 +487,16 @@ def get_profit_and_loss_dashboard(request: Request, fromDate: date, toDate: date
                 GROUP BY period,s.currency,account_type,account_code,account_name
             ),
             bank_allocated AS (
+                -- Only allocations counted in allocation_rows (same record and direction rules) reduce the
+                -- coded bank amount; anything else would make a coded refund vanish from the report.
                 SELECT s.source_id AS bank_transaction_id,SUM(a.amount) AS allocated
                 FROM active_allocations a
                 JOIN settlements s ON s.id=a.settlement_id AND s.tenant_id=%s
                     AND s.source_type='bank_import' AND s.status='recorded'
+                JOIN standardised_records r ON r.id=a.record_id AND r.tenant_id=s.tenant_id
+                WHERE r.is_current AND r.validation_status='passed' AND s.settlement_date BETWEEN %s AND %s
+                    AND ((r.category='accounts_receivable' AND s.direction='money_in')
+                        OR (r.category='accounts_payable' AND s.direction='money_out'))
                 GROUP BY s.source_id
             ),
             latest_coding AS (
@@ -501,10 +527,12 @@ def get_profit_and_loss_dashboard(request: Request, fromDate: date, toDate: date
             SELECT period,currency,account_type,account_code,account_name,amount FROM coded_rows
             ORDER BY period,currency,account_type,account_code"""
         pnl_params = (user["tenant_id"], granularity, user["tenant_id"], fromDate, toDate,
-            user["tenant_id"], user["tenant_id"], granularity, user["tenant_id"], fromDate, toDate)
+            user["tenant_id"], fromDate, toDate, user["tenant_id"], granularity, user["tenant_id"], fromDate, toDate)
 
+    from services.routes.home.lanes import OPEN_ITEM_KINDS, company_today
     with connect() as db:
         rows = db.execute(pnl_sql, pnl_params).fetchall()
+        today = company_today(db, user["tenant_id"])
         aging_rows = db.execute("""WITH active_allocations AS (
                 SELECT a.id,a.record_id,a.amount
                 FROM settlement_allocations a
@@ -518,22 +546,26 @@ def get_profit_and_loss_dashboard(request: Request, fromDate: date, toDate: date
                 SELECT r.id,r.category,r.currency,r.due_date,
                     GREATEST(COALESCE(r.amount_due,r.total_amount)-COALESCE(allocated.amount,0),0) AS balance
                 FROM standardised_records r
+                JOIN documents d ON d.id=r.document_id AND d.tenant_id=r.tenant_id
                 LEFT JOIN allocated ON allocated.record_id=r.id
                 WHERE r.tenant_id=%s AND r.is_current AND r.validation_status='passed'
-                    AND r.category IN ('accounts_receivable','accounts_payable')
+                    -- Open items only (as on Today): receipts are already paid, notes adjust another document.
+                    AND ((r.category='accounts_payable' AND d.kind = ANY(%s))
+                        OR (r.category='accounts_receivable' AND d.kind = ANY(%s)))
                     AND COALESCE(r.amount_due,r.total_amount)>0
             )
             SELECT category,currency,
                 CASE WHEN due_date IS NULL THEN 'no_due_date'
-                    WHEN due_date >= (now() AT TIME ZONE 'Asia/Kuala_Lumpur')::date THEN 'not_due'
-                    WHEN due_date >= (now() AT TIME ZONE 'Asia/Kuala_Lumpur')::date-30 THEN '1_30_days'
-                    WHEN due_date >= (now() AT TIME ZONE 'Asia/Kuala_Lumpur')::date-60 THEN '31_60_days'
-                    WHEN due_date >= (now() AT TIME ZONE 'Asia/Kuala_Lumpur')::date-90 THEN '61_90_days'
+                    WHEN due_date >= %s::date THEN 'not_due'
+                    WHEN due_date >= %s::date-30 THEN '1_30_days'
+                    WHEN due_date >= %s::date-60 THEN '31_60_days'
+                    WHEN due_date >= %s::date-90 THEN '61_90_days'
                     ELSE 'over_90_days' END AS age_bucket,
                 SUM(balance) AS amount,COUNT(*) FILTER (WHERE balance>0) AS item_count
             FROM outstanding WHERE balance>0
             GROUP BY category,currency,age_bucket ORDER BY category,currency,age_bucket""",
-            (user["tenant_id"], user["tenant_id"])).fetchall()
+            (user["tenant_id"], user["tenant_id"], list(OPEN_ITEM_KINDS["accounts_payable"]),
+             list(OPEN_ITEM_KINDS["accounts_receivable"]), today, today, today, today)).fetchall()
 
     period_totals = {}
     currency_totals = {}

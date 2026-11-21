@@ -36,8 +36,9 @@ class Cursor:
 
 
 class FakeDatabase:
-    def __init__(self, existing_journal=None, confirmed_match=True, currency="MYR"):
+    def __init__(self, existing_journal=None, confirmed_match=True, currency="MYR", bill_payable=None):
         self.existing_journal = existing_journal
+        self.bill_payable = bill_payable
         self.confirmed_match = confirmed_match
         self.currency = currency
         self.journal_inserts = []
@@ -70,13 +71,23 @@ class FakeDatabase:
                 "currency": self.currency,
                 "status": "recorded",
             })
+        if "FROM journal_headers j JOIN journal_lines" in sql:
+            return Cursor({"account_id": self.bill_payable} if self.bill_payable else None)
+        if "FROM journal_headers WHERE tenant_id=%s AND idempotency_key=%s" in sql:
+            journal = self.existing_journal
+            return Cursor({"source_type": journal["source_type"], "source_id": journal["source_id"]}
+                          if journal and journal.get("idempotency_key") == params[1] else None)
         if "FROM journal_headers" in sql:
-            return Cursor([self.existing_journal] if self.existing_journal else [])
+            journal = self.existing_journal
+            if journal and "status='posted'" in sql and journal["status"] != "posted":
+                journal = None
+            return Cursor([journal] if journal else [])
         if "FROM reconciliation_candidates c" in sql:
             if not self.confirmed_match:
                 return Cursor()
             return Cursor({
                 "record_id": RECORD_ID,
+                "document_id": RECORD_ID,
                 "category": "accounts_payable",
                 "amount_due": Decimal("125.00"),
                 "currency": self.currency,
@@ -186,3 +197,36 @@ def test_non_myr_supplier_payment_is_not_posted_without_conversion(monkeypatch):
     assert error.value.status_code == 409
     assert "conversion is not configured" in error.value.detail
     assert database.journal_inserts == []
+
+
+def test_supplier_payment_must_clear_the_payable_account_the_bill_credited(monkeypatch):
+    other_payable = UUID("10000000-0000-0000-0000-000000000010")
+    database = FakeDatabase(bill_payable=other_payable)
+    payload = _configure(monkeypatch, database)
+
+    with pytest.raises(HTTPException) as error:
+        accounting_routes.post_supplier_payment(str(TRANSACTION_ID), payload, None)
+
+    assert error.value.status_code == 422
+    assert "payable account this supplier bill was posted to" in error.value.detail
+    assert database.journal_inserts == []
+
+
+def test_supplier_payment_can_be_posted_again_after_its_journal_was_reversed(monkeypatch):
+    database = FakeDatabase(existing_journal={
+        "id": JOURNAL_ID, "status": "reversed", "source_type": "settlement", "source_id": SETTLEMENT_ID,
+        "idempotency_key": f"supplier-payment:{SETTLEMENT_ID}",
+    })
+    payload = _configure(monkeypatch, database)
+
+    result = accounting_routes.post_supplier_payment(str(TRANSACTION_ID), payload, None)
+
+    assert result["idempotent"] is False
+    assert database.journal_inserts[0][1][2] == f"supplier-payment:{SETTLEMENT_ID}:after:{JOURNAL_ID}"
+
+
+def test_adjustment_amount_precision_is_a_request_validation_error():
+    with pytest.raises(ValueError):
+        accounting_routes.AdjustmentPostingInput(periodId="p", debitAccountId="d", creditAccountId="c",
+                                                 amount=Decimal("10.005"), journalDate=date(2026, 5, 10),
+                                                 adjustmentKind="credit_note")

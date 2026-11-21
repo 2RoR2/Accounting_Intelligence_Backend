@@ -17,6 +17,9 @@ class Rows:
     def fetchall(self):
         return self.rows
 
+    def fetchone(self):
+        return self.rows[0] if self.rows else None
+
 
 class FakeDatabase:
     def __init__(self):
@@ -30,6 +33,8 @@ class FakeDatabase:
 
     def execute(self, query, params):
         self.calls.append((query, params))
+        if "workspace_settings" in query:
+            return Rows([{"today": date(2026, 1, 31)}])
         if "settlement_allocations" in query and "bank_coding_decisions" not in query:
             return Rows([
                 {"category": "accounts_receivable", "currency": "MYR", "age_bucket": "1_30_days",
@@ -60,7 +65,12 @@ class ProfitAndLossDashboardTests(unittest.TestCase):
         self.assertEqual(result["aging"][0]["amount"], "125.00")
         self.assertIn("posted", database.calls[0][0])
         self.assertIn("idempotency_key", database.calls[0][0])
-        self.assertIn("is_current", database.calls[1][0])
+        self.assertIn("workspace_settings", database.calls[1][0])
+        aging_sql, aging_params = database.calls[2]
+        self.assertIn("is_current", aging_sql)
+        self.assertIn("d.kind = ANY", aging_sql)
+        self.assertEqual(aging_params[2:4], (["invoice", "bill"], ["invoice"]))
+        self.assertEqual(aging_params[4:], (date(2026, 1, 31),) * 4)
         self.assertTrue(any(getattr(route, "path", None) == "/api/ledger/profit-and-loss" for route in api.app.routes))
 
     def test_cash_basis_uses_allocations_and_only_unallocated_coded_bank_amounts(self):
