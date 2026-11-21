@@ -58,6 +58,9 @@ class FakeDb:
             return Result([{"code": "EX-008", "documents": 2}, {"code": "TOTAL", "documents": 1}])
         if "AS money_in" in sql:
             return Result([{"lines": 4, "money_in": 1, "money_out": 3}])
+        if "AS soon_count" in sql and "erp_document_headers" in sql:  # Plan L4: typed invoices/bills (none here)
+            return Result([{"soon_count": 0, "soon_amount": 0, "soon_other": 0, "late_count": 0, "late_amount": 0,
+                            "late_other": 0, "no_due_date": 0}])
         if "AS soon_count" in sql:
             return Result([{"soon_count": 2, "soon_amount": Decimal("1250.5"), "soon_other": 1,
                             "late_count": 1, "late_amount": Decimal("99"), "late_other": 0, "no_due_date": 1}])

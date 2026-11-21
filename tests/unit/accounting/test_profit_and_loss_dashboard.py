@@ -70,7 +70,9 @@ class ProfitAndLossDashboardTests(unittest.TestCase):
         self.assertIn("is_current", aging_sql)
         self.assertIn("d.kind = ANY", aging_sql)
         self.assertEqual(aging_params[2:4], (["invoice", "bill"], ["invoice"]))
-        self.assertEqual(aging_params[4:], (date(2026, 1, 31),) * 4)
+        self.assertIn("erp_document_headers", aging_sql)  # Plan L4: typed invoices and bills
+        self.assertEqual(aging_params[4], "tenant")
+        self.assertEqual(aging_params[5:], (date(2026, 1, 31),) * 4)
         self.assertTrue(any(getattr(route, "path", None) == "/api/ledger/profit-and-loss" for route in api.app.routes))
 
     def test_cash_basis_uses_allocations_and_only_unallocated_coded_bank_amounts(self):

@@ -157,6 +157,16 @@ def record_journal(db, user, data: JournalInput):
             VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""", (user["tenant_id"], header["id"], account_id, number, line.description, line.debit, line.credit, line.sourceField))
     return {"id": str(header["id"]), "status": "posted", "idempotent": False}
 
+def _refuse_typed_copy(user, record_id):
+    """Plan L5: a scanned invoice/bill already entered and posted as a typed document must not post again."""
+    from services.routes.erp.posting import refuse_if_typed_copy
+    with connect() as db:
+        record = db.execute("""SELECT r.*,d.kind FROM standardised_records r JOIN documents d ON d.id=r.document_id AND d.tenant_id=r.tenant_id
+            WHERE r.id=%s AND r.tenant_id=%s""", (record_id, user["tenant_id"])).fetchone()
+        if record:
+            refuse_if_typed_copy(db, user["tenant_id"], record)
+
+
 def post_supplier_bill(record_id: str, data: SupplierBillPostingInput, request: Request):
     user = require_workspace_user(request, {"local_admin"})
     record_id = _uuid_or_422(record_id, "record id")
@@ -167,6 +177,7 @@ def post_supplier_bill(record_id: str, data: SupplierBillPostingInput, request: 
         raise HTTPException(409, "Only the current validated standardised record can be posted.")
     if record["category"] != "accounts_payable":
         raise HTTPException(422, "Supplier posting requires a validated supplier bill record.")
+    _refuse_typed_copy(user, record_id)
     if record["total_amount"] is None or record["total_amount"] <= 0:
         raise HTTPException(422, "The supplier bill must have a positive total amount.")
     payload = JournalInput(
@@ -365,6 +376,7 @@ def post_customer_invoice(record_id: str, data: CustomerInvoicePostingInput, req
         raise HTTPException(409, "Only the current validated standardised record can be posted.")
     if record["category"] != "accounts_receivable":
         raise HTTPException(422, "Customer posting requires an accounts-receivable record.")
+    _refuse_typed_copy(user, record_id)
     if record["total_amount"] is None or record["total_amount"] <= 0:
         raise HTTPException(422, "The customer invoice must have a positive total amount.")
     payload = JournalInput(
@@ -411,6 +423,9 @@ def reverse_journal(journal_id: str, request: Request):
     with connect() as db:
         row = db.execute("SELECT * FROM journal_headers WHERE id=%s AND tenant_id=%s FOR UPDATE", (journal_id, user["tenant_id"])).fetchone()
         if not row or row["status"] != "posted": raise HTTPException(409, "Only a posted journal can be reversed.")
+        if row["source_type"] == "erp_document":
+            # Voiding keeps the document, its allocations and the open-item balances in step with the ledger.
+            raise HTTPException(409, "This journal belongs to a sales or purchase document. Void the document instead.")
         if row["source_type"] == "reversal" or row["reversed_journal_id"]:
             # Keeps one level of reversal: the report's currency, the settlement lock and corrections all rely on it.
             raise HTTPException(409, "A reversal cannot be reversed. Post the corrected entry again instead.")
@@ -466,7 +481,7 @@ def get_profit_and_loss_dashboard(request: Request, fromDate: date, toDate: date
 
     if basis == "accrual":
         pnl_sql = """SELECT date_trunc(%s,j.journal_date)::date AS period,
-            COALESCE(sr.currency,settlement.currency,'UNSPECIFIED') AS currency,
+            COALESCE(sr.currency,settlement.currency,typed.currency,'UNSPECIFIED') AS currency,
             a.account_type,a.code AS account_code,a.name AS account_name,
             SUM(CASE WHEN a.account_type='income' THEN l.credit-l.debit ELSE l.debit-l.credit END) AS amount
             FROM journal_headers j
@@ -489,11 +504,15 @@ def get_profit_and_loss_dashboard(request: Request, fromDate: date, toDate: date
             LEFT JOIN settlements settlement ON settlement.tenant_id=j.tenant_id
                 AND settlement.id=CASE WHEN j.source_type='reversal' AND original.source_type='settlement'
                     THEN original.source_id WHEN j.source_type='settlement' THEN j.source_id END
+            -- Plan L4: a typed sales/purchase document (or its reversal) reports in the document's currency.
+            LEFT JOIN erp_document_headers typed ON typed.tenant_id=j.tenant_id
+                AND typed.id=CASE WHEN j.source_type='reversal' AND original.source_type='erp_document'
+                    THEN original.source_id WHEN j.source_type='erp_document' THEN j.source_id END
             WHERE j.tenant_id=%s AND j.status IN ('posted','reversed')
                 AND j.journal_date BETWEEN %s AND %s AND a.account_type IN ('income','expense')
                 AND COALESCE(original.idempotency_key,j.idempotency_key) NOT LIKE 'opening-balances:%%'
-            GROUP BY period,COALESCE(sr.currency,settlement.currency,'UNSPECIFIED'),a.account_type,a.code,a.name
-            ORDER BY period,COALESCE(sr.currency,settlement.currency,'UNSPECIFIED'),a.account_type,a.code"""
+            GROUP BY period,COALESCE(sr.currency,settlement.currency,typed.currency,'UNSPECIFIED'),a.account_type,a.code,a.name
+            ORDER BY period,COALESCE(sr.currency,settlement.currency,typed.currency,'UNSPECIFIED'),a.account_type,a.code"""
         pnl_params = (granularity, user["tenant_id"], fromDate, toDate)
     else:
         pnl_sql = """WITH active_allocations AS (
@@ -555,13 +574,29 @@ def get_profit_and_loss_dashboard(request: Request, fromDate: date, toDate: date
                     AND account.account_class IN ('revenue','cogs','expense')
                     AND GREATEST(ABS(b.signed_amount_decimal)-COALESCE(allocated.allocated,0),0)>0
                 GROUP BY period,COALESCE(b.currency,'UNSPECIFIED'),account_type,account.code,account.name
+            ),
+            typed_rows AS (
+                -- Plan L4: payments allocated to typed invoices/bills (credit notes are not cash).
+                SELECT date_trunc(%s,p.document_date)::date AS period,p.currency,
+                    CASE WHEN p.document_type='payment' THEN 'income' ELSE 'expense' END AS account_type,
+                    CASE WHEN p.document_type='payment' THEN 'ALLOC-AR' ELSE 'ALLOC-AP' END AS account_code,
+                    CASE WHEN p.document_type='payment' THEN 'Allocated customer receipts' ELSE 'Allocated supplier payments' END AS account_name,
+                    SUM(a.amount) AS amount
+                FROM erp_document_allocations a
+                JOIN erp_document_headers p ON p.id=a.source_document_id AND p.tenant_id=a.tenant_id
+                WHERE a.tenant_id=%s AND a.status='active' AND p.status='ready'
+                    AND p.document_type IN ('payment','purchase-payment') AND p.document_date BETWEEN %s AND %s
+                GROUP BY period,p.currency,account_type,account_code,account_name
             )
             SELECT period,currency,account_type,account_code,account_name,amount FROM allocation_rows
+            UNION ALL
+            SELECT period,currency,account_type,account_code,account_name,amount FROM typed_rows
             UNION ALL
             SELECT period,currency,account_type,account_code,account_name,amount FROM coded_rows
             ORDER BY period,currency,account_type,account_code"""
         pnl_params = (user["tenant_id"], granularity, user["tenant_id"], fromDate, toDate,
-            user["tenant_id"], fromDate, toDate, user["tenant_id"], granularity, user["tenant_id"], fromDate, toDate)
+            user["tenant_id"], fromDate, toDate, user["tenant_id"], granularity, user["tenant_id"], fromDate, toDate,
+            granularity, user["tenant_id"], fromDate, toDate)
 
     from services.routes.home.lanes import OPEN_ITEM_KINDS, company_today
     with connect() as db:
@@ -587,6 +622,14 @@ def get_profit_and_loss_dashboard(request: Request, fromDate: date, toDate: date
                     AND ((r.category='accounts_payable' AND d.kind = ANY(%s))
                         OR (r.category='accounts_receivable' AND d.kind = ANY(%s)))
                     AND COALESCE(r.amount_due,r.total_amount)>0
+                UNION ALL
+                -- Plan L4: typed invoices and bills that are ready (posted), less payments and credit notes allocated to them.
+                SELECT h.id,CASE h.document_type WHEN 'invoice' THEN 'accounts_receivable' ELSE 'accounts_payable' END,
+                    h.currency,h.due_date,
+                    GREATEST(h.total_amount-COALESCE((SELECT SUM(a.amount) FROM erp_document_allocations a
+                        WHERE a.tenant_id=h.tenant_id AND a.target_document_id=h.id AND a.status='active'),0),0)
+                FROM erp_document_headers h
+                WHERE h.tenant_id=%s AND h.status='ready' AND h.document_type IN ('invoice','bill') AND h.total_amount>0
             )
             SELECT category,currency,
                 CASE WHEN due_date IS NULL THEN 'no_due_date'
@@ -599,7 +642,7 @@ def get_profit_and_loss_dashboard(request: Request, fromDate: date, toDate: date
             FROM outstanding WHERE balance>0
             GROUP BY category,currency,age_bucket ORDER BY category,currency,age_bucket""",
             (user["tenant_id"], user["tenant_id"], list(OPEN_ITEM_KINDS["accounts_payable"]),
-             list(OPEN_ITEM_KINDS["accounts_receivable"]), today, today, today, today)).fetchall()
+             list(OPEN_ITEM_KINDS["accounts_receivable"]), user["tenant_id"], today, today, today, today)).fetchall()
 
     period_totals = {}
     currency_totals = {}
@@ -673,6 +716,7 @@ def create_allocation(data: AllocationInput, request: Request):
     record_id = _uuid_or_422(data.recordId, "record id")
     try:
         with connect() as db:
+            _refuse_document_settlement(db, user["tenant_id"], settlement_id)
             row = db.execute("""INSERT INTO settlement_allocations(tenant_id,settlement_id,record_id,amount,created_by)
                 VALUES (%s,%s,%s,%s,%s) RETURNING *""", (user["tenant_id"], settlement_id, record_id, data.amount, user["id"])).fetchone()
     except RaiseException as error:
@@ -688,10 +732,19 @@ def reverse_allocation(allocation_id: str, request: Request):
             WHERE a.id=%s AND a.tenant_id=%s AND a.status='active' FOR UPDATE OF s""",
             (allocation_id, user["tenant_id"])).fetchone()
         if not original: raise HTTPException(404, "Active allocation not found.")
+        _refuse_document_settlement(db, user["tenant_id"], original["settlement_id"])
         require_no_posted_settlement_journal(db, user["tenant_id"], original["settlement_id"])
         row = db.execute("""INSERT INTO settlement_allocations(tenant_id,settlement_id,record_id,amount,status,created_by,reversed_at,reversal_reason,reverses_allocation_id)
             VALUES (%s,%s,%s,%s,'reversed',%s,now(),'Allocation undone',%s) RETURNING *""", (user["tenant_id"], original["settlement_id"], original["record_id"], original["amount"], user["id"], original["id"])).fetchone()
     return {"id": str(row["id"]), "reversedAllocationId": allocation_id, "status": "reversed"}
+
+
+def _refuse_document_settlement(db, tenant_id, settlement_id):
+    """Plan L4: a settlement made by a typed payment is changed only by voiding that payment."""
+    owner = db.execute("SELECT document_number FROM erp_document_headers WHERE tenant_id=%s AND settlement_id=%s",
+                       (tenant_id, settlement_id)).fetchone()
+    if owner:
+        raise HTTPException(409, f"This settlement belongs to payment {owner['document_number']}; change it there.")
 
 
 def require_no_posted_settlement_journal(db, tenant_id, settlement_id):

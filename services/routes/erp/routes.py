@@ -1,6 +1,6 @@
 """ERP API route registrations."""
 
-from . import catalog, contacts
+from . import catalog, contacts, documents
 
 
 def register(router, handlers):
@@ -23,3 +23,4 @@ def register(router, handlers):
     router.add_api_route(entry, catalog.delete_catalog, methods=["DELETE"], tags=["ERP Catalog"])
 
     contacts.register(router)
+    documents.register(router)
