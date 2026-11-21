@@ -466,7 +466,7 @@ def get_profit_and_loss_dashboard(request: Request, fromDate: date, toDate: date
 
     if basis == "accrual":
         pnl_sql = """SELECT date_trunc(%s,j.journal_date)::date AS period,
-            COALESCE(sr.currency,settlement.currency,'UNSPECIFIED') AS currency,
+            COALESCE(sr.currency,settlement.currency,typed.currency,'UNSPECIFIED') AS currency,
             a.account_type,a.code AS account_code,a.name AS account_name,
             SUM(CASE WHEN a.account_type='income' THEN l.credit-l.debit ELSE l.debit-l.credit END) AS amount
             FROM journal_headers j
@@ -489,11 +489,15 @@ def get_profit_and_loss_dashboard(request: Request, fromDate: date, toDate: date
             LEFT JOIN settlements settlement ON settlement.tenant_id=j.tenant_id
                 AND settlement.id=CASE WHEN j.source_type='reversal' AND original.source_type='settlement'
                     THEN original.source_id WHEN j.source_type='settlement' THEN j.source_id END
+            -- Plan L4: a typed sales/purchase document (or its reversal) reports in the document's currency.
+            LEFT JOIN erp_document_headers typed ON typed.tenant_id=j.tenant_id
+                AND typed.id=CASE WHEN j.source_type='reversal' AND original.source_type='erp_document'
+                    THEN original.source_id WHEN j.source_type='erp_document' THEN j.source_id END
             WHERE j.tenant_id=%s AND j.status IN ('posted','reversed')
                 AND j.journal_date BETWEEN %s AND %s AND a.account_type IN ('income','expense')
                 AND COALESCE(original.idempotency_key,j.idempotency_key) NOT LIKE 'opening-balances:%%'
-            GROUP BY period,COALESCE(sr.currency,settlement.currency,'UNSPECIFIED'),a.account_type,a.code,a.name
-            ORDER BY period,COALESCE(sr.currency,settlement.currency,'UNSPECIFIED'),a.account_type,a.code"""
+            GROUP BY period,COALESCE(sr.currency,settlement.currency,typed.currency,'UNSPECIFIED'),a.account_type,a.code,a.name
+            ORDER BY period,COALESCE(sr.currency,settlement.currency,typed.currency,'UNSPECIFIED'),a.account_type,a.code"""
         pnl_params = (granularity, user["tenant_id"], fromDate, toDate)
     else:
         pnl_sql = """WITH active_allocations AS (
@@ -587,6 +591,14 @@ def get_profit_and_loss_dashboard(request: Request, fromDate: date, toDate: date
                     AND ((r.category='accounts_payable' AND d.kind = ANY(%s))
                         OR (r.category='accounts_receivable' AND d.kind = ANY(%s)))
                     AND COALESCE(r.amount_due,r.total_amount)>0
+                UNION ALL
+                -- Plan L4: typed invoices and bills that are ready (posted), less payments and credit notes allocated to them.
+                SELECT h.id,CASE h.document_type WHEN 'invoice' THEN 'accounts_receivable' ELSE 'accounts_payable' END,
+                    h.currency,h.due_date,
+                    GREATEST(h.total_amount-COALESCE((SELECT SUM(a.amount) FROM erp_document_allocations a
+                        WHERE a.tenant_id=h.tenant_id AND a.target_document_id=h.id AND a.status='active'),0),0)
+                FROM erp_document_headers h
+                WHERE h.tenant_id=%s AND h.status='ready' AND h.document_type IN ('invoice','bill') AND h.total_amount>0
             )
             SELECT category,currency,
                 CASE WHEN due_date IS NULL THEN 'no_due_date'
@@ -599,7 +611,7 @@ def get_profit_and_loss_dashboard(request: Request, fromDate: date, toDate: date
             FROM outstanding WHERE balance>0
             GROUP BY category,currency,age_bucket ORDER BY category,currency,age_bucket""",
             (user["tenant_id"], user["tenant_id"], list(OPEN_ITEM_KINDS["accounts_payable"]),
-             list(OPEN_ITEM_KINDS["accounts_receivable"]), today, today, today, today)).fetchall()
+             list(OPEN_ITEM_KINDS["accounts_receivable"]), user["tenant_id"], today, today, today, today)).fetchall()
 
     period_totals = {}
     currency_totals = {}

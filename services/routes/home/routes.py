@@ -122,6 +122,10 @@ def open_item_tiles(db, user, category: str, today: date) -> dict:
                      [*soon_params, *soon_params, HOME_CURRENCY, *soon_params, HOME_CURRENCY,
                       *late_params, *late_params, HOME_CURRENCY, *late_params, HOME_CURRENCY,
                       user['tenant_id'], *params]).fetchone()
+    row = dict(row)
+    typed = typed_open_items(db, user, category, today, soon_sql, soon_params, late_sql, late_params)
+    for key in ('soon_count', 'soon_amount', 'soon_other', 'late_count', 'late_amount', 'late_other', 'no_due_date'):
+        row[key] = (row[key] or 0) + (typed[key] or 0)
     return {
         'soon': {'available': True, 'scope': 'company', 'count': row['soon_count'], 'amount': _money(row['soon_amount']),
                  'currency': HOME_CURRENCY, 'otherCurrencyCount': row['soon_other'], 'days': DUE_SOON_DAYS,
@@ -130,6 +134,30 @@ def open_item_tiles(db, user, category: str, today: date) -> dict:
                     'currency': HOME_CURRENCY, 'otherCurrencyCount': row['late_other'], 'noDueDate': row['no_due_date'],
                     'link': _link('records', due_query('overdue'))},
     }
+
+
+def typed_open_items(db, user, category: str, today: date, soon_sql, soon_params, late_sql, late_params) -> dict:
+    """Plan L4: typed invoices/bills that are ready (posted), less what payments and credit notes settled.
+    Same windows as the scanned records; the tiles add both so they agree with the ageing report."""
+    if not _table_exists(db, 'erp_document_headers'):
+        return {}
+    document_type = 'bill' if category == 'accounts_payable' else 'invoice'
+    balance = """GREATEST(h.total_amount-COALESCE((SELECT SUM(a.amount) FROM erp_document_allocations a
+        WHERE a.tenant_id=h.tenant_id AND a.target_document_id=h.id AND a.status='active'),0),0)"""
+    return db.execute(f"""SELECT
+            count(*) FILTER (WHERE {soon_sql}) AS soon_count,
+            COALESCE(sum(r.balance) FILTER (WHERE {soon_sql} AND r.currency=%s), 0) AS soon_amount,
+            count(*) FILTER (WHERE {soon_sql} AND r.currency<>%s) AS soon_other,
+            count(*) FILTER (WHERE {late_sql}) AS late_count,
+            COALESCE(sum(r.balance) FILTER (WHERE {late_sql} AND r.currency=%s), 0) AS late_amount,
+            count(*) FILTER (WHERE {late_sql} AND r.currency<>%s) AS late_other,
+            count(*) FILTER (WHERE r.due_date IS NULL) AS no_due_date
+        FROM (SELECT h.due_date,h.currency,{balance} AS balance FROM erp_document_headers h
+              WHERE h.tenant_id=%s AND h.document_type=%s AND h.status='ready') r
+        WHERE r.balance > 0""",
+                      [*soon_params, *soon_params, HOME_CURRENCY, *soon_params, HOME_CURRENCY,
+                       *late_params, *late_params, HOME_CURRENCY, *late_params, HOME_CURRENCY,
+                       user['tenant_id'], document_type]).fetchone() or {}
 
 
 def journals_tile(db, user) -> dict:
