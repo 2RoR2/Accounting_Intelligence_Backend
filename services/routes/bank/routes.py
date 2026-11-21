@@ -557,7 +557,9 @@ def search_bank_match_records(transaction_id: str, request: Request, q: str = ""
         rows = db.execute("""SELECT r.id,r.record_code,r.document_id,r.category,r.supplier_name,r.buyer_name,
             COALESCE(r.reference_number,r.invoice_number) reference_number,r.invoice_number,r.currency,r.total_amount,
             COALESCE((SELECT SUM(a.amount) FROM settlement_allocations a JOIN settlements s ON s.id=a.settlement_id
-                WHERE a.record_id=r.id AND a.tenant_id=r.tenant_id AND a.status='active'),0) allocated_amount
+                WHERE a.record_id=r.id AND a.tenant_id=r.tenant_id AND a.status='active'
+                  AND NOT EXISTS (SELECT 1 FROM settlement_allocations undo
+                    WHERE undo.tenant_id=a.tenant_id AND undo.reverses_allocation_id=a.id)),0) allocated_amount
             FROM standardised_records r WHERE r.tenant_id=%s AND r.is_current=true AND r.validation_status='passed'
               AND (%s='' OR r.record_code ILIKE %s OR COALESCE(r.reference_number,'') ILIKE %s OR COALESCE(r.invoice_number,'') ILIKE %s
                    OR COALESCE(r.supplier_name,r.buyer_name,'') ILIKE %s)
@@ -680,6 +682,15 @@ def get_bank_transaction(transaction_id: str, request: Request):
         raise HTTPException(404, "Bank transaction not found.")
     with connect() as db:
         result = _bank_transaction_response(db, row)
+        # The payable account the matched bill was posted to: the supplier payment must debit it.
+        payable = db.execute("""SELECT l.account_id FROM reconciliation_candidates c
+            JOIN standardised_records r ON r.id=c.record_id AND r.tenant_id=c.tenant_id
+            JOIN journal_headers j ON j.tenant_id=r.tenant_id AND j.source_type='document' AND j.source_id=r.document_id AND j.status='posted'
+            JOIN journal_lines l ON l.journal_id=j.id AND l.tenant_id=j.tenant_id AND l.credit>0
+            JOIN ledger_accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id AND a.account_type='liability'
+            WHERE c.bank_transaction_id=%s AND c.tenant_id=%s AND c.status='confirmed'
+            ORDER BY j.posted_at DESC, l.line_number LIMIT 1""", (row["id"], row["tenant_id"])).fetchone()
+    result.update({"billPayableAccountId": str(payable["account_id"]) if payable else None})
     result.update({"accountId": str(row["account_id"]) if row["account_id"] else None,
                    "costCentreId": str(row["cost_centre_id"]) if row["cost_centre_id"] else None,
                    "codingDecision": row["coding_decision"], "codingReason": row["coding_reason"]})

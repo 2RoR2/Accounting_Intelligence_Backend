@@ -59,6 +59,8 @@ class SupplierPaymentPostingInput(BaseModel):
     bankAccountId: str | None = None
     journalDate: date | None = None
     description: str = Field(default="Supplier payment settlement", min_length=1, max_length=500)
+    # Only an explicit correction posts again after a reversal: name the reversed payment journal it replaces.
+    replacesJournalId: str | None = None
 
 class CustomerInvoicePostingInput(BaseModel):
     periodId: str
@@ -223,14 +225,30 @@ def post_supplier_payment(transaction_id: str, data: SupplierPaymentPostingInput
             raise HTTPException(409, "Multiple journals are linked to this supplier payment; review the ledger before continuing.")
         reversed_journals = [journal for journal in settlement_journals if journal["status"] == "reversed"]
         idempotency_key = f"supplier-payment:{settlement['id']}"
+        replaces = str(_uuid_or_422(data.replacesJournalId, "replaced journal id")) if data.replacesJournalId else None
+        if replaces and (effective or not reversed_journals or str(reversed_journals[-1]["id"]) != replaces):
+            raise HTTPException(409, "Only the latest reversed payment journal for this settlement can be replaced.")
         if not effective and reversed_journals:
-            idempotency_key += f":after:{reversed_journals[-1]['id']}"
+            if not replaces:
+                # A plain retry of the original request after a reversal: report the reversed journal, post nothing.
+                latest = reversed_journals[-1]
+                return {"id": str(latest["id"]), "status": latest["status"], "idempotent": True,
+                        "recordId": None, "settlementId": str(settlement["id"]),
+                        "amount": str(payment_amount), "currency": currency}
+            idempotency_key += f":after:{replaces}"
         taken = db.execute("""SELECT source_type,source_id FROM journal_headers WHERE tenant_id=%s AND idempotency_key=%s""",
                            (user["tenant_id"], idempotency_key)).fetchone()
         if taken and (taken["source_type"] != "settlement" or taken["source_id"] != settlement["id"]):
             raise HTTPException(409, "A journal already uses this supplier payment idempotency key.")
         if effective:
             existing = effective[0]
+            # Report success only for a journal that really is this payment: payable debit and bank credit of the amount.
+            lines = db.execute("""SELECT a.account_type,l.debit,l.credit FROM journal_lines l
+                JOIN ledger_accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+                WHERE l.journal_id=%s AND l.tenant_id=%s""", (existing["id"], user["tenant_id"])).fetchall()
+            shape = sorted((line["account_type"], Decimal(line["debit"] or 0), Decimal(line["credit"] or 0)) for line in lines)
+            if shape != sorted([("liability", payment_amount, Decimal(0)), ("asset", Decimal(0), payment_amount)]):
+                raise HTTPException(409, "The journal linked to this payment does not debit payables and credit the bank for its amount; review the ledger.")
             return {
                 "id": str(existing["id"]), "status": existing["status"], "idempotent": True,
                 "recordId": None, "settlementId": str(settlement["id"]),
@@ -241,15 +259,20 @@ def post_supplier_payment(transaction_id: str, data: SupplierPaymentPostingInput
             raise HTTPException(409, "Supplier payment journal posting currently supports MYR only; foreign-currency conversion is not configured.")
 
         match = db.execute("""SELECT c.record_id,r.document_id,r.category,COALESCE(r.amount_due,r.total_amount) AS amount_due,r.currency,
-                r.is_current,r.validation_status
+                r.is_current,r.validation_status,d.kind
             FROM reconciliation_candidates c
             JOIN standardised_records r ON r.id=c.record_id AND r.tenant_id=c.tenant_id
+            JOIN documents d ON d.id=r.document_id AND d.tenant_id=r.tenant_id
             WHERE c.tenant_id=%s AND c.bank_transaction_id=%s AND c.status='confirmed'
             FOR UPDATE OF r""", (user["tenant_id"], transaction_id)).fetchone()
         if not match:
             raise HTTPException(409, "Confirm a reconciliation match to an approved supplier bill first.")
         if match["category"] != "accounts_payable":
             raise HTTPException(422, "Supplier payment posting requires an accounts-payable record.")
+        from services.routes.home.lanes import OPEN_ITEM_KINDS
+        if match["kind"] not in OPEN_ITEM_KINDS["accounts_payable"]:
+            # A receipt is already paid and a credit or debit note adjusts another document.
+            raise HTTPException(422, "A supplier payment can be posted only against a supplier invoice or bill.")
         if not match["is_current"] or match["validation_status"] != "passed":
             raise HTTPException(409, "Only the current approved supplier bill can receive a payment.")
         if match["amount_due"] is None or match["amount_due"] <= 0:
@@ -473,7 +496,7 @@ def get_profit_and_loss_dashboard(request: Request, fromDate: date, toDate: date
                         WHERE reversal.tenant_id=a.tenant_id AND reversal.reverses_allocation_id=a.id)
             ),
             allocation_rows AS (
-                SELECT date_trunc(%s,s.settlement_date)::date AS period,s.currency,
+                SELECT date_trunc(%s,COALESCE(bank.posted_date,s.settlement_date))::date AS period,s.currency,
                     CASE WHEN r.category='accounts_receivable' THEN 'income' ELSE 'expense' END AS account_type,
                     CASE WHEN r.category='accounts_receivable' THEN 'ALLOC-AR' ELSE 'ALLOC-AP' END AS account_code,
                     CASE WHEN r.category='accounts_receivable' THEN 'Allocated customer receipts' ELSE 'Allocated supplier payments' END AS account_name,
@@ -481,7 +504,9 @@ def get_profit_and_loss_dashboard(request: Request, fromDate: date, toDate: date
                 FROM active_allocations a
                 JOIN settlements s ON s.id=a.settlement_id AND s.tenant_id=%s AND s.status='recorded'
                 JOIN standardised_records r ON r.id=a.record_id AND r.tenant_id=s.tenant_id
-                WHERE r.is_current AND r.validation_status='passed' AND s.settlement_date BETWEEN %s AND %s
+                -- A bank payment is recognised on its bank posting date, the same date coded_rows uses.
+                LEFT JOIN bank_transactions bank ON s.source_type='bank_import' AND bank.id=s.source_id AND bank.tenant_id=s.tenant_id
+                WHERE r.is_current AND r.validation_status='passed' AND COALESCE(bank.posted_date,s.settlement_date) BETWEEN %s AND %s
                     AND ((r.category='accounts_receivable' AND s.direction='money_in')
                         OR (r.category='accounts_payable' AND s.direction='money_out'))
                 GROUP BY period,s.currency,account_type,account_code,account_name
@@ -494,7 +519,8 @@ def get_profit_and_loss_dashboard(request: Request, fromDate: date, toDate: date
                 JOIN settlements s ON s.id=a.settlement_id AND s.tenant_id=%s
                     AND s.source_type='bank_import' AND s.status='recorded'
                 JOIN standardised_records r ON r.id=a.record_id AND r.tenant_id=s.tenant_id
-                WHERE r.is_current AND r.validation_status='passed' AND s.settlement_date BETWEEN %s AND %s
+                LEFT JOIN bank_transactions bank ON bank.id=s.source_id AND bank.tenant_id=s.tenant_id
+                WHERE r.is_current AND r.validation_status='passed' AND COALESCE(bank.posted_date,s.settlement_date) BETWEEN %s AND %s
                     AND ((r.category='accounts_receivable' AND s.direction='money_in')
                         OR (r.category='accounts_payable' AND s.direction='money_out'))
                 GROUP BY s.source_id
@@ -617,7 +643,8 @@ def list_allocations(request: Request):
     with connect() as db:
         rows = db.execute("""SELECT a.id,a.settlement_id,a.record_id,a.amount,a.status,a.created_at,a.reversed_at,a.reversal_reason,
             s.settlement_ref,s.amount settlement_amount,s.currency,s.direction,
-            COALESCE((SELECT SUM(x.amount) FROM settlement_allocations x WHERE x.settlement_id=a.settlement_id AND x.status='active'),0) settlement_allocated
+            COALESCE((SELECT SUM(x.amount) FROM settlement_allocations x WHERE x.settlement_id=a.settlement_id AND x.status='active'
+                AND NOT EXISTS (SELECT 1 FROM settlement_allocations undo WHERE undo.tenant_id=x.tenant_id AND undo.reverses_allocation_id=x.id)),0) settlement_allocated
             FROM settlement_allocations a JOIN settlements s ON s.id=a.settlement_id AND s.tenant_id=a.tenant_id
             WHERE a.tenant_id=%s ORDER BY a.created_at DESC""", (user["tenant_id"],)).fetchall()
     return [{"id": str(r["id"]), "settlementId": str(r["settlement_id"]), "settlementRef": r["settlement_ref"], "recordId": str(r["record_id"]), "amount": str(r["amount"]), "currency": r["currency"], "direction": r["direction"], "status": r["status"], "unmatchedSettlementAmount": str(r["settlement_amount"]-r["settlement_allocated"]), "createdAt": str(r["created_at"]), "reversedAt": str(r["reversed_at"]) if r["reversed_at"] else None, "reversalReason": r["reversal_reason"]} for r in rows]
@@ -625,7 +652,9 @@ def list_allocations(request: Request):
 def list_settlements(request: Request):
     user = require_workspace_user(request, {"super_admin", "local_admin", "accountant"})
     with connect() as db:
-        rows = db.execute("""SELECT s.*, COALESCE(SUM(a.amount) FILTER (WHERE a.status='active'),0) allocated
+        # An undone allocation (an active row with a reversal row) no longer counts as allocated.
+        rows = db.execute("""SELECT s.*, COALESCE(SUM(a.amount) FILTER (WHERE a.status='active' AND NOT EXISTS (
+                SELECT 1 FROM settlement_allocations undo WHERE undo.tenant_id=a.tenant_id AND undo.reverses_allocation_id=a.id)),0) allocated
             FROM settlements s LEFT JOIN settlement_allocations a ON a.settlement_id=s.id AND a.tenant_id=s.tenant_id
             WHERE s.tenant_id=%s GROUP BY s.id ORDER BY s.settlement_date DESC, s.created_at DESC""", (user["tenant_id"],)).fetchall()
     return [{"id": str(r["id"]), "settlementRef": r["settlement_ref"], "date": str(r["settlement_date"]), "direction": r["direction"], "amount": str(r["amount"]), "allocated": str(r["allocated"]), "unmatchedAmount": str(r["amount"]-r["allocated"]), "currency": r["currency"], "status": r["status"]} for r in rows]

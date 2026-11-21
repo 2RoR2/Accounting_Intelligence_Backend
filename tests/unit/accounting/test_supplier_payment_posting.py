@@ -36,9 +36,12 @@ class Cursor:
 
 
 class FakeDatabase:
-    def __init__(self, existing_journal=None, confirmed_match=True, currency="MYR", bill_payable=None):
+    def __init__(self, existing_journal=None, confirmed_match=True, currency="MYR", bill_payable=None, kind="bill",
+                 existing_lines=None):
         self.existing_journal = existing_journal
         self.bill_payable = bill_payable
+        self.kind = kind
+        self.existing_lines = existing_lines
         self.confirmed_match = confirmed_match
         self.currency = currency
         self.journal_inserts = []
@@ -71,6 +74,10 @@ class FakeDatabase:
                 "currency": self.currency,
                 "status": "recorded",
             })
+        if "FROM journal_lines l JOIN ledger_accounts" in sql:
+            return Cursor(self.existing_lines if self.existing_lines is not None else [
+                {"account_type": "liability", "debit": Decimal("125.00"), "credit": Decimal("0")},
+                {"account_type": "asset", "debit": Decimal("0"), "credit": Decimal("125.00")}])
         if "FROM journal_headers j JOIN journal_lines" in sql:
             return Cursor({"account_id": self.bill_payable} if self.bill_payable else None)
         if "FROM journal_headers WHERE tenant_id=%s AND idempotency_key=%s" in sql:
@@ -88,6 +95,7 @@ class FakeDatabase:
             return Cursor({
                 "record_id": RECORD_ID,
                 "document_id": RECORD_ID,
+                "kind": self.kind,
                 "category": "accounts_payable",
                 "amount_due": Decimal("125.00"),
                 "currency": self.currency,
@@ -212,17 +220,55 @@ def test_supplier_payment_must_clear_the_payable_account_the_bill_credited(monke
     assert database.journal_inserts == []
 
 
-def test_supplier_payment_can_be_posted_again_after_its_journal_was_reversed(monkeypatch):
-    database = FakeDatabase(existing_journal={
-        "id": JOURNAL_ID, "status": "reversed", "source_type": "settlement", "source_id": SETTLEMENT_ID,
-        "idempotency_key": f"supplier-payment:{SETTLEMENT_ID}",
-    })
+REVERSED = {"id": JOURNAL_ID, "status": "reversed", "source_type": "settlement", "source_id": SETTLEMENT_ID,
+            "idempotency_key": f"supplier-payment:{SETTLEMENT_ID}"}
+
+
+def test_a_plain_retry_after_a_reversal_reports_the_reversed_journal_and_posts_nothing(monkeypatch):
+    database = FakeDatabase(existing_journal=REVERSED)
     payload = _configure(monkeypatch, database)
+
+    result = accounting_routes.post_supplier_payment(str(TRANSACTION_ID), payload, None)
+
+    assert (result["id"], result["status"], result["idempotent"]) == (str(JOURNAL_ID), "reversed", True)
+    assert database.journal_inserts == []
+
+
+def test_an_explicit_correction_posts_a_new_payment_after_its_journal_was_reversed(monkeypatch):
+    database = FakeDatabase(existing_journal=REVERSED)
+    payload = _configure(monkeypatch, database).model_copy(update={"replacesJournalId": str(JOURNAL_ID)})
 
     result = accounting_routes.post_supplier_payment(str(TRANSACTION_ID), payload, None)
 
     assert result["idempotent"] is False
     assert database.journal_inserts[0][1][2] == f"supplier-payment:{SETTLEMENT_ID}:after:{JOURNAL_ID}"
+
+
+def test_a_payment_against_a_receipt_is_refused(monkeypatch):
+    database = FakeDatabase(kind="receipt")
+    payload = _configure(monkeypatch, database)
+
+    with pytest.raises(HTTPException) as error:
+        accounting_routes.post_supplier_payment(str(TRANSACTION_ID), payload, None)
+
+    assert error.value.status_code == 422
+    assert "invoice or bill" in error.value.detail
+    assert database.journal_inserts == []
+
+
+def test_an_existing_journal_that_is_not_this_payment_is_not_reported_as_success(monkeypatch):
+    database = FakeDatabase(existing_journal={"id": JOURNAL_ID, "status": "posted", "source_type": "settlement",
+                                              "source_id": SETTLEMENT_ID, "idempotency_key": f"supplier-payment:{SETTLEMENT_ID}"},
+                            existing_lines=[{"account_type": "expense", "debit": Decimal("125.00"), "credit": Decimal("0")},
+                                            {"account_type": "asset", "debit": Decimal("0"), "credit": Decimal("125.00")}])
+    payload = accounting_routes.SupplierPaymentPostingInput()
+    _configure(monkeypatch, database, payload)
+
+    with pytest.raises(HTTPException) as error:
+        accounting_routes.post_supplier_payment(str(TRANSACTION_ID), payload, None)
+
+    assert error.value.status_code == 409
+    assert "does not debit payables" in error.value.detail
 
 
 def test_adjustment_amount_precision_is_a_request_validation_error():
