@@ -162,7 +162,6 @@ def test_cash_report_keeps_a_coded_refund_allocated_against_the_report_direction
 
 def test_migrate_upgrades_an_existing_database_to_the_new_allocation_guard(tmp_path):
     """An existing database keeps the old guard until `manage.py migrate` runs the migration file."""
-    import subprocess
     from database.schema_compatibility import apply_migrations
     url = os.getenv('TEST_DATABASE_URL')
     if not url:
@@ -170,12 +169,9 @@ def test_migrate_upgrades_an_existing_database_to_the_new_allocation_guard(tmp_p
     parts = urlsplit(url)
     assert parts.hostname in {'127.0.0.1', 'localhost', '::1'}
     root = Path(__file__).resolve().parents[2]
-    # The schema before this fix (the base branch), standing in for a database created earlier.
-    old_schema = subprocess.run(['git', '-C', str(root), 'show', 'origin/features:database/PostgreSQL Database schema.sql'],
-                                capture_output=True, check=False).stdout.decode('utf-8-sig')
-    if 'settlement_allocation_guard' not in old_schema:
-        pytest.skip('origin/features schema not available in this checkout')
-    assert 'reverses_allocation_id=a.id' not in old_schema
+    # A database created before the fix: the current schema with the old guard (a checked-in copy) put back.
+    old_guard = (Path(__file__).resolve().parent / 'fixtures' / 'settlement_allocation_guard_before_20261121.sql').read_text(encoding='utf-8')
+    assert 'reverses_allocation_id' not in old_guard
     name = 'accounting_upgrade_' + uuid4().hex
     with psycopg.connect(url, autocommit=True) as db:
         db.execute('CREATE DATABASE ' + name)
@@ -188,7 +184,8 @@ def test_migrate_upgrades_an_existing_database_to_the_new_allocation_guard(tmp_p
 
     try:
         with connect() as db:
-            db.execute(old_schema)
+            db.execute(SCHEMA_FILE.read_text(encoding='utf-8-sig'))
+            db.execute(old_guard)
         ids = _seed(connect)
 
         def reallocate():
