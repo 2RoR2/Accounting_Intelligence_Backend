@@ -1452,20 +1452,11 @@ CREATE INDEX IF NOT EXISTS idx_review_decisions_document ON review_decisions(doc
 -- ============================================================================
 
 -- 005_p1_coa_cost_centres_coding.sql
--- P1 chart of accounts, cost centres and accountant coding decisions (roadmap gate G4).
--- Owner: Aleeya (Module 4). Contract: docs/DOMAIN_AND_API_CONTRACTS_V2.md, section 5.
---
--- Rules this file enforces in the database:
---   * Every row belongs to one company. Links between rows are checked with composite foreign
---     keys (id, tenant_id), so a row can never point at another company's data.
---   * A confirmed account is NOT a journal entry. Nothing here posts to a ledger.
---   * Decisions are append only. A newer decision replaces an older one in the current view,
---     it never edits it.
---   * A decision is refused if the approved record changed since the accountant reviewed it.
---   * Suggestions are candidates. Only a person's decision confirms an account.
---
--- Apply with manage.py migrate on an ISOLATED database first. The migration runner owns the
--- transaction, so this file has no BEGIN or COMMIT. It can be run twice safely.
+-- Chart of accounts, cost centres and accountant coding decisions (roadmap gate G4).
+-- Every row belongs to one company, enforced by composite keys (id, tenant_id).
+-- A confirmed account is not a journal entry; nothing here posts to a ledger.
+-- Decisions are append only, and are refused if the approved record changed since the review.
+-- Suggestions are candidates; only a person's decision confirms an account.
 
 -- Lets other tables prove that a record belongs to the same company.
 DO $$
@@ -1702,14 +1693,9 @@ CREATE INDEX IF NOT EXISTS idx_coding_suggestions_record ON coding_suggestions (
 CREATE INDEX IF NOT EXISTS idx_coding_decisions_record ON coding_decisions (tenant_id, record_id, created_at);
 
 -- 006_p1_po_match_review.sql
--- P1 purchase order matching: proposals made by the matching rules and the reviewer's decision
--- (roadmap gate G5). Owner: Aleeya (Module 4). Contract: docs/DOMAIN_AND_API_CONTRACTS_V2.md.
---
--- The purchase_orders and purchase_order_lines tables already exist (AP controls migration).
--- This file adds the two review tables and two columns the contract asks for.
--- Do not store PO-only data in document_reconciliations: that table links documents to documents.
---
--- Apply after 005. Safe to run twice. No BEGIN or COMMIT: the migration runner owns the transaction.
+-- Purchase order matching: proposals made by the matching rules and the reviewer's decision (roadmap gate G5).
+-- purchase_orders and purchase_order_lines already exist; this adds the two review tables and two columns.
+-- PO-only data is not stored in document_reconciliations, which links documents to documents.
 
 DO $$
 BEGIN
@@ -1815,22 +1801,12 @@ CREATE INDEX IF NOT EXISTS idx_po_match_proposals_document ON po_match_proposals
 CREATE INDEX IF NOT EXISTS idx_po_match_decisions_proposal ON po_match_decisions (proposal_id, created_at);
 
 -- 007_p1_bank_import_reconciliation.sql
--- P1 bank statement import (CSV/Excel/PDF), Money In / Money Out and reconciliation (roadmap gate G6).
--- Owner: Aleeya (Module 4). Contract: docs/DOMAIN_AND_API_CONTRACTS_V2.md, section 5.
---
--- Rules this file enforces in the database:
---   * Money Out is a bank DEBIT and Money In is a bank CREDIT. The direction is stored with the row
---     and must agree with the debit and credit columns. Anything unclear is stored as needs_review
---     and can never be matched.
---   * A bank row is evidence. Once imported, only its status can change.
---   * P1 policy: one to one, same currency, full amount matches. A match can be confirmed only
---     when the currency and the amount agree exactly with the current approved record.
---   * A bank row and a record can each be confirmed once. Reversing a match is a new, audited
---     decision. Nothing is ever edited or deleted.
---   * Confirming a match records what the bank shows. It does not pay anything and it does not
---     post to a ledger. No account numbers are stored: only an anonymised reference.
---
--- Apply after 005 and 006. Safe to run twice. No BEGIN or COMMIT: the migration runner owns it.
+-- Bank statement import (CSV/Excel/PDF), Money In / Money Out and reconciliation (roadmap gate G6).
+-- Money Out is a bank debit and Money In is a bank credit; the direction must agree with the amount columns.
+-- Unclear rows are stored as needs_review and can never be matched.
+-- A bank row is evidence: once imported, only its status can change.
+-- A match is one to one, same currency, exact amount. Reversing a match is a new audited decision.
+-- Confirming a match pays nothing and posts nothing; only an anonymised bank reference is stored.
 
 -- ---------------------------------------------------------------- imports
 CREATE TABLE IF NOT EXISTS bank_imports (
@@ -2143,21 +2119,10 @@ CREATE INDEX IF NOT EXISTS idx_recon_candidates_record ON reconciliation_candida
 CREATE INDEX IF NOT EXISTS idx_recon_decisions_candidate ON reconciliation_decisions (candidate_id, confirmed_at);
 
 -- 008_p1_bank_row_coding.sql
--- Classifying bank rows that have no invoice (bank charges, interest, owner top ups), so the
--- Money In and Money Out screens can show what each unmatched row was for.
--- Owner: Aleeya (Module 4). Follows the same pattern as the coding tables in migration 005.
---
--- Rules this file enforces in the database:
---   * Money In and Money Out are decided by the bank row's debit and credit (migration 007).
---     This file only adds a classification: an account and an optional cost centre.
---   * A classification is NOT a journal entry and NOT a payment. Nothing is posted anywhere.
---   * Only an imported bank row can be classified. A row in a match, a row that needs review
---     and an ignored row cannot.
---   * Decisions are append only. To undo a classification, add a 'cleared' decision with a reason.
---     A classified row cannot be matched to a record until the classification is cleared.
---   * Suggestions from rules or models are candidates. Only a person's decision classifies a row.
---
--- Apply after 005, 006 and 007. Safe to run twice. No BEGIN or COMMIT: the migration runner owns it.
+-- Classifies bank rows that have no invoice (bank charges, interest, owner top ups) with an account and optional cost centre.
+-- A classification is not a journal entry or a payment.
+-- Only an imported bank row can be classified. Decisions are append only; a 'cleared' decision with a reason undoes one.
+-- A classified row cannot be matched until the classification is cleared.
 
 -- ---------------------------------------------------------------- suggestions
 CREATE TABLE IF NOT EXISTS bank_coding_suggestions (
@@ -2359,28 +2324,14 @@ CREATE INDEX IF NOT EXISTS idx_bank_coding_decisions_row ON bank_coding_decision
 -- ============================================================================
 
 -- 009_integrity_exceptions_validation.sql
--- Jira task: Enforce Accounting Record Integrity and Data Consistency. Owner: Aleeya (Module 4).
---
--- What this file does, and why it is safe for the other modules:
---   1. An exception must belong to the same company as its document. The database now checks it.
---   2. An exception's resolved time always agrees with its status. The database fills it in or clears it,
---      so the assign and resolve code does not change. Assigning a resolved exception reopens it cleanly.
---   3. A validation result's flags must agree with its status (a passed result never blocks approval,
---      a failed result always does). The current validation code already writes them this way.
---   4. Validation results and exceptions record the extraction run they were made from. The database fills
---      it in from the document's current extraction, so nobody has to change code. When a document is
---      processed again, old results stay linked to the old run.
---   5. Two read only views list data that needs attention: field values that disagree with their state,
---      and open exceptions that came from an older extraction run.
---
--- Deliberately NOT done, because the code shows they would break validation or re-extraction:
---   * no uniqueness rule on validation_results or exceptions (one invoice can duplicate several earlier
---     ones, which correctly gives several identical EX-007 rows)
---   * no "one extraction per job" rule (re-extraction reuses the latest job)
---   * no hard rule on extracted field values (AI output is stored as it is and reported by a view instead)
---
--- Run it on an ISOLATED database first. Run integrity_009_precheck.sql before applying it anywhere.
--- The migration runner owns the transaction, so there is no BEGIN or COMMIT here. Safe to run twice.
+-- Accounting record integrity (Jira: Enforce Accounting Record Integrity and Data Consistency).
+--   1. An exception must belong to the same company as its document.
+--   2. An exception's resolved time always agrees with its status (filled or cleared by the database).
+--   3. A validation result's flags must agree with its status (passed never blocks approval, failed always does).
+--   4. Validation results and exceptions record the extraction run they came from.
+--   5. Two read only views list field values that disagree with their state, and open exceptions from an older run.
+-- Not done on purpose: no uniqueness rule on validation_results or exceptions, no "one extraction per job" rule,
+-- and no hard rule on extracted field values.
 
 -- ---------------------------------------------------------------- 1. exceptions belong to their document's company
 DO $$
@@ -2504,18 +2455,10 @@ WHERE e.status <> 'resolved' AND e.extraction_id IS NOT NULL AND e.extraction_id
 -- ============================================================================
 
 -- 010_backend_required_tables.sql
--- Tables the newest backend code already depends on. Owner: Aleeya (Module 4).
--- Apply this FIRST, and soon: without these tables some backend routes fail with "relation does not exist".
---
+-- Tables the backend code already depends on; without them some routes fail with "relation does not exist".
 --   1. benchmark_demo_tenants and benchmark_demo_documents (the registry from Jonathan's handoff package).
---      The accountant's document list, document detail and document file routes all test against them,
---      so a database without them breaks those routes for every user, not only the demo.
---      The definitions follow Jonathan's proposal (the columns the code reads), with one hardening:
---      the approver and the importer must belong to the same company as the registration.
---   2. mfa_backup_codes, used by POST /api/auth/backup-codes. A teammate already added the table to the schema
---      file. This creates it where it is missing and adds the protections the schema file's version lacks.
---
--- Safe to run twice. No BEGIN or COMMIT: the migration runner owns the transaction.
+--      The approver and importer must belong to the same company as the registration.
+--   2. mfa_backup_codes, used by POST /api/auth/backup-codes, with extra protections.
 
 -- ---------------------------------------------------------------- 1. demo registry
 CREATE TABLE IF NOT EXISTS benchmark_demo_tenants (
@@ -2599,19 +2542,15 @@ CREATE TRIGGER trg_mfa_backup_code_guard
     FOR EACH ROW EXECUTE FUNCTION mfa_backup_code_guard();
 
 -- 011_json_alignment_and_user_columns.sql
--- Owner: Aleeya (Module 4). Apply after 010. Safe to run twice. No BEGIN or COMMIT: the migration runner owns it.
---
--- 1. Corrections can carry a reason (the review JSON requires a rationale for every correction).
--- 2. Line items can store the extra line cells from the prediction JSON, and the service's row id.
--- 3. An extraction records its predicted document type, extractor version, configuration hash and capture time,
---    filled automatically from raw_json when those keys are there.
--- 4. The original extraction is protected: only is_current may change.
--- 5. Exceptions record the user who uploaded the document that caused them, and a view shows names.
--- 6. A view gives the cash summary per company and currency (money in, money out, verified in, verified out).
--- 7. A bank import can be 'discarded', and it cannot be discarded or reverted while its rows are in a match.
--- 8. A bank row saved with 0.00 in its unused debit or credit column is stored with that column empty.
---
--- Nothing here renames or removes a column, so the running backend keeps working.
+--   1. Corrections can carry a reason.
+--   2. Line items can store extra line cells from the prediction JSON, and the service's row id.
+--   3. An extraction records its predicted document type, extractor version, configuration hash and capture time.
+--   4. The original extraction is protected: only is_current may change.
+--   5. Exceptions record the uploader of the document, and a view shows names.
+--   6. A view gives the cash summary per company and currency.
+--   7. A bank import can be 'discarded', but not while its rows are in a match.
+--   8. A 0.00 in a bank row's unused debit or credit column is stored as empty.
+-- No column is renamed or removed, so the running backend keeps working.
 
 -- ---------------------------------------------------------------- 1. a reason for every correction
 ALTER TABLE field_corrections ADD COLUMN IF NOT EXISTS reason TEXT CHECK (reason IS NULL OR btrim(reason) <> '');
@@ -3044,16 +2983,10 @@ WHERE module_key IN ('internal-ledger-local-admin','internal-ledger-accountant')
 -- ============================================================================
 
 -- 016_ledger_review_fixes.sql
--- Owner: Aleeya (Module 4). Run AFTER 012_to_015_ledger_from_repo.sql. Safe to run twice.
--- No BEGIN or COMMIT: open the file, check the toolbar, press Alt+X.
---
--- A review of the new ledger section found three things that need a database change:
---   1. The rule that a posted journal must balance (total debit equals total credit) was written as a function
---      (ledger_journal_guard) but never attached to a trigger, so nothing enforced it.
---   2. The backend's reverse route marks the original journal as 'reversed' after it posts the reversal. The append-only
---      trigger refuses ANY change to a posted journal, so every reversal would fail. The trigger now allows exactly one
---      change: a posted journal can become 'reversed', only when its reversal journal already exists, and nothing else may change.
---   3. The backend now defaults the session timeout to 480 minutes, but the old settings rule only allowed 15, 30 and 60.
+-- Three fixes found in the ledger review:
+--   1. The balanced-journal rule (ledger_journal_guard) existed but had no trigger, so nothing enforced it.
+--   2. The append-only trigger blocked every reversal. A posted journal may now become 'reversed' once its reversal exists.
+--   3. The session timeout setting now allows the backend default of 480 minutes.
 
 -- ---------------------------------------------------------------- 1. a posted journal must balance, checked when the transaction commits
 DROP TRIGGER IF EXISTS trg_ledger_journal_guard ON journal_headers;
@@ -3112,14 +3045,11 @@ ALTER TABLE workspace_settings ALTER COLUMN session_timeout_minutes SET DEFAULT 
 -- ============================================================================
 
 -- 017_amount_due_and_validation_settings.sql
--- Owner: Aleeya (Module 4). Run AFTER 012 to 016. Safe to run twice. No BEGIN or COMMIT: open the file on Neon, press Alt+X.
--- These four changes follow Aina's answers about her validation rules:
---   1. standardised_records.amount_due: the amount still payable, which can differ from the bill's total after prior balances,
---      credits or part payments. Optional. When it is empty, everything keeps using the total, so nothing changes until the
---      backend starts filling it in. Bank matching and settlement allocation use it when it is there.
---   2. A validation result can be 'not_applicable' (the rule does not apply), which is different from 'not_checked'.
---   3. validation_results.details: a JSON field for the reason and the original result of a check.
---   4. Two settings for each company: require_vendor_match and require_customer_match (default off).
+-- Four changes for the validation rules:
+--   1. standardised_records.amount_due: the amount still payable (optional; the total is used when empty).
+--   2. Validation results can be 'not_applicable', separate from 'not_checked'.
+--   3. validation_results.details: JSON with the reason and original result of a check.
+--   4. Company settings require_vendor_match and require_customer_match (default off).
 -- Negative amounts are allowed in amount_due, because credits stay signed.
 
 -- ---------------------------------------------------------------- 1. amount due on approved records
@@ -3288,16 +3218,9 @@ ALTER TABLE bank_imports
 -- ============================================================================
 
 -- 018_bank_formats_and_reconciliation_rules.sql
--- Owner: Aleeya (Module 4). Run AFTER 017. Safe to run twice. No BEGIN or COMMIT: open the file on Neon and press Alt+X.
---
--- Two things, both found by comparing the team's `features` branch with the live database:
---   1. Bank statements can now be CSV, Excel (.xlsx) or PDF, and the backend saves the file type in bank_imports.input_format.
---      The database rule only allowed 'csv' until the schema file's "Moved from 008_bank_statement_formats" block was applied.
---   2. Rachel's three tables (bank_reconciliation_periods, bank_reconciliation_reopens, bank_transaction_anomalies) are created
---      by the backend code itself. They work, but the database does not yet enforce what the backend assumes. This adds the rules.
---
--- The new rules on Rachel's tables use NOT VALID, which means they apply to every new or changed row and do NOT re-check old rows,
--- so existing data can never make this migration fail.
+-- 1. bank_imports.input_format now accepts csv, xlsx and pdf.
+-- 2. Rules for the reconciliation period, reopen and anomaly tables, which the backend creates itself.
+-- The new rules use NOT VALID: they apply to new and changed rows and do not re-check old ones.
 
 -- ---------------------------------------------------------------- 1. bank statement formats
 DO $$
@@ -3385,18 +3308,12 @@ CREATE TRIGGER trg_bank_recon_reopens_append_only
 -- ============================================================================
 
 -- 019_lock_completed_reconciliation_periods.sql
--- Owner: Aleeya (Module 4). Run AFTER 018. Safe to run twice. No BEGIN or COMMIT: open the file on Neon and press Alt+X.
---
--- Rachel asked for a lock. Today a reconciliation period can be signed off (completed), but nothing stops anyone changing its bank
--- rows afterwards, so the signed-off numbers could silently stop being true. This migration makes "completed" mean locked:
---   * A bank row dated inside a completed period (same bank account) cannot be added, changed or deleted.
---   * The classification of such a row cannot be changed, and an import that contains such rows cannot be discarded or reverted.
---   * The period has to be reopened first. Reopening already needs a recorded reason (migration 018), and the period is locked again
---     when it is signed off again.
---   * Every sign-off is saved automatically, with the figures that were signed off, in a new history table. It is never edited.
--- A bank row belongs to a period the same way the backend decides it: the import's bank account reference matches and the row's
--- date is between the period's start and end. If a period is not completed, nothing changes for it.
--- No backend change is needed: the database does all of it.
+-- A completed reconciliation period is now locked.
+--   * Bank rows inside a completed period cannot be added, changed or deleted, and their import cannot be discarded or reverted.
+--   * The period must be reopened first (a reason is required, from 018).
+--   * Every sign-off is saved in bank_reconciliation_signoffs, which is never edited.
+-- A bank row belongs to a period when the bank account reference matches and the row's date is between the period's start and end.
+-- No backend change is needed.
 
 -- ---------------------------------------------------------------- 1. is this bank row inside a completed period?
 CREATE OR REPLACE FUNCTION bank_period_completed(p_tenant UUID, p_import UUID, p_date DATE) RETURNS BOOLEAN AS $$
@@ -3531,21 +3448,10 @@ CREATE TRIGGER trg_bank_recon_signoff_record
 -- ============================================================================
 
 -- 020_ledger_account_report_fields.sql
--- Owner: Aleeya (Module 4). Run AFTER 019. Safe to run twice. No BEGIN or COMMIT: open the file on Neon and press Alt+X.
---
--- The chart of accounts file that the team imports (docs/COMPANY_PACKS.md, coa.csv) carries three more facts about each account:
---   statement       balance_sheet or profit_and_loss
---   normal_balance  debit or credit (contra accounts such as accumulated depreciation have the opposite one)
---   report_section  the report line, such as Current assets, Revenue, Cost of sales, Operating expenses
--- The import checks them but could not keep them, because neither account table had a column for them (the code says so:
--- "a schema gap for D2 reports"). This adds the three columns to ledger_accounts, the list that journals post to and that the
--- trial balance reads.
---
---   * statement and normal_balance are always filled. A new account that does not give them gets the usual ones from its type,
---     so the current backend, which does not send them yet, keeps working. The existing accounts are filled the same way.
---   * report_section may be empty. It cannot be worked out from the type (cost of sales and operating expenses are both
---     expenses), so it stays empty until the import or a person sets it.
---   * changing an account's type updates a statement or normal balance that was not changed at the same time.
+-- Adds statement, normal_balance and report_section to ledger_accounts, so the chart import (coa.csv) can keep them.
+-- statement and normal_balance are always filled by a trigger from the account type when not given.
+-- report_section may be empty, because it cannot be worked out from the type.
+-- (cost of sales and operating expenses are both expenses, so the type cannot tell them apart).
 
 ALTER TABLE ledger_accounts ADD COLUMN IF NOT EXISTS statement TEXT;
 ALTER TABLE ledger_accounts ADD COLUMN IF NOT EXISTS normal_balance TEXT;
