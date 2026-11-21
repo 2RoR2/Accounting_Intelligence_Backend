@@ -1,6 +1,47 @@
 from __future__ import annotations
 from main import *
 from main import _lock_upload_identity, _processing_error, _lock_workspace_document, _require_current_extraction, _authorised_document, _bank_row_values, _bank_transaction_dto, _uuid_or_422, _account_dto, _cost_centre_dto
+from psycopg.errors import UniqueViolation
+
+
+class CompanyProfileInput(BaseModel):
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+
+
+def company_profile(request: Request):
+    user = require_workspace_user(request, {"local_admin"})
+    with connect() as db:
+        company = db.execute("""SELECT tenant_code,name,registration_number,admin_email
+            FROM tenants WHERE id=%s""", (user["tenant_id"],)).fetchone()
+        if not company:
+            raise HTTPException(404, "Company profile not found.")
+        currencies = db.execute("""SELECT DISTINCT currency FROM (
+            SELECT 'MYR' AS currency
+            UNION ALL SELECT BTRIM(currency) FROM standardised_records WHERE tenant_id=%s AND is_current
+            UNION ALL SELECT BTRIM(currency) FROM bank_transactions WHERE tenant_id=%s AND status<>'ignored'
+            ) used WHERE currency ~ '^[A-Z]{3}$' ORDER BY currency""",
+            (user["tenant_id"], user["tenant_id"])).fetchall()
+    return {"companyCode": company["tenant_code"], "name": company["name"],
+            "registrationNumber": company["registration_number"], "adminEmail": company["admin_email"],
+            "reportingCurrency": "MYR", "observedCurrencies": [row["currency"] for row in currencies]}
+
+
+def update_company_profile(data: CompanyProfileInput, request: Request):
+    user = require_workspace_user(request, {"local_admin"})
+    try:
+        with connect() as db:
+            company = db.execute("SELECT name FROM tenants WHERE id=%s FOR UPDATE", (user["tenant_id"],)).fetchone()
+            if not company:
+                raise HTTPException(404, "Company profile not found.")
+            if company["name"] != data.name:
+                db.execute("UPDATE tenants SET name=%s WHERE id=%s", (data.name, user["tenant_id"]))
+                db.execute("""INSERT INTO audit_logs(tenant_id,user_id,user_name,role,action,resource,details)
+                    VALUES (%s,%s,%s,%s,'company.profile_updated',%s,%s)""",
+                    (user["tenant_id"], user["id"], user["name"], user["role"], str(user["tenant_id"]),
+                     "Company name updated."))
+    except UniqueViolation:
+        raise HTTPException(409, "A company with that name already exists.") from None
+    return {"name": data.name}
 
 def workspace_navigation(request: Request):
     """Return the enabled navigation modules persisted for the signed-in role."""
@@ -198,6 +239,8 @@ def register(router, handlers):
     router.add_api_route('/api/audit', list_audit, methods=['GET'])
     router.add_api_route('/api/settings', get_workspace_settings, methods=['GET'])
     router.add_api_route('/api/settings', save_workspace_settings, methods=['PUT'])
+    router.add_api_route('/api/settings/company-profile', company_profile, methods=['GET'])
+    router.add_api_route('/api/settings/company-profile', update_company_profile, methods=['PATCH'])
     router.add_api_route('/api/health', health, methods=['GET'])
     router.add_api_route('/api/suppliers', list_suppliers, methods=['GET'])
     router.add_api_route('/api/suppliers', create_supplier, methods=['POST'], status_code=201)
