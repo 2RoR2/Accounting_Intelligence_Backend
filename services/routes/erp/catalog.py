@@ -317,7 +317,48 @@ def _currency_code(code, values):
             date.fromisoformat(rate_date)
         except ValueError as exc:
             raise HTTPException(422, "data.rateDate must be an ISO date (YYYY-MM-DD).") from exc
+    _custom_rates(code, values.get("customRates"))
     return code
+
+
+_RATE = re.compile(r"(?:[0-9]+(?:\.[0-9]{1,6})?|\.[0-9]{1,6})")
+
+
+def _iso_date(value, label):
+    try:
+        if not isinstance(value, str) or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value):
+            raise ValueError
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        raise HTTPException(422, f"{label} must be an ISO date (YYYY-MM-DD).") from exc
+
+
+def _custom_rates(code, periods):
+    """Date-ranged rates (latest_update's custom exchange rates): [{startDate, endDate|null, rate}], no overlaps.
+    Reference only, like the default rate: only MYR documents post to the ledger."""
+    if periods is None:
+        return
+    if not isinstance(periods, list) or len(periods) > 50:
+        raise HTTPException(422, "data.customRates must be a list of at most 50 rate periods.")
+    if periods and code == "MYR":
+        raise HTTPException(422, "MYR cannot have rate periods; its rate is always 1.")
+    spans = []
+    for n, period in enumerate(periods, 1):
+        label = f"Rate period {n}"
+        if not isinstance(period, dict) or set(period) - {"startDate", "endDate", "rate"}:
+            raise HTTPException(422, f"{label} must have only startDate, endDate and rate.")
+        start = _iso_date(period.get("startDate"), f"{label} startDate")
+        end = None if period.get("endDate") is None else _iso_date(period["endDate"], f"{label} endDate")
+        if end is not None and end < start:
+            raise HTTPException(422, f"{label} ends before it starts.")
+        rate = period.get("rate")
+        if not isinstance(rate, str) or not _RATE.fullmatch(rate) or Decimal(rate) <= 0:
+            raise HTTPException(422, f"{label} rate must be a positive decimal string with up to six decimal places.")
+        spans.append((start, end or date.max))
+    spans.sort()
+    for (_, previous_end), (start, _) in zip(spans, spans[1:]):
+        if start <= previous_end:
+            raise HTTPException(422, "Rate periods must not overlap.")
 
 
 def _validate_catalog_values(kind, data):
