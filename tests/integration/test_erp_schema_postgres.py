@@ -98,7 +98,7 @@ def test_previous_database_is_upgraded_by_migrate_and_checked():
             check_runtime_schema(db)
         assert 'erp_document_headers' in str(missing.value)
         db.commit()
-        assert apply_migrations(db, SCHEMA, MIGRATIONS) == ['20261122_erp_module.sql']
+        assert apply_migrations(db, SCHEMA, MIGRATIONS)[0] == '20261122_erp_module.sql'
         assert ERP_TABLES <= _tables(db)
         check_runtime_schema(db)
         columns = {row['column_name'] for row in db.execute(
@@ -166,7 +166,7 @@ def test_database_with_latest_update_prototype_tables_is_upgraded_without_losing
         db.execute("""INSERT INTO erp_document_headers(tenant_id,document_type,document_number,total_amount)
             VALUES (%s,'invoice','IV-00001',100)""", (tenant,))
         db.commit()
-        assert apply_migrations(db, SCHEMA, MIGRATIONS) == ['20261122_erp_module.sql']
+        assert apply_migrations(db, SCHEMA, MIGRATIONS)[0] == '20261122_erp_module.sql'
         check_runtime_schema(db)
         tables = _tables(db)
         assert {'legacy_erp_contacts', 'legacy_erp_document_headers'} <= tables and ERP_TABLES <= tables

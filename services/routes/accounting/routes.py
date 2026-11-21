@@ -421,8 +421,13 @@ def reverse_journal(journal_id: str, request: Request):
     user = require_workspace_user(request, {"local_admin"})
     journal_id = _uuid_or_422(journal_id, "journal id")
     with connect() as db:
-        row = db.execute("SELECT * FROM journal_headers WHERE id=%s AND tenant_id=%s FOR UPDATE", (journal_id, user["tenant_id"])).fetchone()
+        row = db.execute("""SELECT j.*,p.status AS period_status,p.period_code FROM journal_headers j
+            JOIN accounting_periods p ON p.id=j.period_id AND p.tenant_id=j.tenant_id
+            WHERE j.id=%s AND j.tenant_id=%s FOR UPDATE OF j""", (journal_id, user["tenant_id"])).fetchone()
         if not row or row["status"] != "posted": raise HTTPException(409, "Only a posted journal can be reversed.")
+        if row["period_status"] != "open":
+            # The reversal is dated in the journal's own period, so a closed period would change after sign-off.
+            raise HTTPException(409, f"The accounting period {row['period_code']} is closed; reopen it before reversing.")
         if row["source_type"] == "erp_document":
             # Voiding keeps the document, its allocations and the open-item balances in step with the ledger.
             raise HTTPException(409, "This journal belongs to a sales or purchase document. Void the document instead.")
