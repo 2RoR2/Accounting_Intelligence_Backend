@@ -293,3 +293,14 @@ as before. Without `QUEUE_BACKEND=rq` those two scripts now stop with a message,
 | `AI_UNAVAILABLE` / `AI_AUTH_REJECTED` on a document | Wrong or missing key, or the wrong first-provider settings; the document still goes to manual review. |
 | `The queue supervisor is part of the legacy Redis/RQ setup` | You started the old worker or supervisor; stop it, or set `QUEUE_BACKEND=rq`. |
 | Tests behave differently on your machine | Run them with `PYTHON_DOTENV_DISABLED=1` so your `.env` (AI keys, queue settings) does not leak in. |
+
+## Browser tests without a sign-in code
+
+Browser specs (`B4A_COOKIES`, `B4B_COOKIES`) need a signed-in session. On a local development database, write one for a synthetic demo user instead of pasting cookies:
+
+```powershell
+.venv\Scripts\python.exe services\admin\manage.py browser-session --out $env:TEMP\ai-accountant-cookies.json
+# local admin: --email admin@trading.demo.test
+```
+
+It uses seed-demo-company's local-only guard, signs in only `*.demo.test` accounts, and writes the cookie values to the file only. The refresh cookie lasts the normal 8-hour session. Keep the file outside the repository.

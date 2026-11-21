@@ -1,5 +1,6 @@
 from __future__ import annotations
 from decimal import Decimal
+from services.routes.accounting.routes import require_no_posted_settlement_journal
 from main import *
 from main import _lock_upload_identity, _processing_error, _lock_workspace_document, _require_current_extraction, _authorised_document, _bank_row_values, _bank_transaction_dto, _uuid_or_422, _account_dto, _cost_centre_dto
 import hashlib
@@ -556,7 +557,9 @@ def search_bank_match_records(transaction_id: str, request: Request, q: str = ""
         rows = db.execute("""SELECT r.id,r.record_code,r.document_id,r.category,r.supplier_name,r.buyer_name,
             COALESCE(r.reference_number,r.invoice_number) reference_number,r.invoice_number,r.currency,r.total_amount,
             COALESCE((SELECT SUM(a.amount) FROM settlement_allocations a JOIN settlements s ON s.id=a.settlement_id
-                WHERE a.record_id=r.id AND a.tenant_id=r.tenant_id AND a.status='active'),0) allocated_amount
+                WHERE a.record_id=r.id AND a.tenant_id=r.tenant_id AND a.status='active'
+                  AND NOT EXISTS (SELECT 1 FROM settlement_allocations undo
+                    WHERE undo.tenant_id=a.tenant_id AND undo.reverses_allocation_id=a.id)),0) allocated_amount
             FROM standardised_records r WHERE r.tenant_id=%s AND r.is_current=true AND r.validation_status='passed'
               AND (%s='' OR r.record_code ILIKE %s OR COALESCE(r.reference_number,'') ILIKE %s OR COALESCE(r.invoice_number,'') ILIKE %s
                    OR COALESCE(r.supplier_name,r.buyer_name,'') ILIKE %s)
@@ -605,7 +608,7 @@ def decide_reconciliation(data: ReconciliationDecisionInput, request: Request):
             FROM reconciliation_candidates c
             JOIN bank_transactions b ON b.id=c.bank_transaction_id AND b.tenant_id=c.tenant_id
             JOIN standardised_records r ON r.id=c.record_id AND r.tenant_id=c.tenant_id
-            WHERE c.id=%s AND c.tenant_id=%s""", (candidate_id, user["tenant_id"])).fetchone()
+            WHERE c.id=%s AND c.tenant_id=%s FOR UPDATE OF b""", (candidate_id, user["tenant_id"])).fetchone()
         if not candidate:
             raise HTTPException(404, "Reconciliation candidate not found.")
         if data.decision == "confirmed" and not direction_matches(candidate['category'], candidate['direction']):
@@ -628,20 +631,27 @@ def decide_reconciliation(data: ReconciliationDecisionInput, request: Request):
                 DO UPDATE SET source_id=EXCLUDED.source_id
                 RETURNING id""", (user["tenant_id"], f"BANK-{candidate['bank_transaction_id']}", candidate["posted_date"], candidate["direction"], abs(candidate["signed_amount_decimal"]), candidate["currency"], candidate["bank_transaction_id"], user["id"])).fetchone()
             settlement_id = str(settlement["id"])
-            existing_allocation = db.execute("""SELECT id FROM settlement_allocations
-                WHERE tenant_id=%s AND settlement_id=%s AND record_id=%s AND status='active'""", (user["tenant_id"], settlement["id"], candidate["record_id"])).fetchone()
+            existing_allocation = db.execute("""SELECT a.id FROM settlement_allocations a
+                WHERE a.tenant_id=%s AND a.settlement_id=%s AND a.record_id=%s AND a.status='active'
+                  AND NOT EXISTS (SELECT 1 FROM settlement_allocations reversal
+                    WHERE reversal.tenant_id=a.tenant_id AND reversal.reverses_allocation_id=a.id)""",
+                (user["tenant_id"], settlement["id"], candidate["record_id"])).fetchone()
             if not existing_allocation:
                 db.execute("""INSERT INTO settlement_allocations
                     (tenant_id,settlement_id,record_id,amount,created_by)
                     VALUES (%s,%s,%s,%s,%s)""", (user["tenant_id"], settlement["id"], candidate["record_id"], abs(candidate["signed_amount_decimal"]), user["id"]))
         elif data.decision == 'reversed':
             settlement = db.execute("""SELECT id FROM settlements
-                WHERE tenant_id=%s AND source_type='bank_import' AND source_id=%s""", (user["tenant_id"], candidate["bank_transaction_id"])).fetchone()
+                WHERE tenant_id=%s AND source_type='bank_import' AND source_id=%s FOR UPDATE""", (user["tenant_id"], candidate["bank_transaction_id"])).fetchone()
             if settlement:
+                require_no_posted_settlement_journal(db, user["tenant_id"], settlement["id"])
                 settlement_id = str(settlement["id"])
-                allocation = db.execute("""SELECT id,amount FROM settlement_allocations
-                    WHERE tenant_id=%s AND settlement_id=%s AND record_id=%s AND status='active'
-                    ORDER BY created_at DESC FOR UPDATE""", (user["tenant_id"], settlement["id"], candidate["record_id"])).fetchone()
+                allocation = db.execute("""SELECT a.id,a.amount FROM settlement_allocations a
+                    WHERE a.tenant_id=%s AND a.settlement_id=%s AND a.record_id=%s AND a.status='active'
+                      AND NOT EXISTS (SELECT 1 FROM settlement_allocations reversal
+                        WHERE reversal.tenant_id=a.tenant_id AND reversal.reverses_allocation_id=a.id)
+                    ORDER BY a.created_at DESC FOR UPDATE OF a""",
+                    (user["tenant_id"], settlement["id"], candidate["record_id"])).fetchone()
                 if allocation:
                     db.execute("""INSERT INTO settlement_allocations
                         (tenant_id,settlement_id,record_id,amount,status,created_by,reversed_at,reversal_reason,reverses_allocation_id)
@@ -672,6 +682,15 @@ def get_bank_transaction(transaction_id: str, request: Request):
         raise HTTPException(404, "Bank transaction not found.")
     with connect() as db:
         result = _bank_transaction_response(db, row)
+        # The payable account the matched bill was posted to: the supplier payment must debit it.
+        payable = db.execute("""SELECT l.account_id FROM reconciliation_candidates c
+            JOIN standardised_records r ON r.id=c.record_id AND r.tenant_id=c.tenant_id
+            JOIN journal_headers j ON j.tenant_id=r.tenant_id AND j.source_type='document' AND j.source_id=r.document_id AND j.status='posted'
+            JOIN journal_lines l ON l.journal_id=j.id AND l.tenant_id=j.tenant_id AND l.credit>0
+            JOIN ledger_accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id AND a.account_type='liability'
+            WHERE c.bank_transaction_id=%s AND c.tenant_id=%s AND c.status='confirmed'
+            ORDER BY j.posted_at DESC, l.line_number LIMIT 1""", (row["id"], row["tenant_id"])).fetchone()
+    result.update({"billPayableAccountId": str(payable["account_id"]) if payable else None})
     result.update({"accountId": str(row["account_id"]) if row["account_id"] else None,
                    "costCentreId": str(row["cost_centre_id"]) if row["cost_centre_id"] else None,
                    "codingDecision": row["coding_decision"], "codingReason": row["coding_reason"]})

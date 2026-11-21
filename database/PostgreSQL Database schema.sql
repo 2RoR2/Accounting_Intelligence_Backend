@@ -2928,10 +2928,15 @@ BEGIN
         RAISE EXCEPTION 'Only a current approved record with a total can be allocated.';
     END IF;
     IF r.currency <> s.currency THEN RAISE EXCEPTION 'Settlement and record currencies must match.'; END IF;
-    SELECT COALESCE(SUM(amount),0) INTO used_settlement FROM settlement_allocations
-      WHERE settlement_id=NEW.settlement_id AND tenant_id=NEW.tenant_id AND status='active';
-    SELECT COALESCE(SUM(amount),0) INTO used_record FROM settlement_allocations
-      WHERE record_id=NEW.record_id AND tenant_id=NEW.tenant_id AND status='active';
+    -- An active row that has a reversal row was undone and no longer uses capacity.
+    SELECT COALESCE(SUM(a.amount),0) INTO used_settlement FROM settlement_allocations a
+      WHERE a.settlement_id=NEW.settlement_id AND a.tenant_id=NEW.tenant_id AND a.status='active'
+        AND NOT EXISTS (SELECT 1 FROM settlement_allocations reversal
+          WHERE reversal.tenant_id=a.tenant_id AND reversal.reverses_allocation_id=a.id);
+    SELECT COALESCE(SUM(a.amount),0) INTO used_record FROM settlement_allocations a
+      WHERE a.record_id=NEW.record_id AND a.tenant_id=NEW.tenant_id AND a.status='active'
+        AND NOT EXISTS (SELECT 1 FROM settlement_allocations reversal
+          WHERE reversal.tenant_id=a.tenant_id AND reversal.reverses_allocation_id=a.id);
     IF used_settlement + NEW.amount > s.amount THEN RAISE EXCEPTION 'Settlement allocation exceeds the unmatched amount.'; END IF;
     IF used_record + NEW.amount > r.total_amount THEN RAISE EXCEPTION 'Record allocation exceeds the unmatched amount.'; END IF;
     RETURN NEW;
@@ -3118,10 +3123,15 @@ BEGIN
         RAISE EXCEPTION 'Only a current approved record with a total can be allocated.';
     END IF;
     IF r.currency <> s.currency THEN RAISE EXCEPTION 'Settlement and record currencies must match.'; END IF;
-    SELECT COALESCE(SUM(amount),0) INTO used_settlement FROM settlement_allocations
-      WHERE settlement_id=NEW.settlement_id AND tenant_id=NEW.tenant_id AND status='active';
-    SELECT COALESCE(SUM(amount),0) INTO used_record FROM settlement_allocations
-      WHERE record_id=NEW.record_id AND tenant_id=NEW.tenant_id AND status='active';
+    -- An active row that has a reversal row was undone and no longer uses capacity.
+    SELECT COALESCE(SUM(a.amount),0) INTO used_settlement FROM settlement_allocations a
+      WHERE a.settlement_id=NEW.settlement_id AND a.tenant_id=NEW.tenant_id AND a.status='active'
+        AND NOT EXISTS (SELECT 1 FROM settlement_allocations reversal
+          WHERE reversal.tenant_id=a.tenant_id AND reversal.reverses_allocation_id=a.id);
+    SELECT COALESCE(SUM(a.amount),0) INTO used_record FROM settlement_allocations a
+      WHERE a.record_id=NEW.record_id AND a.tenant_id=NEW.tenant_id AND a.status='active'
+        AND NOT EXISTS (SELECT 1 FROM settlement_allocations reversal
+          WHERE reversal.tenant_id=a.tenant_id AND reversal.reverses_allocation_id=a.id);
     IF used_settlement + NEW.amount > s.amount THEN RAISE EXCEPTION 'Settlement allocation exceeds the unmatched amount.'; END IF;
     IF used_record + NEW.amount > COALESCE(r.amount_due, r.total_amount) THEN RAISE EXCEPTION 'Record allocation exceeds the unmatched amount.'; END IF;
     RETURN NEW;
