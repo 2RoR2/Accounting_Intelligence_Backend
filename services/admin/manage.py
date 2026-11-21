@@ -49,7 +49,12 @@ def main():
         "reread-documents", help="local only: read a company's stored documents again with the current settings"))
     test_users.add_arguments(commands.add_parser(
         "create-test-users", help="local only: team test accounts from UAT_TEST_EMAILS (see docs/LOCALHOST.md)"))
+    from services.admin import browser_session
+    browser_session.add_arguments(commands.add_parser(
+        "browser-session", help="local only: Playwright cookie file for a synthetic *.demo.test user"))
     args = parser.parse_args()
+    if args.command == "browser-session":
+        sys.exit(browser_session.run(args))
     if args.command == "seed-demo-company":
         sys.exit(demo_company.run(args))
     if args.command == "reread-documents":
