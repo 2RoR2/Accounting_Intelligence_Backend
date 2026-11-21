@@ -1,6 +1,6 @@
 """ERP API route registrations."""
 
-from . import catalog, contacts, documents
+from . import catalog, contacts, documents, sharing
 
 
 def register(router, handlers):
@@ -24,3 +24,4 @@ def register(router, handlers):
 
     contacts.register(router)
     documents.register(router)
+    sharing.register(router)
