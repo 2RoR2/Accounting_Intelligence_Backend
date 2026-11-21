@@ -1,8 +1,8 @@
 """Read failed documents again, in bulk, with the current reading settings (plan v3, G7).
 
 Documents the old engine (or a provider outage) left FAILED are queued for a fresh
-extraction attempt through the same durable path as the single-document retry
-(`attempts.reserve_dispatch(retry=True)`): earlier attempts are kept, the document goes
+extraction attempt through the re-read path of `manage.py reread-documents`
+(`attempts.schedule_reread`): earlier attempts are kept, the document goes
 back to `queued`, and whichever reader the API runs now (lite engine, current AI setting)
 reads it. Nothing is approved or posted.
 
@@ -42,8 +42,8 @@ REASONS = {
     "ATTEMPT_BUDGET_USED": f"Already read again {READ_AGAIN_LIMIT} times; open it to check the file.",
     "AMENDMENT_REQUIRED": "Already reviewed or approved; it needs an amendment instead.",
     "JOB_ALREADY_OPEN": "Already being read.",
-    "DOCUMENT_NOT_RETRYABLE": "Its status changed before it could be queued.",
-    "JOB_NOT_DISPATCHABLE": "Its reading job could not be queued.",
+    "REVIEW_HISTORY": "Has corrections or review history; it needs an amendment instead.",
+    "DOCUMENT_NOT_REREADABLE": "Its status changed before it could be queued.",
     "ERROR": "Could not be queued; try again.",
 }
 
@@ -79,31 +79,46 @@ def _valid_ids(document_ids):
 _USED_SQL = """(SELECT count(*) FROM audit_logs a
     WHERE a.tenant_id=d.tenant_id AND a.resource=d.id::text AND a.action=%s)"""
 
+# What attempts.schedule_reread (with ensure_unreviewed) refuses for a failed document, every
+# time: an approved record, any review submission or decision, any corrected field or line,
+# and an open job. Kept in step with services/queue/attempts.py; _queue_one still runs the
+# real checks under the document lock, so this only decides what allFailed selects.
+_NOT_ELIGIBLE_SQL = """(
+    EXISTS (SELECT 1 FROM standardised_records sr WHERE sr.document_id=d.id)
+    OR EXISTS (SELECT 1 FROM review_submissions s WHERE s.document_id=d.id AND s.tenant_id=d.tenant_id)
+    OR EXISTS (SELECT 1 FROM review_decisions r WHERE r.document_id=d.id AND r.tenant_id=d.tenant_id)
+    OR EXISTS (SELECT 1 FROM field_predictions fp WHERE fp.document_id=d.id AND fp.corrected_at IS NOT NULL)
+    OR EXISTS (SELECT 1 FROM line_item_corrections c WHERE c.document_id=d.id)
+    OR EXISTS (SELECT 1 FROM pending_jobs j WHERE j.document_id=d.id AND j.status IN ('pending','dispatched','processing')))"""
+
 
 def _candidates(user, data):
     """(documents to consider in a stable order, requested ids that are not visible,
-    failed documents left out of allFailed because their read-again budget is used)."""
+    failed documents allFailed left out because their read-again budget is used,
+    failed documents allFailed left out because a re-read is always refused for them)."""
     tenant_id = user["tenant_id"]
     visibility, extra = _visibility(user)
     with connect() as db:
         if data.allFailed:
-            # The budget is applied before the limit: otherwise, once the oldest MAX_DOCUMENTS
-            # failures have used theirs, newer failures would never be reached.
-            rows = db.execute(f"""SELECT d.id, d.document_code, d.original_filename, d.status FROM documents d
-                WHERE d.tenant_id=%s AND d.status='failed'{visibility} AND {_USED_SQL} < %s
+            # Budget and eligibility are applied before the limit: otherwise documents that are
+            # always refused stay the oldest failures and newer ones are never reached.
+            failed = f"FROM documents d WHERE d.tenant_id=%s AND d.status='failed'{visibility}"
+            rows = db.execute(f"""SELECT d.id, d.document_code, d.original_filename, d.status {failed}
+                AND {_USED_SQL} < %s AND NOT {_NOT_ELIGIBLE_SQL}
                 ORDER BY d.uploaded_at, d.id LIMIT %s""",
                 [tenant_id, *extra, AUDIT_ACTION, READ_AGAIN_LIMIT, MAX_DOCUMENTS]).fetchall()
-            spent = db.execute(f"""SELECT count(*) AS n FROM documents d
-                WHERE d.tenant_id=%s AND d.status='failed'{visibility} AND {_USED_SQL} >= %s""",
-                [tenant_id, *extra, AUDIT_ACTION, READ_AGAIN_LIMIT]).fetchone()["n"]
-            return list(rows), [], spent
+            counts = db.execute(f"""SELECT
+                    count(*) FILTER (WHERE {_USED_SQL} >= %s) AS spent,
+                    count(*) FILTER (WHERE {_USED_SQL} < %s AND {_NOT_ELIGIBLE_SQL}) AS blocked
+                {failed}""", [AUDIT_ACTION, READ_AGAIN_LIMIT, AUDIT_ACTION, READ_AGAIN_LIMIT, tenant_id, *extra]).fetchone()
+            return list(rows), [], counts["spent"], counts["blocked"]
         valid, invalid = _valid_ids(data.documentIds)
         rows = db.execute(f"""SELECT d.id, d.document_code, d.original_filename, d.status FROM documents d
             WHERE d.tenant_id=%s AND d.id=ANY(%s::uuid[]){visibility}""", [tenant_id, valid, *extra]).fetchall() if valid else []
     by_id = {str(row["id"]): row for row in rows}
     ordered = [by_id[document_id] for document_id in valid if document_id in by_id]
     missing = invalid + [document_id for document_id in valid if document_id not in by_id]
-    return ordered, missing, 0
+    return ordered, missing, 0, 0
 
 
 def _queue_one(user, document):
@@ -125,7 +140,9 @@ def _queue_one(user, document):
                           (tenant_id, document_id, AUDIT_ACTION)).fetchone()["n"]
         if used >= READ_AGAIN_LIMIT:
             raise attempts.AttemptRejected("ATTEMPT_BUDGET_USED")
-        job = attempts.reserve_dispatch(db, document_id, tenant_id, retry=True, defer=True)
+        # The same re-read path as `manage.py reread-documents` (#14): keeps earlier attempts,
+        # refuses review history and open jobs, audits extraction.reread_scheduled.
+        job = attempts.schedule_reread(db, document_id, tenant_id)
         db.execute("""INSERT INTO audit_logs(tenant_id,user_id,user_name,role,action,resource,details)
             VALUES (%s,%s,%s,%s,%s,%s,%s)""",
             (tenant_id, user["id"], user.get("name", "Workspace user"), user["role"], AUDIT_ACTION, document_id,
@@ -147,7 +164,7 @@ def read_again(user, data: ReadAgainInput):
     if user["role"] not in {"local_admin", "accountant"} or not user.get("tenant_id"):
         raise HTTPException(403, "Reading documents again requires a company accountant or administrator.")
     from services.queue import attempts
-    documents, missing, budget_used = _candidates(user, data)
+    documents, missing, budget_used, not_eligible = _candidates(user, data)
     results = [{"id": str(document_id), "code": None, "name": None, "outcome": "skipped",
                 "reasonCode": "NOT_FOUND", "reason": REASONS["NOT_FOUND"]} for document_id in missing]
     queued = 0
@@ -169,6 +186,7 @@ def read_again(user, data: ReadAgainInput):
             results.append({**item, "outcome": "queued", "jobId": job_id, "status": "QUEUED"})
     if queued:
         _wake_dispatcher()
-    # budgetUsed: failed documents allFailed left out because they were read again READ_AGAIN_LIMIT times.
+    # Failed documents allFailed left out: budgetUsed were read again READ_AGAIN_LIMIT times;
+    # notEligible have review history, corrections, an approved record or an open job.
     return {"requested": len(results), "queued": queued, "skipped": len(results) - queued,
-            "budgetUsed": budget_used, "results": results}
+            "budgetUsed": budget_used, "notEligible": not_eligible, "results": results}

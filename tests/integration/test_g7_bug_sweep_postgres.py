@@ -304,3 +304,82 @@ def test_document_list_shows_supplier_and_number_and_keeps_the_filename(company)
     assert rows[str(document)]['originalFilename'] == 'images (2).png'
     # Nothing read yet: the original filename stays.
     assert rows[str(ids['work'][1])]['name'] == 'images (2).png'
+
+
+def test_read_again_uses_the_reread_path_and_refuses_review_history(company):
+    connect, ids = company
+    admin = _as(ids['admin'], ids['tenant'], 'local_admin')
+    reviewed, fresh = str(ids['failed'][0]), str(ids['failed'][1])
+    with connect() as db:
+        db.execute("""INSERT INTO review_submissions(document_id,tenant_id,submitted_by,decision,content_revision)
+            VALUES (%s,%s,%s,'submitted',1)""", (reviewed, ids['tenant'], ids['admin']))
+    result, _ = _read_again(connect, admin, documentIds=[reviewed, fresh])
+    outcome = {r['id']: (r['outcome'], r.get('reasonCode')) for r in result['results']}
+    assert outcome == {reviewed: ('skipped', 'REVIEW_HISTORY'), fresh: ('queued', None)}
+    assert _one(connect, "SELECT status FROM documents WHERE id=%s", (reviewed,))['status'] == 'failed'
+    # #14's schedule_reread audits the system side; read-again adds the user's row.
+    with connect() as db:
+        actions = [r['action'] for r in db.execute(
+            "SELECT action FROM audit_logs WHERE resource=%s ORDER BY created_at", (fresh,)).fetchall()]
+    assert actions == ['extraction.reread_scheduled', 'extraction.read_again_requested']
+
+
+def test_undetected_auto_upload_lists_with_readable_name_and_kind_auto(company):
+    from services.extraction.persistence.auto_kind import pending_document_code
+    connect, ids = company
+    admin = _as(ids['admin'], ids['tenant'], 'local_admin')
+    with connect() as db:
+        def auto_upload():
+            document_id = uuid4()
+            # As upload_document(kind=auto) stores it: placeholder kind and a DOC_ code until the type is detected.
+            db.execute("""INSERT INTO documents(id,tenant_id,owner_id,original_filename,kind,category,storage_path,mime_type,
+                    file_size_bytes,file_hash_sha256,status,uploaded_at,document_code)
+                VALUES (%s,%s,%s,'images (3).png','invoice','accounts_payable','synthetic/none.png','image/png',100,%s,
+                    'exception',%s,%s)""",
+                       (document_id, ids['tenant'], ids['admin'], _hash(), TODAY, pending_document_code(document_id)))
+            return document_id
+
+        read, unread = auto_upload(), auto_upload()
+        extraction = db.execute("""INSERT INTO raw_extractions(document_id,run_number,is_current,routing_decision,raw_json)
+            VALUES (%s,1,true,'parser_only','{}') RETURNING id""", (read,)).fetchone()['id']
+        for key, value in (('supplier', 'Kedai Runcit Ah Seng'), ('receipt', 'CS054592')):
+            db.execute("""INSERT INTO field_predictions(extraction_id,document_id,field_key,field_label,extraction_state,
+                    raw_value,normalized_value) VALUES (%s,%s,%s,%s,'resolved',%s,%s)""", (extraction, read, key, key, value, value))
+    rows = _listing(connect, admin)
+    assert {k: rows[str(read)][k] for k in ('name', 'originalFilename', 'kind', 'kindDetected')} == \
+        {'name': 'Kedai Runcit Ah Seng CS054592', 'originalFilename': 'images (3).png', 'kind': 'AUTO', 'kindDetected': False}
+    assert {k: rows[str(unread)][k] for k in ('name', 'kind', 'kindDetected')} == \
+        {'name': 'images (3).png', 'kind': 'AUTO', 'kindDetected': False}
+    # A typed document keeps its stored kind alongside the readable name.
+    assert (rows[str(ids['work'][0])]['kind'], rows[str(ids['work'][0])]['kindDetected']) == ('BILL', True)
+
+
+def test_all_failed_skips_documents_a_reread_always_refuses_before_the_limit(company):
+    connect, ids = company
+    admin = _as(ids['admin'], ids['tenant'], 'local_admin')
+    reviewed, open_job, corrected = ids['failed'][0], ids['failed'][1], ids['failed_mine']
+    with connect() as db:
+        # The three oldest failures can never be re-read: review history, an open job, a corrected field.
+        db.execute("UPDATE documents SET uploaded_at=%s WHERE id=ANY(%s::uuid[])",
+                   (TODAY - timedelta(days=30), [reviewed, open_job, corrected]))
+        db.execute("""INSERT INTO review_submissions(document_id,tenant_id,submitted_by,decision,content_revision)
+            VALUES (%s,%s,%s,'submitted',1)""", (reviewed, ids['tenant'], ids['admin']))
+        db.execute("INSERT INTO pending_jobs(tenant_id,document_id,status,attempt_count) VALUES (%s,%s,'pending',0)",
+                   (ids['tenant'], open_job))
+        extraction = db.execute("""INSERT INTO raw_extractions(document_id,run_number,is_current,routing_decision,raw_json)
+            VALUES (%s,1,true,'parser_only','{}') RETURNING id""", (corrected,)).fetchone()['id']
+        db.execute("""INSERT INTO field_predictions(extraction_id,document_id,field_key,field_label,extraction_state,
+                raw_value,normalized_value,current_value,corrected_by,corrected_at)
+            VALUES (%s,%s,'total','Total','resolved','10.00','10.00','12.00',%s,now())""", (extraction, corrected, ids['admin']))
+    blocked = {str(reviewed), str(open_job), str(corrected)}
+    # A limit of one, called twice: before the fix the same refused oldest document filled it both times.
+    queued = []
+    for _ in range(2):
+        with patch.object(reread_failed, 'MAX_DOCUMENTS', 1):
+            result, _ = _read_again(connect, admin, allFailed=True)
+        assert (result['queued'], len(result['results'])) == (1, 1)
+        assert (result['notEligible'], result['budgetUsed']) == (3, 1)   # 'budget' is the spent one
+        queued.append(result['results'][0]['id'])
+    assert len(set(queued)) == 2 and not set(queued) & blocked
+    for document in blocked:
+        assert _one(connect, "SELECT status FROM documents WHERE id=%s", (document,))['status'] == 'failed'

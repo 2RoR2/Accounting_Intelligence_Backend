@@ -51,20 +51,20 @@ def test_read_again_reports_each_document_and_continues_after_a_refusal():
             raise RuntimeError('synthetic database error')
         return 'job-' + document['id']
 
-    with patch.object(reread_failed, '_candidates', return_value=(rows, ['missing'], 2)), \
+    with patch.object(reread_failed, '_candidates', return_value=(rows, ['missing'], 2, 1)), \
             patch.object(reread_failed, '_queue_one', side_effect=queue), \
             patch.object(reread_failed, '_wake_dispatcher') as wake:
         result = reread_failed.read_again(user, ReadAgainInput(allFailed=True))
     outcomes = [(r['id'], r['outcome'], r.get('reasonCode')) for r in result['results']]
     assert outcomes == [('missing', 'skipped', 'NOT_FOUND'), ('1', 'queued', None), ('2', 'skipped', 'ATTEMPT_BUDGET_USED'),
                         ('3', 'skipped', 'NOT_FAILED'), ('4', 'error', 'ERROR')]
-    assert (result['requested'], result['queued'], result['skipped'], result['budgetUsed']) == (5, 1, 4, 2)
+    assert (result['requested'], result['queued'], result['skipped'], result['budgetUsed'], result['notEligible']) == (5, 1, 4, 2, 1)
     assert all(r.get('reason') for r in result['results'] if r['outcome'] != 'queued')
     wake.assert_called_once()
 
 
 def test_read_again_without_queued_documents_does_not_wake_the_dispatcher():
-    with patch.object(reread_failed, '_candidates', return_value=([], ['x'], 0)), \
+    with patch.object(reread_failed, '_candidates', return_value=([], ['x'], 0, 0)), \
             patch.object(reread_failed, '_wake_dispatcher') as wake:
         result = reread_failed.read_again({'id': 'u', 'tenant_id': 't', 'role': 'accountant'}, ReadAgainInput(documentIds=['x']))
     assert result['queued'] == 0
