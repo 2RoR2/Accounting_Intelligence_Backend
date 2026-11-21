@@ -352,3 +352,34 @@ def test_undetected_auto_upload_lists_with_readable_name_and_kind_auto(company):
         {'name': 'images (3).png', 'kind': 'AUTO', 'kindDetected': False}
     # A typed document keeps its stored kind alongside the readable name.
     assert (rows[str(ids['work'][0])]['kind'], rows[str(ids['work'][0])]['kindDetected']) == ('BILL', True)
+
+
+def test_all_failed_skips_documents_a_reread_always_refuses_before_the_limit(company):
+    connect, ids = company
+    admin = _as(ids['admin'], ids['tenant'], 'local_admin')
+    reviewed, open_job, corrected = ids['failed'][0], ids['failed'][1], ids['failed_mine']
+    with connect() as db:
+        # The three oldest failures can never be re-read: review history, an open job, a corrected field.
+        db.execute("UPDATE documents SET uploaded_at=%s WHERE id=ANY(%s::uuid[])",
+                   (TODAY - timedelta(days=30), [reviewed, open_job, corrected]))
+        db.execute("""INSERT INTO review_submissions(document_id,tenant_id,submitted_by,decision,content_revision)
+            VALUES (%s,%s,%s,'submitted',1)""", (reviewed, ids['tenant'], ids['admin']))
+        db.execute("INSERT INTO pending_jobs(tenant_id,document_id,status,attempt_count) VALUES (%s,%s,'pending',0)",
+                   (ids['tenant'], open_job))
+        extraction = db.execute("""INSERT INTO raw_extractions(document_id,run_number,is_current,routing_decision,raw_json)
+            VALUES (%s,1,true,'parser_only','{}') RETURNING id""", (corrected,)).fetchone()['id']
+        db.execute("""INSERT INTO field_predictions(extraction_id,document_id,field_key,field_label,extraction_state,
+                raw_value,normalized_value,current_value,corrected_by,corrected_at)
+            VALUES (%s,%s,'total','Total','resolved','10.00','10.00','12.00',%s,now())""", (extraction, corrected, ids['admin']))
+    blocked = {str(reviewed), str(open_job), str(corrected)}
+    # A limit of one, called twice: before the fix the same refused oldest document filled it both times.
+    queued = []
+    for _ in range(2):
+        with patch.object(reread_failed, 'MAX_DOCUMENTS', 1):
+            result, _ = _read_again(connect, admin, allFailed=True)
+        assert (result['queued'], len(result['results'])) == (1, 1)
+        assert (result['notEligible'], result['budgetUsed']) == (3, 1)   # 'budget' is the spent one
+        queued.append(result['results'][0]['id'])
+    assert len(set(queued)) == 2 and not set(queued) & blocked
+    for document in blocked:
+        assert _one(connect, "SELECT status FROM documents WHERE id=%s", (document,))['status'] == 'failed'
