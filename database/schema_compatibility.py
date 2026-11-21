@@ -12,6 +12,22 @@ REQUIRED_COLUMNS = {
     "field_predictions": {"extraction_id": "uuid", "raw_value": "text", "current_value": "text"},
     "line_item_corrections": {"document_id": "uuid"},
     "standardised_records": {"document_id": "uuid", "is_current": "bool"},
+    # Plan L1 (20261122_erp_module.sql): the sales/purchases module and the shared contact columns.
+    "vendors": {"is_active": "bool", "fields": "jsonb"},
+    "customers": {"is_active": "bool", "fields": "jsonb"},
+    "erp_employees": {"tenant_id": "uuid", "legal_name": "text"},
+    "erp_products": {"tenant_id": "uuid", "income_account_id": "uuid"},
+    "erp_catalog_entries": {"tenant_id": "uuid", "kind": "text", "ledger_account_id": "uuid"},
+    "erp_posting_accounts": {"tenant_id": "uuid", "account_id": "uuid"},
+    "erp_number_counters": {"tenant_id": "uuid", "next_value": "int4"},
+    "erp_document_headers": {"tenant_id": "uuid", "vendor_id": "uuid", "customer_id": "uuid", "journal_id": "uuid",
+                             "reversal_journal_id": "uuid", "settlement_id": "uuid", "payload": "jsonb"},
+    "erp_document_allocations": {"source_document_id": "uuid", "target_document_id": "uuid", "status": "text"},
+    "erp_document_links": {"source_document_id": "uuid", "target_document_id": "uuid"},
+    "erp_document_events": {"document_id": "uuid", "event_type": "text"},
+    "erp_document_shares": {"token_hash": "text", "expires_at": "timestamptz", "revoked_at": "timestamptz"},
+    "myinvois_consolidated_submissions": {"tenant_id": "uuid", "idempotency_key": "text"},
+    "myinvois_consolidated_documents": {"submission_id": "uuid", "document_id": "uuid"},
 }
 REQUIRED_INDEXES = {"uq_pending_jobs_open_document": "pending_jobs", "uq_raw_extractions_current": "raw_extractions", "uq_standardised_records_current": "standardised_records"}
 
