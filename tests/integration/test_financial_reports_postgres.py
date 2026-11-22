@@ -114,7 +114,8 @@ def _seed_open_items(db, tenant, admin):
         typed_allocations.append(db.execute("""INSERT INTO erp_document_allocations
             (tenant_id,source_document_id,target_document_id,amount,created_by,created_at)
             VALUES (%s,%s,%s,%s,%s,%s) RETURNING id""",
-            (tenant, payment, invoice, amount, admin, f"{day}T10:00:00+08")).fetchone()["id"])
+            # Recorded weeks after the payment date (a seed or late match): the payment date is what counts.
+            (tenant, payment, invoice, amount, admin, "2026-11-20T10:00:00+08")).fetchone()["id"])
 
     doc = db.execute("""INSERT INTO documents(tenant_id,owner_id,original_filename,kind,category,
             storage_path,mime_type,file_size_bytes,file_hash_sha256,status)
@@ -130,7 +131,7 @@ def _seed_open_items(db, tenant, admin):
         RETURNING id""", (tenant, admin)).fetchone()["id"]
     allocation = db.execute("""INSERT INTO settlement_allocations
         (tenant_id,settlement_id,record_id,amount,created_by,created_at)
-        VALUES (%s,%s,%s,10,%s,'2026-08-25T10:00:00+08') RETURNING id""", (tenant, settlement, record, admin)).fetchone()["id"]
+        VALUES (%s,%s,%s,10,%s,'2026-11-20T10:00:00+08') RETURNING id""", (tenant, settlement, record, admin)).fetchone()["id"]
     db.execute("""INSERT INTO exceptions(tenant_id,document_id,type,severity,message,status,created_at)
         VALUES (%s,%s,'review','low','Check invoice details','open','2026-08-21T10:00:00+08'),
                (%s,%s,'duplicate','low','Resolved item','resolved','2026-08-21T10:00:00+08')""",
@@ -345,7 +346,9 @@ def test_ageing_applies_allocation_reversals_on_their_effective_date(report_db):
 
     august_end = date(2026, 8, 31)
     undo_day = date(2026, 9, 2)
-    assert financial._ageing(db, tenant, august_end, "receivables")["totals"]["total"] == 75
+    # Both payments are dated in August (PAY-2 on 26 Aug), so at 31 August the invoice is fully paid, as in the
+    # ledger; PAY-1 is undone on 2 September, so 25 is open again from then.
+    assert financial._ageing(db, tenant, august_end, "receivables")["totals"]["total"] == 0
     assert financial._ageing(db, tenant, august_end, "payables")["totals"]["total"] == 50
     assert financial._ageing(db, tenant, undo_day, "receivables")["totals"]["total"] == 25
     assert financial._ageing(db, tenant, undo_day, "payables")["totals"]["total"] == 60

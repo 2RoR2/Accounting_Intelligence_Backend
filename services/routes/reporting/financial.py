@@ -169,7 +169,6 @@ def _ageing(db, tenant, end, report_type):
                     JOIN erp_document_headers s ON s.id=a.source_document_id AND s.tenant_id=a.tenant_id
                     WHERE a.tenant_id=h.tenant_id AND a.target_document_id=h.id
                         AND s.document_date<=%(end)s
-                        AND (a.created_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date<=%(end)s
                         AND (a.reversed_at IS NULL OR (a.reversed_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date>%(end)s)
                 ),0) AS outstanding
             FROM erp_document_headers h
@@ -185,7 +184,6 @@ def _ageing(db, tenant, end, report_type):
                     JOIN settlements s ON s.id=a.settlement_id AND s.tenant_id=a.tenant_id
                     WHERE a.tenant_id=r.tenant_id AND a.record_id=r.id AND a.status='active'
                         AND s.settlement_date<=%(end)s
-                        AND (a.created_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date<=%(end)s
                         AND NOT EXISTS (SELECT 1 FROM settlement_allocations x
                             WHERE x.tenant_id=a.tenant_id AND x.reverses_allocation_id=a.id
                                 AND (COALESCE(x.reversed_at,x.created_at) AT TIME ZONE 'Asia/Kuala_Lumpur')::date<=%(end)s)
