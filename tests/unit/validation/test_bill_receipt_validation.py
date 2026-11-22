@@ -188,6 +188,8 @@ class BillReceiptValidationTests(unittest.TestCase):
         result = self.evaluate('bill')
         self.assertEqual(result['errors'], [])
         self.assertTrue(any(c['rule'] == 'BILL-BILLING_PERIOD' and c['checkStatus'] == 'NOT_CHECKED' for c in result['checks']))
+        # A period in words is not checked but does not block approval (it changes no amount and has no fixable field).
+        self.assertFalse(any(c['rule'] == 'BILL-BILLING_PERIOD' and c['required'] for c in result['checks']))
 
     def test_receipt_bad_time_date_currency_and_float_are_not_coerced(self):
         for key,value in [('transaction_time','25:00'),('date','2026-02-30'),('currency','RM'),('total',10.6)]:

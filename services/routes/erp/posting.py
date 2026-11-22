@@ -289,7 +289,7 @@ def reverse_in_transaction(db, user, journal_id, *, reason: str):
     tenant_id = user["tenant_id"]
     row = db.execute("""SELECT j.*,p.status AS period_status,p.period_code FROM journal_headers j
         JOIN accounting_periods p ON p.id=j.period_id AND p.tenant_id=j.tenant_id
-        WHERE j.id=%s AND j.tenant_id=%s FOR UPDATE OF j""", (journal_id, tenant_id)).fetchone()
+        WHERE j.id=%s AND j.tenant_id=%s FOR UPDATE OF j, p""", (journal_id, tenant_id)).fetchone()
     if not row:
         raise HTTPException(409, "The posted journal for this document was not found; review the ledger.")
     existing = db.execute("SELECT id FROM journal_headers WHERE reversed_journal_id=%s AND tenant_id=%s",

@@ -354,8 +354,10 @@ def evaluate_financial_document(kind, extraction, fields, items):
             except ValueError:
                 issue('FORMAT', 'billing_period', 'Billing period contains an invalid calendar date.')
         else:
+            # A printed period in words ("September 2026") cannot be checked, but it does not change any amount:
+            # record it as not checked without blocking approval (it has no field the reviewer could fix).
             check('BILLING_PERIOD', 'No supported ISO start to end billing-period evidence.',
-                  available=False, required=period is not None)
+                  available=False, required=False)
 
     lines = []
     all_line_math = bool(items)

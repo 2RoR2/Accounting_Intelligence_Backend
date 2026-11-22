@@ -184,6 +184,18 @@ def test_chart_counterpart_must_keep_the_existing_classification():
     assert rows[2]['values']['addTo'] == ['ledger']
 
 
+def test_chart_section_backfill_requires_a_matching_account():
+    content = csv_bytes(COA_HEADER, '5000,Purchases,expense,cogs,profit_and_loss,Cost of sales,debit',
+                        '6000,Rent,expense,expense,profit_and_loss,Operating expenses,debit')
+    rows = chart.plan_chart(chart.parse_chart(content),
+                            {'5000': coa_account('Purchases', 'cogs'), '6000': coa_account('Rent', 'expense')},
+                            {'5000': ledger_account('Purchases', 'expense'), '6000': ledger_account('Other', 'expense')})
+    assert rows[0]['status'] == 'new'
+    assert rows[0]['values']['fillReportSection'] is True
+    assert rows[0]['values']['addTo'] == []
+    assert rows[1]['status'] == 'duplicate'
+
+
 def test_unclosed_quote_is_an_error_not_a_swallowed_row():
     content = b'type,name\nsupplier,"Open Quote Sdn Bhd\ncustomer,Later Customer\ncustomer,Last Customer\n'
     with pytest.raises(ImportFileError, match='not valid CSV'):

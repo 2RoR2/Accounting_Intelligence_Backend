@@ -3,8 +3,9 @@ import json
 from main import *
 from main import _lock_upload_identity, _processing_error, _lock_workspace_document, _require_current_extraction, _authorised_document, _bank_row_values, _bank_transaction_dto, _uuid_or_422, _account_dto, _cost_centre_dto
 from decimal import Decimal
-from psycopg.errors import RaiseException
+from psycopg.errors import RaiseException, UniqueViolation
 from pydantic import BaseModel, Field
+from services.routes.accounting.journal_sources import JOURNAL_CURRENCY, JOURNAL_CURRENCY_JOINS, OPENING_JOURNAL
 
 class LedgerAccountInput(BaseModel):
     code: str = Field(min_length=1, max_length=40)
@@ -15,6 +16,12 @@ class PeriodInput(BaseModel):
     periodCode: str = Field(min_length=1, max_length=40)
     startsOn: date
     endsOn: date
+
+class PeriodCloseInput(BaseModel):
+    reason: str | None = None
+
+class PeriodReopenInput(BaseModel):
+    reason: str = Field(min_length=1, max_length=500)
 
 class JournalLineInput(BaseModel):
     accountId: str
@@ -93,19 +100,66 @@ def create_ledger_account(data: LedgerAccountInput, request: Request):
         row = db.execute("INSERT INTO ledger_accounts(tenant_id,code,name,account_type) VALUES (%s,%s,%s,%s) RETURNING *", (user["tenant_id"], data.code.strip(), data.name.strip(), data.accountType)).fetchone()
     return {"id": str(row["id"]), "code": row["code"], "name": row["name"], "accountType": row["account_type"]}
 
+def _period_dto(row):
+    return {"id": str(row["id"]), "periodCode": row["period_code"], "startsOn": str(row["starts_on"]),
+            "endsOn": str(row["ends_on"]), "status": row["status"]}
+
 def list_accounting_periods(request: Request):
     user = require_workspace_user(request, {"super_admin", "local_admin", "accountant"})
     with connect() as db:
         rows = db.execute("SELECT * FROM accounting_periods WHERE tenant_id=%s ORDER BY starts_on", (user["tenant_id"],)).fetchall()
-    return [{"id": str(r["id"]), "periodCode": r["period_code"], "startsOn": str(r["starts_on"]), "endsOn": str(r["ends_on"]), "status": r["status"]} for r in rows]
+    return [_period_dto(row) for row in rows]
 
 def create_accounting_period(data: PeriodInput, request: Request):
     user = require_workspace_user(request, {"local_admin"})
     if data.endsOn < data.startsOn:
         raise HTTPException(422, "Period end must be on or after period start.")
+    code = data.periodCode.strip()
+    if not code:
+        raise HTTPException(422, "Enter a period code.")
+    tenant_id = user["tenant_id"]
+    try:
+        with connect() as db:
+            # Serialize the overlap check and insert for this tenant.
+            db.execute("SELECT id FROM tenants WHERE id=%s FOR NO KEY UPDATE", (tenant_id,))
+            if db.execute("""SELECT 1 FROM accounting_periods WHERE tenant_id=%s
+                AND starts_on<=%s AND ends_on>=%s LIMIT 1""", (tenant_id, data.endsOn, data.startsOn)).fetchone():
+                raise HTTPException(422, "The dates overlap an existing accounting period.")
+            row = db.execute("""INSERT INTO accounting_periods(tenant_id,period_code,starts_on,ends_on)
+                VALUES (%s,%s,%s,%s) RETURNING *""", (tenant_id, code, data.startsOn, data.endsOn)).fetchone()
+    except UniqueViolation:
+        raise HTTPException(422, "That accounting period code is already in use.") from None
+    return _period_dto(row)
+
+def _set_period_status(db, user, period_id, status, action, reason):
+    from services.routes.erp.common import audit
+
+    tenant_id = user["tenant_id"]
+    period = db.execute("SELECT * FROM accounting_periods WHERE id=%s AND tenant_id=%s FOR UPDATE",
+                        (period_id, tenant_id)).fetchone()
+    if not period:
+        raise HTTPException(404, "Accounting period not found.")
+    if period["status"] == status:
+        raise HTTPException(409, f"The accounting period is already {status}.")
+    row = db.execute("UPDATE accounting_periods SET status=%s WHERE id=%s AND tenant_id=%s RETURNING *",
+                     (status, period_id, tenant_id)).fetchone()
+    audit(db, user, action, period_id, {"periodCode": row["period_code"], "reason": reason})
+    return _period_dto(row)
+
+def close_accounting_period(id: str, request: Request, data: PeriodCloseInput | None = None):
+    user = require_workspace_user(request, {"local_admin"})
+    period_id = _uuid_or_422(id, "period id")
     with connect() as db:
-        row = db.execute("INSERT INTO accounting_periods(tenant_id,period_code,starts_on,ends_on) VALUES (%s,%s,%s,%s) RETURNING *", (user["tenant_id"], data.periodCode.strip(), data.startsOn, data.endsOn)).fetchone()
-    return {"id": str(row["id"]), "periodCode": row["period_code"], "startsOn": str(row["starts_on"]), "endsOn": str(row["ends_on"]), "status": row["status"]}
+        return _set_period_status(db, user, period_id, "closed", "ledger.period_closed", data.reason if data else None)
+
+def reopen_accounting_period(id: str, request: Request, data: PeriodReopenInput | None = None):
+    user = require_workspace_user(request, {"local_admin"})
+    reason = data.reason.strip() if data else ""
+    if not reason:
+        raise HTTPException(422, "Enter a reason for reopening the accounting period.")
+    period_id = _uuid_or_422(id, "period id")
+    with connect() as db:
+        return _set_period_status(db, user, period_id, "open", "ledger.period_reopened", reason)
 
 def post_journal(data: JournalInput, request: Request):
     user = require_workspace_user(request, {"local_admin"})
@@ -423,7 +477,7 @@ def reverse_journal(journal_id: str, request: Request):
     with connect() as db:
         row = db.execute("""SELECT j.*,p.status AS period_status,p.period_code FROM journal_headers j
             JOIN accounting_periods p ON p.id=j.period_id AND p.tenant_id=j.tenant_id
-            WHERE j.id=%s AND j.tenant_id=%s FOR UPDATE OF j""", (journal_id, user["tenant_id"])).fetchone()
+            WHERE j.id=%s AND j.tenant_id=%s FOR UPDATE OF j, p""", (journal_id, user["tenant_id"])).fetchone()
         if not row or row["status"] != "posted": raise HTTPException(409, "Only a posted journal can be reversed.")
         if row["period_status"] != "open":
             # The reversal is dated in the journal's own period, so a closed period would change after sign-off.
@@ -485,39 +539,19 @@ def get_profit_and_loss_dashboard(request: Request, fromDate: date, toDate: date
         raise HTTPException(422, "Granularity must be day, week, or month.")
 
     if basis == "accrual":
-        pnl_sql = """SELECT date_trunc(%s,j.journal_date)::date AS period,
-            COALESCE(sr.currency,settlement.currency,typed.currency,'UNSPECIFIED') AS currency,
+        pnl_sql = f"""SELECT date_trunc(%s,j.journal_date)::date AS period,
+            COALESCE({JOURNAL_CURRENCY},'UNSPECIFIED') AS currency,
             a.account_type,a.code AS account_code,a.name AS account_name,
             SUM(CASE WHEN a.account_type='income' THEN l.credit-l.debit ELSE l.debit-l.credit END) AS amount
             FROM journal_headers j
             JOIN journal_lines l ON l.journal_id=j.id AND l.tenant_id=j.tenant_id
             JOIN ledger_accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
-            LEFT JOIN journal_headers original ON original.id=j.reversed_journal_id AND original.tenant_id=j.tenant_id
-            LEFT JOIN LATERAL (
-                SELECT record.currency
-                FROM standardised_records record
-                WHERE record.tenant_id=j.tenant_id
-                    AND record.document_id=CASE WHEN j.source_type='reversal' THEN original.source_id ELSE j.source_id END
-                    AND COALESCE(original.source_type,j.source_type) IN ('document','adjustment')
-                    AND COALESCE(original.idempotency_key,j.idempotency_key) IN (
-                        'supplier-bill:'||record.id::text||':revision:'||record.revision_number::text,
-                        'customer-invoice:'||record.id::text||':revision:'||record.revision_number::text,
-                        'adjustment:credit_note:'||record.id::text||':revision:'||record.revision_number::text,
-                        'adjustment:debit_note:'||record.id::text||':revision:'||record.revision_number::text)
-                LIMIT 1
-            ) sr ON true
-            LEFT JOIN settlements settlement ON settlement.tenant_id=j.tenant_id
-                AND settlement.id=CASE WHEN j.source_type='reversal' AND original.source_type='settlement'
-                    THEN original.source_id WHEN j.source_type='settlement' THEN j.source_id END
-            -- Plan L4: a typed sales/purchase document (or its reversal) reports in the document's currency.
-            LEFT JOIN erp_document_headers typed ON typed.tenant_id=j.tenant_id
-                AND typed.id=CASE WHEN j.source_type='reversal' AND original.source_type='erp_document'
-                    THEN original.source_id WHEN j.source_type='erp_document' THEN j.source_id END
+            {JOURNAL_CURRENCY_JOINS}
             WHERE j.tenant_id=%s AND j.status IN ('posted','reversed')
                 AND j.journal_date BETWEEN %s AND %s AND a.account_type IN ('income','expense')
-                AND COALESCE(original.idempotency_key,j.idempotency_key) NOT LIKE 'opening-balances:%%'
-            GROUP BY period,COALESCE(sr.currency,settlement.currency,typed.currency,'UNSPECIFIED'),a.account_type,a.code,a.name
-            ORDER BY period,COALESCE(sr.currency,settlement.currency,typed.currency,'UNSPECIFIED'),a.account_type,a.code"""
+                AND NOT ({OPENING_JOURNAL})
+            GROUP BY period,COALESCE({JOURNAL_CURRENCY},'UNSPECIFIED'),a.account_type,a.code,a.name
+            ORDER BY period,currency,a.account_type,a.code"""
         pnl_params = (granularity, user["tenant_id"], fromDate, toDate)
     else:
         pnl_sql = """WITH active_allocations AS (
@@ -834,6 +868,8 @@ def register(router, handlers):
     router.add_api_route('/api/ledger/accounts', create_ledger_account, methods=['POST'], status_code=201)
     router.add_api_route('/api/ledger/periods', list_accounting_periods, methods=['GET'])
     router.add_api_route('/api/ledger/periods', create_accounting_period, methods=['POST'], status_code=201)
+    router.add_api_route('/api/ledger/periods/{id}/close', close_accounting_period, methods=['POST'])
+    router.add_api_route('/api/ledger/periods/{id}/reopen', reopen_accounting_period, methods=['POST'])
     router.add_api_route('/api/ledger/journals', post_journal, methods=['POST'], status_code=201)
     router.add_api_route('/api/ledger/journals/from-supplier-bill/{record_id}', post_supplier_bill, methods=['POST'], status_code=201)
     router.add_api_route('/api/ledger/journals/from-customer-invoice/{record_id}', post_customer_invoice, methods=['POST'], status_code=201)
