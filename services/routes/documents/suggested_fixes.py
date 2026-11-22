@@ -59,19 +59,16 @@ def _format_date(value):
     return next(iter(dates)) if len(dates) == 1 else None
 
 
-def _supplier_suggestion(db, tenant_id, document_id, current):
-    if current:
-        vendors = db.execute("SELECT id,vendor_name FROM vendors WHERE tenant_id=%s ORDER BY id",
-                             (tenant_id,)).fetchall()
-        match = find_vendor_match(current, vendors)
-        if match["status"] != "NO_MATCH" and match["vendor_name"] != current:
-            return match["vendor_name"]
-    saved = db.execute("""SELECT sm.candidate_name FROM supplier_matches sm
-        WHERE sm.tenant_id=%s AND sm.document_id=%s AND sm.source<>'manual' AND sm.decision<>'rejected'
-          AND (%s::text IS NULL OR sm.candidate_name<>%s)
-        ORDER BY sm.confidence DESC NULLS LAST, sm.created_at DESC, sm.id LIMIT 1""",
-        (tenant_id, document_id, current, current)).fetchone()
-    return saved["candidate_name"] if saved else None
+def _supplier_suggestion(db, tenant_id, current):
+    # Saved supplier_matches have no extraction or source value. Match the current evidence directly.
+    if not current:
+        return None
+    vendors = db.execute("SELECT id,vendor_name FROM vendors WHERE tenant_id=%s ORDER BY id",
+                         (tenant_id,)).fetchall()
+    match = find_vendor_match(current, vendors)
+    if match["status"] != "NO_MATCH" and match["vendor_name"] != current:
+        return match["vendor_name"]
+    return None
 
 
 def suggested_fixes(db, user, document_id):
@@ -140,12 +137,13 @@ def suggested_fixes(db, user, document_id):
         source = "rule"
         explanation = f"Check {label.lower()} against the original document and review this finding."
         if canonical == "supplier" and (cause == "UNKNOWN_VENDOR" or value is None):
-            match = _supplier_suggestion(db, tenant_id, document_id, _current_value(prediction) or finding["actual_value"])
+            current = _current_value(prediction) if prediction else finding["actual_value"]
+            match = _supplier_suggestion(db, tenant_id, current)
             if match:
                 suggestions.append({"field": field, "label": label, "reason": reason, "suggestedValue": match,
                                     "source": "supplier-match", "explanation": "Compare the matched catalog supplier with the original document."})
                 continue
-            explanation = "Check the supplier name on the original document against the supplier catalog."
+            explanation = "No replacement was verified for the current supplier name. Check it against the supplier catalog."
         if value is not None:
             source = "candidate"
             explanation = "The extraction found this alternative. Verify it against the original document."

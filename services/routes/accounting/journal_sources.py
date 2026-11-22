@@ -15,7 +15,7 @@ JOURNAL_CURRENCY_JOINS = f"""
         FROM standardised_records record
         WHERE record.tenant_id=j.tenant_id AND record.document_id={JOURNAL_SOURCE_ID}
             AND {JOURNAL_SOURCE_TYPE} IN ('document','adjustment')
-        ORDER BY ({JOURNAL_SOURCE_KEY} IN (
+        ORDER BY (split_part({JOURNAL_SOURCE_KEY}, ':repost:', 1) IN (
             'supplier-bill:'||record.id::text||':revision:'||record.revision_number::text,
             'customer-invoice:'||record.id::text||':revision:'||record.revision_number::text,
             'adjustment:credit_note:'||record.id::text||':revision:'||record.revision_number::text,

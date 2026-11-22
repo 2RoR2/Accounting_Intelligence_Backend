@@ -152,8 +152,7 @@ def _target_control_account(db, tenant_id, allocation, purpose):
     side = "debit" if purpose == "receivable" else "credit"
     account_type = "asset" if purpose == "receivable" else "liability"
     if allocation.get("source") == "scanned":
-        record = db.execute("""SELECT r.id,r.revision_number,r.category,d.kind FROM standardised_records r
-            JOIN documents d ON d.id=r.document_id AND d.tenant_id=r.tenant_id WHERE r.id=%s AND r.tenant_id=%s""",
+        record = db.execute("SELECT document_id FROM standardised_records WHERE id=%s AND tenant_id=%s",
                             (allocation["targetId"], tenant_id)).fetchone()
         journal = scanned_posted_journal(db, tenant_id, record) if record else None
         journal_id = journal["id"] if journal and journal["status"] == "posted" else None
@@ -324,18 +323,22 @@ SCANNED_TYPES = {"invoice": ("accounts_receivable", ("invoice",)), "bill": ("acc
                  "purchase-credit-note": ("accounts_payable", ("credit_note",))}
 
 
-def scanned_keys(record) -> list[str]:
-    """Every key under which an approved scanned record may already be posted (record endpoints or this module)."""
+def scanned_key(record) -> str:
+    """The base key shared with the ledger's scanned record posting routes."""
     rid, rev = record["id"], record["revision_number"]
     if record["kind"] == "credit_note":
-        return [f"adjustment:credit_note:{rid}:revision:{rev}"]
+        return f"adjustment:credit_note:{rid}:revision:{rev}"
     prefix = "customer-invoice" if record["category"] == "accounts_receivable" else "supplier-bill"
-    return [f"{prefix}:{rid}:revision:{rev}"]
+    return f"{prefix}:{rid}:revision:{rev}"
 
 
 def scanned_posted_journal(db, tenant_id, record):
-    return db.execute("""SELECT id,status,journal_date FROM journal_headers WHERE tenant_id=%s AND idempotency_key = ANY(%s)
-        ORDER BY posted_at LIMIT 1""", (tenant_id, scanned_keys(record))).fetchone()
+    # Use the document source, as the waiting-to-post list does, including journals with legacy keys.
+    return db.execute("""SELECT id,status,journal_date,
+            bool_or(status='reversed') OVER () AS previously_reversed
+        FROM journal_headers WHERE tenant_id=%s AND source_type IN ('document','adjustment') AND source_id=%s
+        ORDER BY (status='posted') DESC, (status='reversed') DESC, posted_at DESC NULLS LAST, id DESC LIMIT 1""",
+        (tenant_id, record["document_id"])).fetchone()
 
 
 def plan_for_scanned(db, tenant_id, record, account_id=None) -> Plan:

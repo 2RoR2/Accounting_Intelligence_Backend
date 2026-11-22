@@ -555,6 +555,15 @@ def settlement_allocated(db, tenant_id, settlement_id):
                           WHERE undo.tenant_id=a.tenant_id AND undo.reverses_allocation_id=a.id)""",
         (tenant_id, settlement_id)).fetchone()["allocated"]
 
+
+def mark_bank_line_matched(db, bank, *, document_id=None):
+    """Close a statement line while the caller holds its row lock."""
+    params = (bank["id"], bank["tenant_id"])
+    db.execute("""UPDATE bank_transactions SET status='matched',recorded_document_id=%s
+        WHERE id=%s AND tenant_id=%s""", (document_id, *params))
+    db.execute("""UPDATE reconciliation_candidates SET status='superseded'
+        WHERE bank_transaction_id=%s AND tenant_id=%s AND status='proposed'""", params)
+
 def get_trial_balance(request: Request):
     user = require_workspace_user(request, {"super_admin", "local_admin", "accountant"})
     with connect() as db:
@@ -641,7 +650,8 @@ def get_profit_and_loss_dashboard(request: Request, fromDate: date, toDate: date
                 JOIN latest_coding coding ON coding.bank_transaction_id=b.id AND coding.decision<>'cleared'
                 JOIN coa_accounts account ON account.id=coding.account_id AND account.tenant_id=b.tenant_id
                 LEFT JOIN bank_allocated allocated ON allocated.bank_transaction_id=b.id
-                WHERE b.tenant_id=%s AND b.status<>'ignored' AND b.posted_date BETWEEN %s AND %s
+                WHERE b.tenant_id=%s AND b.status<>'ignored' AND b.recorded_document_id IS NULL
+                    AND b.posted_date BETWEEN %s AND %s
                     AND account.account_class IN ('revenue','cogs','expense')
                     AND GREATEST(ABS(b.signed_amount_decimal)-COALESCE(allocated.allocated,0),0)>0
                 GROUP BY period,COALESCE(b.currency,'UNSPECIFIED'),account_type,account.code,account.name
@@ -658,16 +668,31 @@ def get_profit_and_loss_dashboard(request: Request, fromDate: date, toDate: date
                 WHERE a.tenant_id=%s AND a.status='active' AND p.status='ready'
                     AND p.document_type IN ('payment','purchase-payment') AND p.document_date BETWEEN %s AND %s
                 GROUP BY period,p.currency,account_type,account_code,account_name
+            ),
+            bank_document_rows AS (
+                SELECT date_trunc(%s,b.posted_date)::date AS period,b.currency,
+                    a.account_type,a.code AS account_code,a.name AS account_name,
+                    SUM(CASE WHEN a.account_type='income' THEN l.credit-l.debit ELSE l.debit-l.credit END) AS amount
+                FROM bank_transactions b
+                JOIN erp_document_headers h ON h.id=b.recorded_document_id AND h.tenant_id=b.tenant_id
+                JOIN journal_headers j ON j.id=h.journal_id AND j.tenant_id=h.tenant_id AND j.status='posted'
+                JOIN journal_lines l ON l.journal_id=j.id AND l.tenant_id=j.tenant_id
+                JOIN ledger_accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+                WHERE b.tenant_id=%s AND b.posted_date BETWEEN %s AND %s AND h.status='ready'
+                    AND h.document_type IN ('money-in','money-out') AND a.account_type IN ('income','expense')
+                GROUP BY period,b.currency,a.account_type,a.code,a.name
             )
             SELECT period,currency,account_type,account_code,account_name,amount FROM allocation_rows
             UNION ALL
             SELECT period,currency,account_type,account_code,account_name,amount FROM typed_rows
             UNION ALL
             SELECT period,currency,account_type,account_code,account_name,amount FROM coded_rows
+            UNION ALL
+            SELECT period,currency,account_type,account_code,account_name,amount FROM bank_document_rows
             ORDER BY period,currency,account_type,account_code"""
         pnl_params = (user["tenant_id"], granularity, user["tenant_id"], fromDate, toDate,
             user["tenant_id"], fromDate, toDate, user["tenant_id"], granularity, user["tenant_id"], fromDate, toDate,
-            granularity, user["tenant_id"], fromDate, toDate)
+            granularity, user["tenant_id"], fromDate, toDate, granularity, user["tenant_id"], fromDate, toDate)
 
     from services.routes.home.lanes import OPEN_ITEM_KINDS, company_today
     with connect() as db:
@@ -748,7 +773,7 @@ def get_profit_and_loss_dashboard(request: Request, fromDate: date, toDate: date
         for row in aging_rows]
     return {"basis": basis, "fromDate": fromDate.isoformat(), "toDate": toDate.isoformat(),
         "granularity": granularity, "periods": periods, "totals": totals, "accounts": accounts, "aging": aging,
-        "cashBasisNote": "This cash estimate uses allocated settlements and classified bank transactions. Allocations appear as gross amounts." if basis == "cash" else None,
+        "cashBasisNote": "This cash estimate uses allocated settlements, classified bank transactions and money documents recorded from bank lines. Allocations appear as gross amounts." if basis == "cash" else None,
         "accrualNote": "Accrual results use posted journals and their reversals. Opening balances are excluded." if basis == "accrual" else None}
 
 def list_ledger_journals(request: Request):
@@ -792,6 +817,10 @@ def create_allocation(data: AllocationInput, request: Request):
                 raise HTTPException(409, "This bank transaction cannot be allocated in its current status.")
             _refuse_document_settlement(db, user["tenant_id"], settlement_id)
             row = record_settlement_allocation(db, user, settlement_id, record_id, data.amount)
+            if bank and bank["signed_amount_decimal"]:
+                allocated = settlement_allocated(db, bank["tenant_id"], settlement_id)
+                if allocated == abs(bank["signed_amount_decimal"]):
+                    mark_bank_line_matched(db, bank)
     except RaiseException as error:
         raise HTTPException(409, str(error).split('\n')[0])
     return {"id": str(row["id"]), "settlementId": str(row["settlement_id"]), "recordId": str(row["record_id"]), "amount": str(row["amount"]), "status": row["status"]}
@@ -803,7 +832,7 @@ def record_settlement_allocation(db, user, settlement_id, record_id, amount):
 
 
 def _lock_allocation_bank_line(db, tenant_id, settlement_id):
-    return db.execute("""SELECT b.id,b.status,b.recorded_document_id FROM settlements s
+    return db.execute("""SELECT b.id,b.tenant_id,b.status,b.recorded_document_id,b.signed_amount_decimal FROM settlements s
         JOIN bank_transactions b ON b.id=s.source_id AND b.tenant_id=s.tenant_id
         WHERE s.id=%s AND s.tenant_id=%s AND s.source_type='bank_import' FOR UPDATE OF b""",
         (settlement_id, tenant_id)).fetchone()

@@ -10,6 +10,8 @@ which post through the same rule and the same idempotency keys as the record end
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -110,6 +112,7 @@ class TransferInput(BaseModel):
 class ScannedPostInput(BaseModel):
     accountId: str | None = None
     journalDate: date | None = None
+    expectedPlanHash: str | None = None
 
 
 class ScannedBulkPostInput(BaseModel):
@@ -381,6 +384,10 @@ def _make_ready(db, user, doc, *, bank_evidence=False):
 def _void(db, user, doc, reason):
     if doc["status"] == "ready" and user["role"] not in POST_ROLES:
         raise HTTPException(403, "Only a company admin can void a ready document.")
+    if doc["document_type"] in {"money-in", "money-out"}:
+        # Lock the bank evidence before taking the journal/period locks.
+        db.execute("""SELECT id FROM bank_transactions WHERE tenant_id=%s AND recorded_document_id=%s
+            ORDER BY id FOR UPDATE""", (user["tenant_id"], doc["id"]))
     reversal = None
     if doc["journal_id"]:
         if doc["document_type"] in {"invoice", "bill"}:
@@ -406,9 +413,16 @@ def _void(db, user, doc, reason):
             db.execute("UPDATE settlements SET status='voided' WHERE id=%s AND tenant_id=%s", (doc["settlement_id"], user["tenant_id"]))
         audit(db, user, "erp.document_voided", str(doc["id"]), {"type": doc["document_type"], "number": doc["document_number"],
                                                                  "reversalJournalId": str(reversal)})
-    return db.execute("""UPDATE erp_document_headers SET status='void',voided_at=now(),void_reason=%s,reversal_journal_id=%s,
+    updated = db.execute("""UPDATE erp_document_headers SET status='void',voided_at=now(),void_reason=%s,reversal_journal_id=%s,
             updated_by=%s,updated_at=now() WHERE id=%s AND tenant_id=%s RETURNING *""",
                       (reason, reversal, user["id"], doc["id"], user["tenant_id"])).fetchone()
+    if doc["document_type"] in {"money-in", "money-out"}:
+        reopened = db.execute("""UPDATE bank_transactions SET status='imported',recorded_document_id=NULL
+            WHERE tenant_id=%s AND recorded_document_id=%s RETURNING id""",
+            (user["tenant_id"], doc["id"])).fetchall()
+        for bank in reopened:
+            audit(db, user, "bank.recorded_document_voided", bank["id"], {"documentId": str(doc["id"])})
+    return updated
 
 
 # ------------------------------------------------------------------ handlers
@@ -736,15 +750,30 @@ def _prepare_scanned_post(db, tenant_id, record, data):
     return on, posting.plan_for_scanned(db, tenant_id, record, data.accountId)
 
 
+def _scanned_plan_hash(on, lines):
+    payload = [on.isoformat() if on else None,
+               [(str(account), money(debit), money(credit)) for account, debit, credit in lines]]
+    return hashlib.sha256(json.dumps(payload, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
 def _post_scanned_record(db, user, record_id, data):
     tenant_id = user["tenant_id"]
     record = _load_scanned_record(db, tenant_id, record_id, lock=True)
     _require_scanned_postable(record)
     existing = posting.scanned_posted_journal(db, tenant_id, record)
-    if existing:
+    already_posted = existing and existing["status"] == "posted"
+    if data.expectedPlanHash is not None or not already_posted:
+        on, plan = _prepare_scanned_post(db, tenant_id, record, data)
+        if data.expectedPlanHash is not None and data.expectedPlanHash != _scanned_plan_hash(
+            on, ((line.account_id, line.debit, line.credit) for line in plan.lines)
+        ):
+            raise HTTPException(409, "The journal changed since you previewed it. Preview it again.")
+    if already_posted:
         return {"id": str(existing["id"]), "status": existing["status"], "idempotent": True, "recordId": str(record_id)}
-    on, plan = _prepare_scanned_post(db, tenant_id, record, data)
-    result = posting.post_plan(db, user, plan, key=posting.scanned_keys(record)[0],
+    key = posting.scanned_key(record)
+    if existing:
+        key += f":repost:{existing['id']}"
+    result = posting.post_plan(db, user, plan, key=key,
                                source_type="adjustment" if record["kind"] == "credit_note" else "document",
                                source_id=record["document_id"], journal_date=on,
                                description=f"Scanned {record['kind'].replace('_', ' ')} {record['invoice_number'] or record['record_code']}")
@@ -754,7 +783,7 @@ def _post_scanned_record(db, user, record_id, data):
 
 
 def post_scanned_record(record_id: str, data: ScannedPostInput, request: Request):
-    """Post an approved scanned invoice, bill or credit note once across both posting paths."""
+    """Post an approved scanned invoice, bill or credit note with no active journal."""
     user = erp_user(request, POST_ROLES)
     record_id = parse_uuid(record_id, "record id")
     with connect() as db:
@@ -790,9 +819,10 @@ def preview_scanned_post(record_id: str, request: Request):
         db.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         record = _load_scanned_record(db, tenant_id, record_id)
         existing = posting.scanned_posted_journal(db, tenant_id, record)
-        on = existing["journal_date"] if existing else record["invoice_date"]
+        already_posted = bool(existing and existing["status"] == "posted")
+        on = existing["journal_date"] if already_posted else record["invoice_date"]
         lines = []
-        if existing:
+        if already_posted:
             lines = db.execute("""SELECT l.account_id,a.code,a.name,l.description,l.debit,l.credit
                 FROM journal_lines l JOIN ledger_accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
                 WHERE l.journal_id=%s AND l.tenant_id=%s ORDER BY l.line_number""",
@@ -818,7 +848,8 @@ def preview_scanned_post(record_id: str, request: Request):
                            "description": line["description"], "debit": money(line["debit"]), "credit": money(line["credit"])}
                           for line in lines],
                 "totalDebit": money(debit), "totalCredit": money(credit), "balanced": debit == credit and debit > 0,
-                "alreadyPosted": existing is not None}
+                "alreadyPosted": already_posted, "previouslyReversed": bool(existing and existing["previously_reversed"]),
+                "planHash": _scanned_plan_hash(on, ((line["account_id"], line["debit"], line["credit"]) for line in lines))}
     if problem:
         response["problem"] = problem
     return response
