@@ -10,6 +10,9 @@ which post through the same rule and the same idempotency keys as the record end
 """
 from __future__ import annotations
 
+import hashlib
+import json
+import logging
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
@@ -22,6 +25,8 @@ from pydantic import BaseModel, Field
 from . import posting
 from .common import DOCUMENT_TYPES, audit, erp_user, money, parse_uuid
 from .contacts import find_contact
+
+logger = logging.getLogger(__name__)
 
 READ_ROLES = {"local_admin", "accountant"}
 WRITE_ROLES = {"local_admin", "accountant"}
@@ -107,6 +112,11 @@ class TransferInput(BaseModel):
 class ScannedPostInput(BaseModel):
     accountId: str | None = None
     journalDate: date | None = None
+    expectedPlanHash: str | None = None
+
+
+class ScannedBulkPostInput(BaseModel):
+    recordIds: list[str] = Field(min_length=1, max_length=100)
 
 
 class PostingAccountsInput(BaseModel):
@@ -334,9 +344,10 @@ def _apply_allocations(db, user, doc):
     return settlement_id
 
 
-def _make_ready(db, user, doc):
+def _make_ready(db, user, doc, *, bank_evidence=False):
     """Post a financial document (or mark a record-only one ready). The caller holds the row lock."""
-    if user["role"] not in POST_ROLES:
+    bank_posting_allowed = bank_evidence and user["role"] == "accountant" and doc["document_type"] in {"money-in", "money-out"}
+    if user["role"] not in POST_ROLES and not bank_posting_allowed:
         raise HTTPException(403, "Only a company admin can make a document ready (post it).")
     kind = doc["document_type"]
     if kind in posting.CONTACT_REQUIRED and not (doc["vendor_id"] or doc["customer_id"]):
@@ -373,6 +384,10 @@ def _make_ready(db, user, doc):
 def _void(db, user, doc, reason):
     if doc["status"] == "ready" and user["role"] not in POST_ROLES:
         raise HTTPException(403, "Only a company admin can void a ready document.")
+    if doc["document_type"] in {"money-in", "money-out"}:
+        # Lock the bank evidence before taking the journal/period locks.
+        db.execute("""SELECT id FROM bank_transactions WHERE tenant_id=%s AND recorded_document_id=%s
+            ORDER BY id FOR UPDATE""", (user["tenant_id"], doc["id"]))
     reversal = None
     if doc["journal_id"]:
         if doc["document_type"] in {"invoice", "bill"}:
@@ -398,9 +413,16 @@ def _void(db, user, doc, reason):
             db.execute("UPDATE settlements SET status='voided' WHERE id=%s AND tenant_id=%s", (doc["settlement_id"], user["tenant_id"]))
         audit(db, user, "erp.document_voided", str(doc["id"]), {"type": doc["document_type"], "number": doc["document_number"],
                                                                  "reversalJournalId": str(reversal)})
-    return db.execute("""UPDATE erp_document_headers SET status='void',voided_at=now(),void_reason=%s,reversal_journal_id=%s,
+    updated = db.execute("""UPDATE erp_document_headers SET status='void',voided_at=now(),void_reason=%s,reversal_journal_id=%s,
             updated_by=%s,updated_at=now() WHERE id=%s AND tenant_id=%s RETURNING *""",
                       (reason, reversal, user["id"], doc["id"], user["tenant_id"])).fetchone()
+    if doc["document_type"] in {"money-in", "money-out"}:
+        reopened = db.execute("""UPDATE bank_transactions SET status='imported',recorded_document_id=NULL
+            WHERE tenant_id=%s AND recorded_document_id=%s RETURNING id""",
+            (user["tenant_id"], doc["id"])).fetchall()
+        for bank in reopened:
+            audit(db, user, "bank.recorded_document_voided", bank["id"], {"documentId": str(doc["id"])})
+    return updated
 
 
 # ------------------------------------------------------------------ handlers
@@ -489,35 +511,51 @@ def _scanned_rows(db, tenant_id, document_type, *, search=None, contact=None, da
 def create_document(document_type: str, data: DocumentInput, request: Request):
     _type(document_type)
     user = erp_user(request, WRITE_ROLES)
+    with connect() as db:
+        return _dto(db, _create_typed_document(db, user, document_type, data))
+
+
+def _create_typed_document(db, user, document_type, data, *, bank_evidence=False):
     lines = _clean_lines(data.lines)
     allocations = _allocations(document_type, data.allocations)
     subtotal, tax, total = _totals(document_type, lines, data.amount)
-    with connect() as db:
-        vendor_id, customer_id, employee_id, contact_name = _contact(db, user["tenant_id"], document_type, data.contactId)
-        bank_account_id = _bank_account(db, user["tenant_id"], data.bankAccountId)
-        number = data.number.strip() if data.number and data.number.strip() else _next_number(db, user["tenant_id"], document_type)
-        try:
-            db.execute("SAVEPOINT erp_create")
-            row = db.execute("""INSERT INTO erp_document_headers(tenant_id,document_type,document_number,status,vendor_id,customer_id,
-                    employee_id,contact_name,document_date,due_date,currency,reference_no,description,subtotal,tax_amount,total_amount,
-                    payload,bank_account_id,created_by,updated_by)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *""",
-                             (user["tenant_id"], document_type, number, "pending_approval" if data.status == "pending_approval" else "draft",
-                              vendor_id, customer_id, employee_id, data.contactName or contact_name,
-                              data.documentDate or date.today(), data.dueDate, data.currency.upper(), data.referenceNo,
-                              data.description, subtotal, tax, total,
-                              Jsonb({"lines": lines, "allocations": allocations, "tags": data.tags, "fields": data.fields}),
-                              bank_account_id, user["id"], user["id"])).fetchone()
-            db.execute("RELEASE SAVEPOINT erp_create")
-        except UniqueViolation:
-            db.execute("ROLLBACK TO SAVEPOINT erp_create")
-            raise HTTPException(409, "A document with this number already exists.")
-        _event(db, user, row["id"], "created", to_status=row["status"])
-        if data.status == "ready":
-            row = _make_ready(db, user, row)
-            _event(db, user, row["id"], "status_changed", from_status="draft", to_status="ready",
-                   reason="Posted to the ledger" if row["journal_id"] else "Record only: this type does not post")
-        return _dto(db, row)
+    vendor_id, customer_id, employee_id, contact_name = _contact(db, user["tenant_id"], document_type, data.contactId)
+    bank_account_id = _bank_account(db, user["tenant_id"], data.bankAccountId)
+    number = data.number.strip() if data.number and data.number.strip() else _next_number(db, user["tenant_id"], document_type)
+    try:
+        db.execute("SAVEPOINT erp_create")
+        row = db.execute("""INSERT INTO erp_document_headers(tenant_id,document_type,document_number,status,vendor_id,customer_id,
+                employee_id,contact_name,document_date,due_date,currency,reference_no,description,subtotal,tax_amount,total_amount,
+                payload,bank_account_id,created_by,updated_by)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *""",
+                         (user["tenant_id"], document_type, number, "pending_approval" if data.status == "pending_approval" else "draft",
+                          vendor_id, customer_id, employee_id, data.contactName or contact_name,
+                          data.documentDate or date.today(), data.dueDate, data.currency.upper(), data.referenceNo,
+                          data.description, subtotal, tax, total,
+                          Jsonb({"lines": lines, "allocations": allocations, "tags": data.tags, "fields": data.fields}),
+                          bank_account_id, user["id"], user["id"])).fetchone()
+        db.execute("RELEASE SAVEPOINT erp_create")
+    except UniqueViolation:
+        db.execute("ROLLBACK TO SAVEPOINT erp_create")
+        raise HTTPException(409, "A document with this number already exists.")
+    _event(db, user, row["id"], "created", to_status=row["status"])
+    if data.status == "ready":
+        row = _make_ready(db, user, row, bank_evidence=bank_evidence)
+        _event(db, user, row["id"], "status_changed", from_status="draft", to_status="ready",
+               reason="Posted to the ledger" if row["journal_id"] else "Record only: this type does not post")
+    return row
+
+
+def create_document_from_bank(db, user, bank, bank_account_id, account_id, description):
+    """Only statement-derived money-in/out can use this ready path as an accountant."""
+    kind = bank["direction"].replace("_", "-")
+    data = DocumentInput(
+        documentDate=bank["posted_date"], currency=bank["currency"], bankAccountId=str(bank_account_id),
+        referenceNo=(bank["reference"] or "")[:200] or None, description=description, status="ready",
+        lines=[LineInput(description=description[:500], unitPrice=abs(bank["signed_amount_decimal"]),
+                         accountId=str(account_id))],
+    )
+    return _create_typed_document(db, user, kind, data, bank_evidence=True)
 
 
 def get_document(document_type: str, document_id: str, request: Request):
@@ -686,36 +724,135 @@ def document_history(document_type: str, document_id: str, request: Request):
                              "targetType": a["target_type"], "targetNumber": a["target_number"]} for a in allocations]}
 
 
+def _load_scanned_record(db, tenant_id, record_id, *, lock=False):
+    record = db.execute("""SELECT r.*,d.kind FROM standardised_records r
+        JOIN documents d ON d.id=r.document_id AND d.tenant_id=r.tenant_id
+        WHERE r.id=%s AND r.tenant_id=%s""" + (" FOR UPDATE OF r" if lock else ""), (record_id, tenant_id)).fetchone()
+    if not record:
+        raise HTTPException(404, "Record not found.")
+    return record
+
+
+def _require_scanned_postable(record):
+    if not record["is_current"] or record["validation_status"] != "passed":
+        raise HTTPException(409, "Only the current approved record can be posted.")
+    if not any(record["category"] == c and record["kind"] in k for c, k in posting.SCANNED_TYPES.values()):
+        raise HTTPException(422, "Only an approved invoice, bill or credit note posts from here.")
+
+
+def _prepare_scanned_post(db, tenant_id, record, data):
+    if str(record["currency"]).strip().upper() != "MYR":
+        raise HTTPException(409, "Posting supports MYR only; foreign-currency conversion is not configured.")
+    posting.refuse_if_typed_copy(db, tenant_id, record)
+    on = data.journalDate or record["invoice_date"]
+    if not on:
+        raise HTTPException(422, "Choose a journal date; the document has no date.")
+    return on, posting.plan_for_scanned(db, tenant_id, record, data.accountId)
+
+
+def _scanned_plan_hash(on, lines):
+    payload = [on.isoformat() if on else None,
+               [(str(account), money(debit), money(credit)) for account, debit, credit in lines]]
+    return hashlib.sha256(json.dumps(payload, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def _post_scanned_record(db, user, record_id, data):
+    tenant_id = user["tenant_id"]
+    record = _load_scanned_record(db, tenant_id, record_id, lock=True)
+    _require_scanned_postable(record)
+    existing = posting.scanned_posted_journal(db, tenant_id, record)
+    already_posted = existing and existing["status"] == "posted"
+    if data.expectedPlanHash is not None or not already_posted:
+        on, plan = _prepare_scanned_post(db, tenant_id, record, data)
+        if data.expectedPlanHash is not None and data.expectedPlanHash != _scanned_plan_hash(
+            on, ((line.account_id, line.debit, line.credit) for line in plan.lines)
+        ):
+            raise HTTPException(409, "The journal changed since you previewed it. Preview it again.")
+    if already_posted:
+        return {"id": str(existing["id"]), "status": existing["status"], "idempotent": True, "recordId": str(record_id)}
+    key = posting.scanned_key(record)
+    if existing:
+        key += f":repost:{existing['id']}"
+    result = posting.post_plan(db, user, plan, key=key,
+                               source_type="adjustment" if record["kind"] == "credit_note" else "document",
+                               source_id=record["document_id"], journal_date=on,
+                               description=f"Scanned {record['kind'].replace('_', ' ')} {record['invoice_number'] or record['record_code']}")
+    if not result["idempotent"]:
+        audit(db, user, "erp.scanned_posted", str(record_id), {"journalId": result["id"], "recordCode": record["record_code"]})
+    return {**result, "recordId": str(record_id)}
+
+
 def post_scanned_record(record_id: str, data: ScannedPostInput, request: Request):
-    """L5: post an approved scanned invoice/bill/credit note through the same rule; posts once across both paths."""
+    """Post an approved scanned invoice, bill or credit note with no active journal."""
     user = erp_user(request, POST_ROLES)
     record_id = parse_uuid(record_id, "record id")
     with connect() as db:
-        record = db.execute("""SELECT r.*,d.kind FROM standardised_records r JOIN documents d ON d.id=r.document_id AND d.tenant_id=r.tenant_id
-            WHERE r.id=%s AND r.tenant_id=%s FOR UPDATE OF r""", (record_id, user["tenant_id"])).fetchone()
-        if not record:
-            raise HTTPException(404, "Record not found.")
-        if not record["is_current"] or record["validation_status"] != "passed":
-            raise HTTPException(409, "Only the current approved record can be posted.")
-        if not any(record["category"] == c and record["kind"] in k for c, k in posting.SCANNED_TYPES.values()):
-            raise HTTPException(422, "Only an approved invoice, bill or credit note posts from here.")
-        existing = posting.scanned_posted_journal(db, user["tenant_id"], record)
-        if existing:
-            return {"id": str(existing["id"]), "status": existing["status"], "idempotent": True, "recordId": str(record_id)}
-        if str(record["currency"]).strip().upper() != "MYR":
-            raise HTTPException(409, "Posting supports MYR only; foreign-currency conversion is not configured.")
-        posting.refuse_if_typed_copy(db, user["tenant_id"], record)
-        on = data.journalDate or record["invoice_date"]
-        if not on:
-            raise HTTPException(422, "Choose a journal date; the document has no date.")
-        plan = posting.plan_for_scanned(db, user["tenant_id"], record, data.accountId)
-        result = posting.post_plan(db, user, plan, key=posting.scanned_keys(record)[0],
-                                   source_type="adjustment" if record["kind"] == "credit_note" else "document",
-                                   source_id=record["document_id"], journal_date=on,
-                                   description=f"Scanned {record['kind'].replace('_', ' ')} {record['invoice_number'] or record['record_code']}")
-        if not result["idempotent"]:
-            audit(db, user, "erp.scanned_posted", str(record_id), {"journalId": result["id"], "recordCode": record["record_code"]})
-    return {**result, "recordId": str(record_id)}
+        return _post_scanned_record(db, user, record_id, data)
+
+
+def bulk_post_scanned_records(data: ScannedBulkPostInput, request: Request):
+    user = erp_user(request, POST_ROLES)
+    options = ScannedPostInput()
+    results = []
+    for item in data.recordIds:
+        result = {"recordId": item}
+        try:
+            record_id = parse_uuid(item, "record id")
+            with connect() as db:
+                posted = _post_scanned_record(db, user, record_id, options)
+            result.update(ok=True, journalId=posted["id"], idempotent=posted["idempotent"])
+        except HTTPException as error:
+            result.update(ok=False, reason=error.detail)
+        except Exception:
+            logger.exception("Bulk posting failed for record %s", item)
+            result.update(ok=False, reason="The journal could not be saved. Check the record and its posting accounts.")
+        results.append(result)
+    return {"results": results}
+
+
+def preview_scanned_post(record_id: str, request: Request):
+    user = erp_user(request, READ_ROLES)
+    tenant_id = user["tenant_id"]
+    record_id = parse_uuid(record_id, "record id")
+    problem = None
+    with connect() as db:
+        db.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        record = _load_scanned_record(db, tenant_id, record_id)
+        existing = posting.scanned_posted_journal(db, tenant_id, record)
+        already_posted = bool(existing and existing["status"] == "posted")
+        on = existing["journal_date"] if already_posted else record["invoice_date"]
+        lines = []
+        if already_posted:
+            lines = db.execute("""SELECT l.account_id,a.code,a.name,l.description,l.debit,l.credit
+                FROM journal_lines l JOIN ledger_accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+                WHERE l.journal_id=%s AND l.tenant_id=%s ORDER BY l.line_number""",
+                (existing["id"], tenant_id)).fetchall()
+        else:
+            try:
+                _require_scanned_postable(record)
+                on, plan = _prepare_scanned_post(db, tenant_id, record, ScannedPostInput())
+                ids = {parse_uuid(line.account_id, "posting account id") for line in plan.lines}
+                accounts = {str(row["id"]): row for row in db.execute("""SELECT id,code,name FROM ledger_accounts
+                    WHERE tenant_id=%s AND id=ANY(%s)""", (tenant_id, list(ids))).fetchall()}
+                lines = [{**accounts[line.account_id], "account_id": line.account_id,
+                          "description": line.description[:500], "debit": line.debit, "credit": line.credit}
+                         for line in plan.lines]
+                posting.open_period(db, tenant_id, on)
+            except HTTPException as error:
+                problem = error.detail
+
+    debit = sum((line["debit"] for line in lines), Decimal(0))
+    credit = sum((line["credit"] for line in lines), Decimal(0))
+    response = {"recordId": str(record_id), "journalDate": on.isoformat() if on else None,
+                "lines": [{"accountId": str(line["account_id"]), "code": line["code"], "name": line["name"],
+                           "description": line["description"], "debit": money(line["debit"]), "credit": money(line["credit"])}
+                          for line in lines],
+                "totalDebit": money(debit), "totalCredit": money(credit), "balanced": debit == credit and debit > 0,
+                "alreadyPosted": already_posted, "previouslyReversed": bool(existing and existing["previously_reversed"]),
+                "planHash": _scanned_plan_hash(on, ((line["account_id"], line["debit"], line["credit"]) for line in lines))}
+    if problem:
+        response["problem"] = problem
+    return response
 
 
 def get_posting_accounts(request: Request):
@@ -749,6 +886,8 @@ def set_posting_accounts(data: PostingAccountsInput, request: Request):
 def register(router):
     router.add_api_route('/api/erp/posting-accounts', get_posting_accounts, methods=['GET'], tags=['ERP Documents'])
     router.add_api_route('/api/erp/posting-accounts', set_posting_accounts, methods=['PUT'], tags=['ERP Documents'])
+    router.add_api_route('/api/erp/scanned/post-bulk', bulk_post_scanned_records, methods=['POST'], tags=['ERP Documents'])
+    router.add_api_route('/api/erp/scanned/{record_id}/post-preview', preview_scanned_post, methods=['GET'], tags=['ERP Documents'])
     router.add_api_route('/api/erp/scanned/{record_id}/post', post_scanned_record, methods=['POST'], tags=['ERP Documents'])
     router.add_api_route('/api/erp/documents/{document_type}', list_documents, methods=['GET'], tags=['ERP Documents'])
     router.add_api_route('/api/erp/documents/{document_type}', create_document, methods=['POST'], status_code=201, tags=['ERP Documents'])

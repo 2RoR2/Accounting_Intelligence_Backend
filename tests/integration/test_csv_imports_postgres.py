@@ -95,6 +95,13 @@ def test_pack_imports_into_the_existing_tables(company, pack):
         supplier = db.execute("""SELECT v.registration_number, c.email, c.notes FROM vendors v
             JOIN supplier_contacts c ON c.vendor_id=v.id WHERE v.tenant_id=%s ORDER BY v.vendor_name LIMIT 1""", (tenant,)).fetchone()
         assert supplier['registration_number'] and supplier['email'].endswith('.test') and '"tin"' in supplier['notes']
+        # The pack's expense default account becomes the supplier's default expense account (scanned bills post there).
+        expense_codes = {r['code'] for r in demo_company.read_csv(pack / 'coa.csv') if r['type'] == 'expense'}
+        expected = {c['name']: c['default_account_code'] for c in pack_contacts
+                    if c['type'] == 'supplier' and c['default_account_code'] in expense_codes}
+        defaults = {r['vendor_name']: r['code'] for r in db.execute("""SELECT v.vendor_name, a.code FROM vendors v
+            JOIN ledger_accounts a ON a.id=v.default_expense_account_id WHERE v.tenant_id=%s""", (tenant,)).fetchall()}
+        assert expected and defaults == expected
         balance = {r['code']: r for r in db.execute(
             'SELECT code, total_debit, total_credit FROM internal_trial_balance WHERE tenant_id=%s', (tenant,)).fetchall()}
         for row in opening_rows:

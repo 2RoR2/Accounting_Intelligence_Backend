@@ -159,10 +159,12 @@ Expected result: document on the left and fields on the right; the corrected val
 
 | Role | Critical | Preconditions |
 |---|---|---|
-| Accountant | Yes | D4 passed; documents in the ready lane and at least one in needs fixing |
+| Accountant, then local admin | Yes | D4 passed; documents in the ready lane and at least one in needs fixing; the facilitator prepares one needs-fixing document whose supplier name is a small misspelling of an existing supplier (e.g. "Elektrical" for "Elektrikal"), so a suggested fix exists |
+
+The app keeps separation of duties: the accountant submits, a different person (the local admin) approves.
 
 Steps:
-1. Open the ready lane, select all and approve.
+1. As the accountant, open the ready lane, select all and submit for approval; as the local admin, open Approvals, select all and approve.
 2. Open the needs-fixing lane and read the reason on one item.
 3. Apply the one-click suggested fix, then approve that item.
 
@@ -176,7 +178,7 @@ Expected result: selected documents change to approved; each needs-fixing item s
 
 | Role | Critical | Preconditions |
 |---|---|---|
-| Accountant | Yes | D5 passed; approved documents with proposed journals |
+| Local admin | Yes | D5 passed; approved documents with proposed journals (the accountant can open the preview; posting is the local admin's) |
 
 Steps:
 1. Open the journals waiting to post.

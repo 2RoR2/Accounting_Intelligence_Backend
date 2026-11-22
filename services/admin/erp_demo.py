@@ -18,7 +18,7 @@ import sys
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
-from services.admin.demo_company import PACK_ROOT, PACKS, Api, SeedError, issue_tokens, pack_folder, refusal_reason
+from services.admin.demo_company import PACK_ROOT, PACKS, Api, SeedError, bank_account_label, issue_tokens, pack_folder, refusal_reason
 
 PRODUCTS = {  # trading pack: building and office supplies (synthetic prices, RM)
     "trading": [("Simen Portland 50kg / Portland cement 50kg", "CEM-50", "28.50", "21.00"),
@@ -63,16 +63,26 @@ class Seeder:
         rows = self.api.call("local_admin", "GET", "/api/ledger/accounts").json()
         return {row["code"]: row for row in rows}
 
-    def ensure_bank_account(self, ledger):
+    def ensure_bank_account(self, ledger, account_number):
         if "1010" not in ledger:
             raise SeedError("Ledger account 1010 (bank) is missing; run seed-demo-company first.")
-        entries = self.api.call("local_admin", "GET", "/api/erp/catalog/bank-account", params={"includeInactive": "true"}).json()
-        for entry in entries:
-            if entry["name"] == "Current account":
-                return entry["id"]
-        return self.api.call("local_admin", "POST", "/api/erp/catalog/bank-account", json={
-            "name": "Current account", "code": "CA-1010", "ledgerAccountId": ledger["1010"]["id"],
-            "data": {"bankName": "Demo Bank", "accountNumber": "000-111-222"}}).json()["id"]
+        path = "/api/erp/catalog/bank-account"
+        entries = self.api.call("local_admin", "GET", path, params={"includeInactive": "true"}).json()
+        name = bank_account_label(account_number)
+        by_name = {entry["name"]: entry for entry in entries}
+        existing = by_name.get(name) or by_name.get("Current account")
+        if existing:
+            values = existing.get("data") or {}
+            if existing["name"] != name or values.get("accountNumber") != account_number:
+                self.api.call("local_admin", "PUT", f"{path}/{existing['id']}", json={
+                    "name": name, "code": existing["code"], "description": existing.get("description"),
+                    "ledgerAccountId": existing["ledgerAccountId"], "active": existing["isActive"],
+                    "data": {**values, "accountNumber": account_number},
+                })
+            return existing["id"]
+        return self.api.call("local_admin", "POST", path, json={
+            "name": name, "code": "CA-1010", "ledgerAccountId": ledger["1010"]["id"],
+            "data": {"bankName": "Demo Bank", "accountNumber": account_number}}).json()["id"]
 
     def ensure_products(self):
         existing = {p["sku"]: p for p in self.api.call("accountant", "GET", "/api/erp/products",
@@ -223,7 +233,7 @@ def seed(key, pack_root=PACK_ROOT, seed_value=20261121):
             closed = [code for code in months if periods.get(code, {}).get("status") != "open"]
             if closed:
                 raise SeedError(f"These months need an open accounting period: {', '.join(closed)}.")
-            bank = seeder.ensure_bank_account(seeder.accounts())
+            bank = seeder.ensure_bank_account(seeder.accounts(), pack["company"]["bank_account_number"])
             products = seeder.ensure_products()
             customers, suppliers = seeder.contacts("customer"), seeder.contacts("supplier")
             for index, code in enumerate(months):

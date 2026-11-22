@@ -442,8 +442,12 @@ def _upload_documents(api, folder, chosen, tenant_id):
     return f"documents: {uploaded} uploaded, {skipped} already there"
 
 
+def bank_account_label(account_number):
+    return f"Current account {account_number[-4:]}"
+
+
 def _import_bank(api, folder, pack, chosen, steps):
-    account_ref = f"Current account {pack['company']['bank_account_number'][-4:]}"
+    account_ref = bank_account_label(pack["company"]["bank_account_number"])
     parser = pack["bank"].get("parser")
     for code in chosen:
         name = f"bank_{code}.csv"

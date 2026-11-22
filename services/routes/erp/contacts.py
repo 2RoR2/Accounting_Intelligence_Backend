@@ -22,6 +22,7 @@ from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field
 
 from .common import audit, erp_user, parse_uuid
+from .posting import ledger_account
 
 READ_ROLES = {"local_admin", "accountant"}
 WRITE_ROLES = {"local_admin", "accountant"}
@@ -44,6 +45,7 @@ class ContactInput(BaseModel):
     city: str | None = Field(default=None, max_length=160)
     state: str | None = Field(default=None, max_length=160)
     postcode: str | None = Field(default=None, max_length=30)
+    defaultExpenseAccountId: str | None = None
     fields: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -65,13 +67,34 @@ def _values(data: ContactInput):
             "state": _clean(data.state), "postcode": _clean(data.postcode)}
 
 
-def _dto(kind: str, row) -> dict:
+def _dto(kind: str, row, account=None) -> dict:
     name_column = TABLES[kind][1]
-    return {"id": str(row["id"]), "kind": kind, "legalName": row[name_column], "code": row.get("contact_code"),
+    result = {"id": str(row["id"]), "kind": kind, "legalName": row[name_column], "code": row.get("contact_code"),
             "registrationNumber": row.get("registration_number"), "email": row.get("email"), "phone": row.get("phone"),
             "address": row.get("address"), "city": row.get("city"), "state": row.get("state"),
             "postcode": row.get("postcode"), "fields": row.get("fields") or {}, "isActive": row["is_active"],
             "createdAt": str(row["created_at"]), "updatedAt": str(row.get("updated_at") or row["created_at"])}
+    if kind == "supplier":
+        account_id = row["default_expense_account_id"]
+        result.update(defaultExpenseAccountId=str(account_id) if account_id else None,
+                      defaultExpenseAccountCode=account["code"] if account else None,
+                      defaultExpenseAccountName=account["name"] if account else None)
+    return result
+
+
+def _expense_account(db, tenant_id, account_id):
+    if account_id:
+        return db.execute("SELECT id,code,name FROM ledger_accounts WHERE tenant_id=%s AND id=%s",
+                          (tenant_id, account_id)).fetchone()
+    return None
+
+
+def _requested_expense_account(db, tenant_id, data):
+    if data.defaultExpenseAccountId is None:
+        return None
+    if data.kind != "supplier":
+        raise HTTPException(422, "Only suppliers can have a default expense account.")
+    return ledger_account(db, tenant_id, data.defaultExpenseAccountId, expected="expense", label="supplier default")
 
 
 def _duplicate_name(db, tenant_id, kind: str, name: str, exclude_id=None):
@@ -112,7 +135,12 @@ def list_contacts(request: Request, kind: str | None = None, search: str | None 
                 AND (%s::text IS NULL OR {column} ILIKE %s OR COALESCE(contact_code,'') ILIKE %s
                      OR COALESCE(registration_number,'') ILIKE %s OR COALESCE(email,'') ILIKE %s)""",
                               (user["tenant_id"], includeInactive, pattern, pattern, pattern, pattern, pattern)).fetchall()
-            results.extend(_dto(each, row) for row in rows)
+            account_ids = list({row["default_expense_account_id"] for row in rows
+                                if each == "supplier" and row["default_expense_account_id"]})
+            accounts = {row["id"]: row for row in db.execute(
+                "SELECT id,code,name FROM ledger_accounts WHERE tenant_id=%s AND id=ANY(%s)",
+                (user["tenant_id"], account_ids)).fetchall()} if account_ids else {}
+            results.extend(_dto(each, row, accounts.get(row.get("default_expense_account_id"))) for row in rows)
     return sorted(results, key=lambda c: (c["legalName"].casefold(), c["kind"]))
 
 
@@ -125,22 +153,27 @@ def create_contact(data: ContactInput, request: Request):
         _duplicate_name(db, user["tenant_id"], data.kind, name)
         columns = [column, *DETAIL_COLUMNS, "fields"]
         params = [name, *(values[c] for c in DETAIL_COLUMNS), Jsonb(data.fields)]
+        account = _requested_expense_account(db, user["tenant_id"], data)
+        if data.kind == "supplier":
+            columns.append("default_expense_account_id")
+            params.append(account["id"] if account else None)
         if data.kind == "employee":
             columns.append("created_by")
             params.append(user["id"])
         row = db.execute(f"""INSERT INTO {table}(tenant_id,{','.join(columns)}) VALUES (%s,{','.join(['%s'] * len(columns))})
             RETURNING *""", (user["tenant_id"], *params)).fetchone()
         audit(db, user, f"contact.{data.kind}_created", table, {"id": str(row["id"]), "name": name, "source": "contacts"})
-    return _dto(data.kind, row)
+    return _dto(data.kind, row, account)
 
 
 def get_contact(contact_id: str, request: Request):
     user = erp_user(request, READ_ROLES)
     with connect() as db:
         kind, row = find_contact(db, user["tenant_id"], contact_id)
-    if not row:
-        raise HTTPException(404, "Contact not found.")
-    return _dto(kind, row)
+        if not row:
+            raise HTTPException(404, "Contact not found.")
+        account = _expense_account(db, user["tenant_id"], row.get("default_expense_account_id"))
+    return _dto(kind, row, account)
 
 
 def update_contact(contact_id: str, data: ContactInput, request: Request):
@@ -156,11 +189,20 @@ def update_contact(contact_id: str, data: ContactInput, request: Request):
         table, column = TABLES[kind]
         if name != row[column]:
             _duplicate_name(db, user["tenant_id"], kind, name, exclude_id=row["id"])
-        assignments = ", ".join(f"{c}=%s" for c in (column, *DETAIL_COLUMNS, "fields"))
+        columns = [column, *DETAIL_COLUMNS, "fields"]
+        params = [name, *(values[c] for c in DETAIL_COLUMNS), Jsonb(data.fields)]
+        account = _requested_expense_account(db, user["tenant_id"], data)
+        if kind == "supplier":
+            if "defaultExpenseAccountId" in data.model_fields_set:
+                columns.append("default_expense_account_id")
+                params.append(account["id"] if account else None)
+            else:
+                account = _expense_account(db, user["tenant_id"], row["default_expense_account_id"])
+        assignments = ", ".join(f"{c}=%s" for c in columns)
         updated = db.execute(f"UPDATE {table} SET {assignments}, updated_at=now() WHERE id=%s AND tenant_id=%s RETURNING *",
-                             (name, *(values[c] for c in DETAIL_COLUMNS), Jsonb(data.fields), row["id"], user["tenant_id"])).fetchone()
+                             (*params, row["id"], user["tenant_id"])).fetchone()
         audit(db, user, f"contact.{kind}_updated", table, {"id": str(row["id"]), "name": name})
-    return _dto(kind, updated)
+    return _dto(kind, updated, account)
 
 
 def _set_active(contact_id: str, request: Request, active: bool):

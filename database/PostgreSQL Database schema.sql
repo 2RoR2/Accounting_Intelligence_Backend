@@ -3843,3 +3843,108 @@ BEGIN
             CHECK (source_type IN ('document','adjustment','settlement','reversal','manual','erp_document'));
     END IF;
 END $$;
+
+-- A statement line can be the posting evidence for a single typed money document.
+ALTER TABLE bank_transactions
+    ADD COLUMN IF NOT EXISTS recorded_document_id UUID;
+
+-- Keep the link tenant-scoped.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_bank_recorded_document_tenant'
+                   AND conrelid = 'bank_transactions'::regclass) THEN
+        ALTER TABLE bank_transactions ADD CONSTRAINT fk_bank_recorded_document_tenant
+            FOREIGN KEY (recorded_document_id, tenant_id) REFERENCES erp_document_headers(id, tenant_id);
+    END IF;
+END $$;
+
+-- Preserve the imported evidence. The only new transition is attaching its first posted document.
+CREATE OR REPLACE FUNCTION bank_transaction_guard() RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        IF OLD.status IN ('proposed', 'matched') THEN
+            RAISE EXCEPTION 'A bank row that is part of a match cannot be deleted.';
+        END IF;
+        RETURN OLD;
+    END IF;
+    IF (to_jsonb(NEW) - ARRAY['status', 'recorded_document_id'])
+        <> (to_jsonb(OLD) - ARRAY['status', 'recorded_document_id']) THEN
+        RAISE EXCEPTION 'A bank row is evidence and cannot be edited. Only its status can change.';
+    END IF;
+    IF NEW.recorded_document_id IS DISTINCT FROM OLD.recorded_document_id
+        AND (OLD.recorded_document_id IS NOT NULL OR OLD.status IN ('matched', 'ignored')) THEN
+        RAISE EXCEPTION 'A recorded bank document link cannot be changed.';
+    END IF;
+    IF NEW.recorded_document_id IS NOT NULL AND NEW.status <> 'matched' THEN
+        RAISE EXCEPTION 'A bank transaction with a recorded document must be matched.';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- A voided money document releases its bank line without changing the imported evidence.
+CREATE OR REPLACE FUNCTION bank_transaction_guard() RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        IF OLD.status IN ('proposed', 'matched') THEN
+            RAISE EXCEPTION 'A bank row that is part of a match cannot be deleted.';
+        END IF;
+        RETURN OLD;
+    END IF;
+    IF (to_jsonb(NEW) - ARRAY['status', 'recorded_document_id'])
+        <> (to_jsonb(OLD) - ARRAY['status', 'recorded_document_id']) THEN
+        RAISE EXCEPTION 'A bank row is evidence and cannot be edited. Only its status can change.';
+    END IF;
+    IF NEW.recorded_document_id IS DISTINCT FROM OLD.recorded_document_id
+        AND (OLD.recorded_document_id IS NOT NULL OR OLD.status IN ('matched', 'ignored'))
+        AND NOT (NEW.recorded_document_id IS NULL AND NEW.status = 'imported' AND EXISTS (
+            SELECT 1 FROM erp_document_headers h
+            WHERE h.id = OLD.recorded_document_id AND h.tenant_id = OLD.tenant_id AND h.status = 'void'
+        )) THEN
+        RAISE EXCEPTION 'A recorded bank document link cannot be changed.';
+    END IF;
+    IF NEW.recorded_document_id IS NOT NULL AND NEW.status <> 'matched' THEN
+        RAISE EXCEPTION 'A bank transaction with a recorded document must be matched.';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Reopen lines left linked by voids that predate this migration.
+WITH reopened AS (
+    UPDATE bank_transactions b SET status = 'imported', recorded_document_id = NULL
+    FROM erp_document_headers h
+    WHERE h.id = b.recorded_document_id AND h.tenant_id = b.tenant_id AND h.status = 'void'
+        AND h.document_type IN ('money-in', 'money-out')
+    RETURNING b.id, b.tenant_id, h.id AS document_id
+)
+INSERT INTO audit_logs(tenant_id, user_name, role, action, resource, details)
+SELECT tenant_id, 'System', 'system', 'bank.recorded_document_voided', id::text,
+    jsonb_build_object('documentId', document_id)::text FROM reopened;
+
+-- Consolidated migration: 20261127_vendor_default_expense_account.sql
+-- Supplier-level default for scanned bill posting.
+ALTER TABLE vendors ADD COLUMN IF NOT EXISTS default_expense_account_id UUID;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'vendors'::regclass AND conname = 'fk_vendors_default_expense_account') THEN
+        ALTER TABLE vendors ADD CONSTRAINT fk_vendors_default_expense_account
+            FOREIGN KEY (default_expense_account_id, tenant_id) REFERENCES ledger_accounts(id, tenant_id)
+            ON DELETE RESTRICT;
+    END IF;
+END $$;
+
+-- Suppliers imported from a company pack before this column existed: use the default account code the
+-- contacts import kept in supplier_contacts.notes, when it is an expense account in the company's chart.
+-- The CASE keeps the jsonb cast to notes the import wrote (other notes are free text).
+WITH pack AS (
+    SELECT c.tenant_id, c.vendor_id,
+           CASE WHEN c.notes LIKE '{%"source": "contacts-import"%}' THEN c.notes::jsonb->>'default_account_code' END AS code
+    FROM supplier_contacts c
+)
+UPDATE vendors v SET default_expense_account_id = a.id
+FROM pack p
+JOIN ledger_accounts a ON a.tenant_id = p.tenant_id AND a.account_type = 'expense' AND a.code = p.code
+WHERE v.default_expense_account_id IS NULL AND p.vendor_id = v.id AND p.tenant_id = v.tenant_id;
