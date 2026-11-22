@@ -84,10 +84,16 @@ def get_workspace_settings(request: Request):
             default_document_view, email_assignment_notifications,
             processing_status_notifications, upload_max_size_mb, allow_camera_uploads
             FROM workspace_settings WHERE tenant_id IS NOT DISTINCT FROM %s""", (tenant_id,)).fetchone()
-    return row or {"timezone": "Asia/Kuala_Lumpur", "notifications": "enabled", "session_timeout_minutes": 480,
-                   "default_document_view": "all", "email_assignment_notifications": True,
-                   "processing_status_notifications": True, "upload_max_size_mb": 20,
-                   "allow_camera_uploads": False}
+    row = row or {"timezone": "Asia/Kuala_Lumpur", "notifications": "enabled", "session_timeout_minutes": 480,
+                  "default_document_view": "all", "email_assignment_notifications": True,
+                  "processing_status_notifications": True, "upload_max_size_mb": 20,
+                  "allow_camera_uploads": False}
+    # Same names as SettingsInput (what PUT accepts and the settings form reads), so a saved value shows after reload.
+    return {"timezone": row["timezone"], "notifications": row["notifications"],
+            "sessionTimeoutMinutes": row["session_timeout_minutes"], "defaultDocumentView": row["default_document_view"],
+            "emailAssignmentNotifications": row["email_assignment_notifications"],
+            "processingStatusNotifications": row["processing_status_notifications"],
+            "uploadMaxSizeMb": row["upload_max_size_mb"], "allowCameraUploads": row["allow_camera_uploads"]}
 
 def save_workspace_settings(data: SettingsInput, request: Request):
     user = require_workspace_user(request, {"super_admin", "local_admin", "accountant"})
