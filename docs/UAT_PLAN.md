@@ -159,7 +159,7 @@ Expected result: document on the left and fields on the right; the corrected val
 
 | Role | Critical | Preconditions |
 |---|---|---|
-| Accountant, then local admin | Yes | D4 passed; documents in the ready lane and at least one in needs fixing |
+| Accountant, then local admin | Yes | D4 passed; documents in the ready lane and at least one in needs fixing; the facilitator prepares one needs-fixing document whose supplier name is a small misspelling of an existing supplier (e.g. "Elektrical" for "Elektrikal"), so a suggested fix exists |
 
 The app keeps separation of duties: the accountant submits, a different person (the local admin) approves.
 
