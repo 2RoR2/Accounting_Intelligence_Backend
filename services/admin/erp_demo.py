@@ -15,6 +15,7 @@ import calendar
 import json
 import random
 import sys
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from services.admin.demo_company import PACK_ROOT, PACKS, Api, SeedError, issue_tokens, pack_folder, refusal_reason
@@ -28,6 +29,7 @@ PRODUCTS = {  # trading pack: building and office supplies (synthetic prices, RM
                 ("Kertas A4 80gsm (kotak) / A4 paper 80 gsm (box)", "A4-BOX", "115.00", "88.00")],
 }
 SST = Decimal("0.10")  # sales tax on goods in the demo
+KUALA_LUMPUR = timezone(timedelta(hours=8), "Asia/Kuala_Lumpur")
 
 
 def _money(value) -> str:
@@ -45,6 +47,18 @@ class Seeder:
         self.counts = {"created": 0, "skipped": 0, "posted": 0, "scanned_posted": 0, "scanned_skipped": 0}
 
     # -------------------------------------------------------------- setup
+    def ensure_current_period(self, today):
+        code = today.strftime("%Y-%m")
+        year, month, last_day = _month_days(code)
+        start = date(year, month, 1).isoformat()
+        end = date(year, month, last_day).isoformat()
+        periods = self.api.call("local_admin", "GET", "/api/ledger/periods").json()
+        if any(p["periodCode"] == code or (p["startsOn"] <= end and p["endsOn"] >= start) for p in periods):
+            return
+        self.api.call("local_admin", "POST", "/api/ledger/periods", json={
+            "periodCode": code, "startsOn": start, "endsOn": end,
+        })
+
     def accounts(self):
         rows = self.api.call("local_admin", "GET", "/api/ledger/accounts").json()
         return {row["code"]: row for row in rows}
@@ -215,6 +229,8 @@ def seed(key, pack_root=PACK_ROOT, seed_value=20261121):
             for index, code in enumerate(months):
                 seeder.month(index, code, customers, suppliers, products, bank)
                 print(f"  {code}: typed documents done")
+            if key == "trading":
+                seeder.ensure_current_period(datetime.now(KUALA_LUMPUR).date())
             seeder.post_scanned()
             summary = api.call("local_admin", "GET", "/api/home/summary").json()
     finally:
