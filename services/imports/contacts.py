@@ -165,9 +165,15 @@ def apply(db, user, rows) -> dict:
             continue
         values = row["values"]
         if values["type"] == "supplier":
-            vendor = db.execute("""INSERT INTO vendors(tenant_id, vendor_name, registration_number, address)
-                VALUES (%s,%s,%s,%s) RETURNING id""", (tenant_id, values["name"], values["ssm"] or None,
-                                                      values["address"] or None)).fetchone()
+            # The pack's default account becomes the supplier's default expense account when it is an expense
+            # account in this company's chart (scanned bills from the supplier then post there).
+            default_account = db.execute("""SELECT id FROM ledger_accounts WHERE tenant_id=%s AND code=%s
+                AND account_type='expense'""", (tenant_id, values["default_account_code"])).fetchone()                 if values["default_account_code"] else None
+            vendor = db.execute("""INSERT INTO vendors(tenant_id, vendor_name, registration_number, address,
+                    default_expense_account_id)
+                VALUES (%s,%s,%s,%s,%s) RETURNING id""", (tenant_id, values["name"], values["ssm"] or None,
+                                                         values["address"] or None,
+                                                         default_account["id"] if default_account else None)).fetchone()
             details = {key: values[key] for key in ("contact_id", "category", "tin", "sst", "default_account_code", "currency")
                        if values[key]}
             if values["payment_terms_days"]:
