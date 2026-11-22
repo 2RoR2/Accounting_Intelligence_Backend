@@ -87,6 +87,11 @@ def test_pack_imports_into_the_existing_tables(company, pack):
     tenant = user['tenant_id']
     opening_rows = demo_company.read_csv(pack / 'opening_balances.csv')
     with connect() as db:
+        report_fields = {row['code']: (row['statement'], row['report_section'], row['normal_balance'])
+                         for row in db.execute("""SELECT code,statement,report_section,normal_balance
+                             FROM ledger_accounts WHERE tenant_id=%s""", (tenant,)).fetchall()}
+        assert report_fields == {row['code']: (row['statement'], row['report_section'] or None, row['normal_balance'])
+                                 for row in demo_company.read_csv(pack / 'coa.csv')}
         supplier = db.execute("""SELECT v.registration_number, c.email, c.notes FROM vendors v
             JOIN supplier_contacts c ON c.vendor_id=v.id WHERE v.tenant_id=%s ORDER BY v.vendor_name LIMIT 1""", (tenant,)).fetchone()
         assert supplier['registration_number'] and supplier['email'].endswith('.test') and '"tin"' in supplier['notes']
@@ -111,6 +116,31 @@ def test_pack_imports_into_the_existing_tables(company, pack):
     assert nothing_new.value.status_code == 409
     opening_again = import_routes._preview('opening_balances', user, (pack / 'opening_balances.csv').read_bytes())
     assert any('already posted' in error for error in opening_again['fileErrors'])
+
+
+def test_chart_reimport_fills_only_missing_report_sections(company):
+    connect, user = company
+    tenant = user['tenant_id']
+    original = b"""code,name,type,account_class,statement,report_section,normal_balance
+5000,Purchases,expense,cogs,profit_and_loss,,credit
+6000,Rent,expense,expense,profit_and_loss,Existing expenses,debit
+"""
+    run_import(user, 'chart_of_accounts', original)
+    updated = original.replace(b'profit_and_loss,,credit', b'profit_and_loss,Cost of sales,debit')
+    updated = updated.replace(b'Existing expenses', b'New expenses')
+    preview, confirmed = run_import(user, 'chart_of_accounts', updated)
+    assert preview['notStored'] == []
+    assert confirmed['imported'] == 1
+    assert confirmed['chartAccountsCreated'] == confirmed['ledgerAccountsCreated'] == 0
+    with connect() as db:
+        rows = db.execute("""SELECT code,report_section,normal_balance FROM ledger_accounts
+            WHERE tenant_id=%s ORDER BY code""", (tenant,)).fetchall()
+    assert rows == [
+        {'code': '5000', 'report_section': 'Cost of sales', 'normal_balance': 'credit'},
+        {'code': '6000', 'report_section': 'Existing expenses', 'normal_balance': 'debit'},
+    ]
+    again = import_routes._preview('chart_of_accounts', user, updated)
+    assert again['duplicateCount'] == 2 and not again['canConfirm']
 
 
 def test_imports_are_scoped_to_one_company(company, pack):

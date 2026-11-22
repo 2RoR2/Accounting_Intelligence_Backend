@@ -5,6 +5,7 @@ from main import _lock_upload_identity, _processing_error, _lock_workspace_docum
 from decimal import Decimal
 from psycopg.errors import RaiseException, UniqueViolation
 from pydantic import BaseModel, Field
+from services.routes.accounting.journal_sources import JOURNAL_CURRENCY, JOURNAL_CURRENCY_JOINS, OPENING_JOURNAL
 
 class LedgerAccountInput(BaseModel):
     code: str = Field(min_length=1, max_length=40)
@@ -538,39 +539,19 @@ def get_profit_and_loss_dashboard(request: Request, fromDate: date, toDate: date
         raise HTTPException(422, "Granularity must be day, week, or month.")
 
     if basis == "accrual":
-        pnl_sql = """SELECT date_trunc(%s,j.journal_date)::date AS period,
-            COALESCE(sr.currency,settlement.currency,typed.currency,'UNSPECIFIED') AS currency,
+        pnl_sql = f"""SELECT date_trunc(%s,j.journal_date)::date AS period,
+            COALESCE({JOURNAL_CURRENCY},'UNSPECIFIED') AS currency,
             a.account_type,a.code AS account_code,a.name AS account_name,
             SUM(CASE WHEN a.account_type='income' THEN l.credit-l.debit ELSE l.debit-l.credit END) AS amount
             FROM journal_headers j
             JOIN journal_lines l ON l.journal_id=j.id AND l.tenant_id=j.tenant_id
             JOIN ledger_accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
-            LEFT JOIN journal_headers original ON original.id=j.reversed_journal_id AND original.tenant_id=j.tenant_id
-            LEFT JOIN LATERAL (
-                SELECT record.currency
-                FROM standardised_records record
-                WHERE record.tenant_id=j.tenant_id
-                    AND record.document_id=CASE WHEN j.source_type='reversal' THEN original.source_id ELSE j.source_id END
-                    AND COALESCE(original.source_type,j.source_type) IN ('document','adjustment')
-                    AND COALESCE(original.idempotency_key,j.idempotency_key) IN (
-                        'supplier-bill:'||record.id::text||':revision:'||record.revision_number::text,
-                        'customer-invoice:'||record.id::text||':revision:'||record.revision_number::text,
-                        'adjustment:credit_note:'||record.id::text||':revision:'||record.revision_number::text,
-                        'adjustment:debit_note:'||record.id::text||':revision:'||record.revision_number::text)
-                LIMIT 1
-            ) sr ON true
-            LEFT JOIN settlements settlement ON settlement.tenant_id=j.tenant_id
-                AND settlement.id=CASE WHEN j.source_type='reversal' AND original.source_type='settlement'
-                    THEN original.source_id WHEN j.source_type='settlement' THEN j.source_id END
-            -- Plan L4: a typed sales/purchase document (or its reversal) reports in the document's currency.
-            LEFT JOIN erp_document_headers typed ON typed.tenant_id=j.tenant_id
-                AND typed.id=CASE WHEN j.source_type='reversal' AND original.source_type='erp_document'
-                    THEN original.source_id WHEN j.source_type='erp_document' THEN j.source_id END
+            {JOURNAL_CURRENCY_JOINS}
             WHERE j.tenant_id=%s AND j.status IN ('posted','reversed')
                 AND j.journal_date BETWEEN %s AND %s AND a.account_type IN ('income','expense')
-                AND COALESCE(original.idempotency_key,j.idempotency_key) NOT LIKE 'opening-balances:%%'
-            GROUP BY period,COALESCE(sr.currency,settlement.currency,typed.currency,'UNSPECIFIED'),a.account_type,a.code,a.name
-            ORDER BY period,COALESCE(sr.currency,settlement.currency,typed.currency,'UNSPECIFIED'),a.account_type,a.code"""
+                AND NOT ({OPENING_JOURNAL})
+            GROUP BY period,COALESCE({JOURNAL_CURRENCY},'UNSPECIFIED'),a.account_type,a.code,a.name
+            ORDER BY period,currency,a.account_type,a.code"""
         pnl_params = (granularity, user["tenant_id"], fromDate, toDate)
     else:
         pnl_sql = """WITH active_allocations AS (

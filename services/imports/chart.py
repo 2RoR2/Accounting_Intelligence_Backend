@@ -3,12 +3,12 @@
 `coa_accounts` (account_class: asset, liability, equity, revenue, cogs, expense) is used for
 coding documents and bank lines; `ledger_accounts` (account_type: asset, liability, equity,
 income, expense) is what journals post to. One CSV row creates the account in both, with the
-same code and name. The pack's `statement`, `report_section` and `normal_balance` columns are
-checked but not stored: neither table has a column for them (a schema gap for D2 reports).
+same code and name. The ledger also stores the pack's `statement`, `report_section` and
+`normal_balance` columns.
 
-A code that already exists in both lists is a duplicate and is skipped. A code that exists in
-only one list with the same name is added to the other one; with a different name it is a
-duplicate that needs a person to decide.
+A matching existing ledger account can have a missing report section filled. A code that
+exists in only one list with the same name is added to the other one. Other existing codes
+are skipped as duplicates.
 """
 from __future__ import annotations
 
@@ -19,7 +19,6 @@ from .common import preview_token, read_rows, row_result, summary
 KIND = "chart_of_accounts"
 COLUMNS = ["code", "name", "type", "account_class", "statement", "report_section", "normal_balance"]
 REQUIRED = ["code", "name", "type", "account_class"]
-NOT_STORED = ["statement", "report_section", "normal_balance"]
 LEDGER_TYPES = {"asset", "liability", "equity", "income", "expense"}
 CLASS_TYPE = {"asset": "asset", "liability": "liability", "equity": "equity", "revenue": "income",
               "cogs": "expense", "expense": "expense"}
@@ -61,8 +60,7 @@ def parse_chart(content: bytes):
 
 
 def plan_chart(parsed, existing_coa, existing_ledger):
-    """existing_coa maps code -> {"name", "account_class"}, existing_ledger code -> {"name", "account_type"}.
-    Each new row says which list(s) it is added to; an account already in one list must keep its class/type."""
+    """Plan additions to each list and fill missing report sections on matching ledger accounts."""
     first_row = {}
     results = []
     for source_row, values, errors in parsed:
@@ -75,9 +73,20 @@ def plan_chart(parsed, existing_coa, existing_ledger):
         values = {**values, "addTo": []}
         if not errors:
             in_coa, in_ledger = existing_coa.get(code), existing_ledger.get(code)
+            fill_section = (
+                in_ledger and in_ledger.get("report_section") is None and values["report_section"]
+                and in_ledger["name"].casefold() == values["name"].casefold()
+                and in_ledger["account_type"] == values["type"]
+                and (not in_coa or (in_coa["name"].casefold() == values["name"].casefold()
+                                    and in_coa["account_class"] == values["account_class"]))
+            )
+            if fill_section:
+                values["fillReportSection"] = True
+                warnings.append(f"The missing report section for ledger account {code} will be filled.")
             if in_coa and in_ledger:
-                duplicate_of = in_coa["name"]
-                warnings.append(f"Account {code} already exists (\"{duplicate_of}\"); this row is skipped.")
+                if not fill_section:
+                    duplicate_of = in_coa["name"]
+                    warnings.append(f"Account {code} already exists (\"{duplicate_of}\"); this row is skipped.")
             elif in_coa or in_ledger:
                 current = (in_coa or in_ledger)["name"]
                 if current.casefold() != values["name"].casefold():
@@ -103,15 +112,15 @@ def plan_chart(parsed, existing_coa, existing_ledger):
 def _existing(db, tenant_id):
     coa = {r["code"]: {"name": r["name"], "account_class": r["account_class"]} for r in db.execute(
         "SELECT code, name, account_class FROM coa_accounts WHERE tenant_id=%s", (tenant_id,)).fetchall()}
-    ledger = {r["code"]: {"name": r["name"], "account_type": r["account_type"]} for r in db.execute(
-        "SELECT code, name, account_type FROM ledger_accounts WHERE tenant_id=%s", (tenant_id,)).fetchall()}
+    ledger = {r["code"]: r for r in db.execute(
+        "SELECT code, name, account_type, report_section FROM ledger_accounts WHERE tenant_id=%s", (tenant_id,)).fetchall()}
     return coa, ledger
 
 
 def preview(db, tenant_id, content: bytes) -> dict:
     rows = plan_chart(parse_chart(content), *_existing(db, tenant_id))
     body = summary(KIND, preview_token(KIND, tenant_id, content), rows)
-    body["notStored"] = NOT_STORED
+    body["notStored"] = []
     return body
 
 
@@ -127,7 +136,13 @@ def apply(db, user, rows) -> dict:
                                             values["account_class"], user["id"]))
             created["chart"] += 1
         if "ledger" in values["addTo"]:
-            db.execute("""INSERT INTO ledger_accounts(tenant_id, code, name, account_type)
-                VALUES (%s,%s,%s,%s)""", (user["tenant_id"], values["code"], values["name"], values["type"]))
+            db.execute("""INSERT INTO ledger_accounts(tenant_id, code, name, account_type,
+                    statement, report_section, normal_balance)
+                VALUES (%s,%s,%s,%s,%s,%s,%s)""", (user["tenant_id"], values["code"], values["name"], values["type"],
+                values["statement"] or None, values["report_section"] or None, values["normal_balance"] or None))
             created["ledger"] += 1
+        if values.get("fillReportSection"):
+            db.execute("""UPDATE ledger_accounts SET report_section=%s
+                WHERE tenant_id=%s AND code=%s AND report_section IS NULL""",
+                (values["report_section"], user["tenant_id"], values["code"]))
     return {"chartAccountsCreated": created["chart"], "ledgerAccountsCreated": created["ledger"]}

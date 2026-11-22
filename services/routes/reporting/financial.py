@@ -2,11 +2,11 @@
 from __future__ import annotations
 
 import csv
-from calendar import monthrange
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 from io import BytesIO, StringIO
+from urllib.parse import quote
 
 from fastapi import HTTPException, Request, Response
 from fastapi.encoders import jsonable_encoder
@@ -14,45 +14,59 @@ from openpyxl import Workbook
 from openpyxl.styles import Font
 
 from main import _uuid_or_422, connect, require_workspace_user
+from services.routes.accounting.journal_sources import (
+    JOURNAL_CURRENCY,
+    JOURNAL_CURRENCY_JOINS,
+    JOURNAL_SOURCE_TYPE,
+    OPENING_JOURNAL,
+)
 from services.routes.erp.common import money
-from services.routes.erp.posting import DEFAULT_CODES
+from services.routes.erp.posting import DEFAULT_CODES, PURPOSE_TYPES
 from services.routes.home.lanes import APPROVED_RECORD, OPEN_ITEM_KINDS
 
 ZERO = Decimal("0.00")
 BUCKETS = ("current", "1-30", "31-60", "61-90", "90+")
 AGEING_TYPES = {
-    "receivables": ("invoice", "accounts_receivable"),
-    "payables": ("bill", "accounts_payable"),
+    "receivables": ("invoice", "accounts_receivable", "receivable"),
+    "payables": ("bill", "accounts_payable", "payable"),
 }
 TAX_NOTE = "Recorded tax only - not a tax return"
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
-POSTED_LINES = """
+POSTED_LINES = f"""
     FROM journal_headers j
     JOIN journal_lines l ON l.journal_id=j.id AND l.tenant_id=j.tenant_id
     JOIN ledger_accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+    {JOURNAL_CURRENCY_JOINS}
 """
-POSTED_JOURNALS = "j.tenant_id=%(tenant)s AND j.status IN ('posted','reversed')"
+# Journals without a currency-bearing source, including manual and opening entries, use workspace MYR.
+POSTED_JOURNALS = (
+    "j.tenant_id=%(tenant)s AND j.status IN ('posted','reversed')"
+    f" AND COALESCE({JOURNAL_CURRENCY},'MYR')='MYR'"
+)
 
 
 def _account(row):
     return {"accountId": str(row["account_id"]), "code": row["code"], "name": row["name"]}
 
 
-def _account_balances(db, tenant, end, start=None):
+def _account_balances(db, tenant, end, start=None, *, include_opening=True, earnings_start=None):
+    opening_filter = "" if include_opening else f"AND NOT ({OPENING_JOURNAL})"
     return db.execute(f"""SELECT l.account_id,a.code,a.name,a.account_type,a.report_section,
-            SUM(l.debit) AS debit,SUM(l.credit) AS credit
+            SUM(l.debit) AS debit,SUM(l.credit) AS credit,
+            SUM(l.credit-l.debit) FILTER (WHERE j.journal_date<%(earnings_start)s::date) AS prior_earnings
         {POSTED_LINES}
         WHERE {POSTED_JOURNALS}
             AND j.journal_date<=%(end)s AND (%(start)s::date IS NULL OR j.journal_date>=%(start)s)
+            {opening_filter}
         GROUP BY l.account_id,a.code,a.name,a.account_type,a.report_section
-        ORDER BY a.code""", {"tenant": tenant, "start": start, "end": end}).fetchall()
+        ORDER BY a.code""", {"tenant": tenant, "start": start, "end": end, "earnings_start": earnings_start}).fetchall()
 
 
 def _profit_and_loss(db, tenant, start, end):
     totals = {"income": ZERO, "expense": ZERO}
     groups = {}
-    for row in _account_balances(db, tenant, end, start):
+    for row in _account_balances(db, tenant, end, start, include_opening=False):
         kind = row["account_type"]
         if kind not in totals:
             continue
@@ -70,24 +84,31 @@ def _profit_and_loss(db, tenant, start, end):
 def _balance_sheet(db, tenant, end):
     sections = {kind: {"key": key, "label": key.title(), "accounts": [], "total": ZERO}
                 for kind, key in (("asset", "assets"), ("liability", "liabilities"), ("equity", "equity"))}
-    earnings = ZERO
-    for row in _account_balances(db, tenant, end):
+    retained_earnings = current_year_earnings = ZERO
+    # Workspace settings do not define a fiscal-year start.
+    for row in _account_balances(db, tenant, end, earnings_start=date(end.year, 1, 1)):
         kind = row["account_type"]
         net = row["debit"] - row["credit"]
         if kind in {"income", "expense"}:
-            earnings -= net
+            prior = row["prior_earnings"] or ZERO
+            retained_earnings += prior
+            current_year_earnings -= net + prior
             continue
         amount = net if kind == "asset" else -net
         sections[kind]["accounts"].append({**_account(row), "amount": amount})
         sections[kind]["total"] += amount
     equity = sections["equity"]
-    if earnings:
-        equity["accounts"].append({"accountId": "current-year-earnings", "code": "",
-                                   "name": "Current year earnings", "amount": earnings})
-        equity["total"] += earnings
+    equity["accounts"].extend((
+        {"accountId": "retained-earnings", "code": "", "name": "Retained earnings (prior years)",
+         "amount": retained_earnings},
+        {"accountId": "current-year-earnings", "code": "", "name": "Current year earnings",
+         "amount": current_year_earnings},
+    ))
+    equity["total"] += retained_earnings + current_year_earnings
     assets = sections["asset"]["total"]
     liabilities_and_equity = sections["liability"]["total"] + equity["total"]
-    return {"asOf": end, "sections": list(sections.values()), "currentYearEarnings": earnings,
+    return {"asOf": end, "sections": list(sections.values()), "retainedEarnings": retained_earnings,
+            "currentYearEarnings": current_year_earnings,
             "totalAssets": assets, "totalLiabilitiesAndEquity": liabilities_and_equity,
             "balanced": assets == liabilities_and_equity}
 
@@ -133,19 +154,27 @@ def _ageing_bucket(days):
 
 
 def _ageing(db, tenant, end, report_type):
-    document_type, category = AGEING_TYPES[report_type]
-    # Use the document/settlement date to include only allocations dated by the cutoff.
-    # Both workflows keep reversed allocations in their history.
-    rows = db.execute(f"""WITH open_items AS (
+    document_type, category, purpose = AGEING_TYPES[report_type]
+    # Include allocations recorded by the cutoff for payments dated by the cutoff.
+    rows = db.execute(f"""WITH control_account AS (
+            SELECT COALESCE(
+                (SELECT account_id FROM erp_posting_accounts WHERE tenant_id=%(tenant)s AND purpose=%(purpose)s),
+                (SELECT id FROM ledger_accounts WHERE tenant_id=%(tenant)s AND code=%(code)s
+                    AND account_type=%(account_type)s)
+            ) AS id
+        ), open_items AS (
             SELECT 'typed' AS source,h.contact_name,h.document_number,h.document_date,h.due_date,
                 h.total_amount-COALESCE((
                     SELECT SUM(a.amount) FROM erp_document_allocations a
                     JOIN erp_document_headers s ON s.id=a.source_document_id AND s.tenant_id=a.tenant_id
                     WHERE a.tenant_id=h.tenant_id AND a.target_document_id=h.id
-                        AND a.status='active' AND s.document_date<=%(end)s
+                        AND s.document_date<=%(end)s
+                        AND (a.created_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date<=%(end)s
+                        AND (a.reversed_at IS NULL OR (a.reversed_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date>%(end)s)
                 ),0) AS outstanding
             FROM erp_document_headers h
-            WHERE h.tenant_id=%(tenant)s AND h.status='ready' AND h.document_type=%(type)s AND h.currency='MYR'
+            WHERE h.tenant_id=%(tenant)s AND h.document_type=%(type)s AND h.currency='MYR'
+                AND (h.status='ready' OR (h.status='void' AND (h.voided_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date>%(end)s))
             UNION ALL
             SELECT 'scanned',
                 CASE WHEN r.category='accounts_payable' THEN r.supplier_name ELSE r.buyer_name END,
@@ -155,18 +184,37 @@ def _ageing(db, tenant, end, report_type):
                     SELECT SUM(a.amount) FROM settlement_allocations a
                     JOIN settlements s ON s.id=a.settlement_id AND s.tenant_id=a.tenant_id
                     WHERE a.tenant_id=r.tenant_id AND a.record_id=r.id AND a.status='active'
-                        AND s.status='recorded' AND s.settlement_date<=%(end)s
+                        AND s.settlement_date<=%(end)s
+                        AND (a.created_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date<=%(end)s
                         AND NOT EXISTS (SELECT 1 FROM settlement_allocations x
-                            WHERE x.tenant_id=a.tenant_id AND x.reverses_allocation_id=a.id)
+                            WHERE x.tenant_id=a.tenant_id AND x.reverses_allocation_id=a.id
+                                AND (COALESCE(x.reversed_at,x.created_at) AT TIME ZONE 'Asia/Kuala_Lumpur')::date<=%(end)s)
                 ),0)
             FROM standardised_records r
             JOIN documents d ON d.id=r.document_id AND d.tenant_id=r.tenant_id
             WHERE r.tenant_id=%(tenant)s AND {APPROVED_RECORD} AND r.category=%(category)s
                 AND d.kind=ANY(%(kinds)s) AND r.currency='MYR'
+            UNION ALL
+            -- The opening import keeps its contact label in the journal line description.
+            SELECT 'opening',
+                COALESCE(NULLIF(BTRIM(substring(l.description FROM ', contact ([^,]+)')),''),
+                    'Opening balance (not itemised)'),
+                'Opening balance',j.journal_date,NULL,
+                CASE WHEN %(purpose)s='receivable' THEN l.debit-l.credit ELSE l.credit-l.debit END
+            {POSTED_LINES}
+            WHERE {POSTED_JOURNALS} AND {OPENING_JOURNAL} AND j.reversed_journal_id IS NULL
+                AND j.journal_date<=%(end)s AND a.account_type=%(account_type)s
+                AND (l.account_id=(SELECT id FROM control_account)
+                    OR (l.source_field LIKE 'opening_item:%%' AND l.description LIKE %(item_description)s))
+                AND NOT EXISTS (SELECT 1 FROM journal_headers undo
+                    WHERE undo.tenant_id=j.tenant_id AND undo.reversed_journal_id=j.id
+                        AND undo.status='posted' AND undo.journal_date<=%(end)s)
         )
         SELECT * FROM open_items WHERE document_date<=%(end)s AND outstanding>0
         ORDER BY COALESCE(due_date,document_date),document_date,document_number,source,contact_name""",
         {"tenant": tenant, "end": end, "type": document_type, "category": category,
+         "purpose": purpose, "code": DEFAULT_CODES[purpose], "account_type": PURPOSE_TYPES[purpose],
+         "item_description": f"Opening {purpose} %",
          "kinds": list(OPEN_ITEM_KINDS[category])}).fetchall()
     items = []
     totals = dict.fromkeys(BUCKETS, ZERO)
@@ -195,6 +243,7 @@ def _tax_summary(db, tenant, start, end):
         {POSTED_LINES}
         JOIN tax_accounts t ON t.account_id=l.account_id
         WHERE {POSTED_JOURNALS} AND j.journal_date BETWEEN %(start)s AND %(end)s
+            AND {JOURNAL_SOURCE_TYPE} IN ('erp_document','document','adjustment')
         GROUP BY month ORDER BY month""", {"tenant": tenant, "start": start, "end": end,
         "output_code": DEFAULT_CODES["tax_output"], "input_code": DEFAULT_CODES["tax_input"]}).fetchall()
     months = [{"month": r["month"], "outputTax": r["output_tax"], "inputTax": r["input_tax"],
@@ -278,13 +327,16 @@ def _exceptions_sheet(db, tenant, start, end):
         FROM exceptions e
         JOIN documents d ON d.id=e.document_id AND d.tenant_id=e.tenant_id
         WHERE e.tenant_id=%s AND e.status<>'resolved'
-        ORDER BY e.created_at,e.id""", (tenant,)).fetchall()
+            AND (e.created_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date BETWEEN %s AND %s
+        ORDER BY e.created_at,e.id""", (tenant, start, end)).fetchall()
     return Sheet("Open exceptions", f"{start} to {end}", ("Document code", "Type", "Severity", "Message", "Created"),
                  [(r["document_code"], r["type"], r["severity"], r["message"], r["created_at"].isoformat()) for r in rows])
 
 
 def _attachment(filename, content, media_type):
-    return Response(content, media_type=media_type, headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+    encoded = quote(filename, safe="")
+    disposition = f'filename="{filename}"' if encoded == filename else f"filename*=UTF-8''{encoded}"
+    return Response(content, media_type=media_type, headers={"Content-Disposition": f"attachment; {disposition}"})
 
 
 def _text_value(value):
@@ -314,9 +366,9 @@ def _xlsx_export(company, sheets, filename):
         if data.note:
             sheet.append([data.note])
         sheet.append(data.headers)
-        for row in data.rows:
-            sheet.append([v.isoformat() if isinstance(v, date) else v for v in row])
-            for cell, value in zip(sheet[sheet.max_row], row):
+        for row_number, row in enumerate(data.rows, start=4 if data.note else 3):
+            for column, value in enumerate(row, start=1):
+                cell = sheet.cell(row_number, column, value.isoformat() if isinstance(value, date) else value)
                 if isinstance(value, Decimal):
                     cell.number_format = "0.00"
                 elif isinstance(value, str):
@@ -397,20 +449,16 @@ def tax_summary(request: Request, fromDate: str | None = None, toDate: str | Non
 def month_pack(request: Request, period: str | None = None, format: str | None = None):
     tenant = _tenant(request)
     if not period:
-        raise HTTPException(422, "Enter a period in YYYY-MM format.")
+        raise HTTPException(422, "Enter an accounting period code.")
     if format not in (None, "xlsx"):
         raise HTTPException(422, "Choose xlsx for the month-pack format.")
-    try:
-        start = date.fromisoformat(f"{period}-01")
-    except ValueError:
-        raise HTTPException(422, "Enter a valid period in YYYY-MM format.") from None
-    end = start.replace(day=monthrange(start.year, start.month)[1])
     with connect() as db:
         db.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
-        row = db.execute("SELECT id FROM accounting_periods WHERE tenant_id=%s AND period_code=%s",
+        row = db.execute("SELECT starts_on,ends_on FROM accounting_periods WHERE tenant_id=%s AND period_code=%s",
                          (tenant, period)).fetchone()
         if not row:
             raise HTTPException(404, "Accounting period not found.")
+        start, end = row["starts_on"], row["ends_on"]
         company = _company_name(db, tenant)
         sheets = [
             _profit_and_loss_sheet(_profit_and_loss(db, tenant, start, end)),
