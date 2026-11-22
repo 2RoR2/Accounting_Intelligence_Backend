@@ -14,10 +14,12 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 import main
+from database.schema_compatibility import SchemaCompatibilityError, check_runtime_schema
 from services.routes.accounting import routes as accounting
 from services.routes.bank import routes as bank
 from services.routes.documents import routes as documents
 from services.routes.erp import documents as erp
+from services.routes.erp import contacts
 from services.routes.home import routes as home
 from tests.extraction.test_multidocument import contract
 from tests.extraction.test_receipt_line_recovery import receipt
@@ -51,6 +53,7 @@ def database():
     try:
         migrations = [(ROOT / f"database/migrations/{name}.sql").read_text(encoding="utf-8") for name in (
             "20261125_bank_recorded_document", "20261126_bank_recorded_document_void",
+            "20261127_vendor_default_expense_account",
         )]
         schema = (ROOT / "database/PostgreSQL Database schema.sql").read_text(encoding="utf-8-sig")
         for migration in migrations:
@@ -58,9 +61,19 @@ def database():
             schema = schema.replace(migration.strip(), "", 1)
         with connect() as db:
             db.execute(schema)
-            for migration in migrations:
+            for migration in migrations[:-1]:
                 db.execute(migration)
                 db.execute(migration)
+            vendor = db.execute("""INSERT INTO tenants(name,registration_number,admin_email)
+                VALUES ('Upgrade company','upgrade','upgrade@example.test') RETURNING id""").fetchone()["id"]
+            db.execute("INSERT INTO vendors(tenant_id,vendor_name) VALUES (%s,'Existing supplier')", (vendor,))
+            with pytest.raises(SchemaCompatibilityError, match=r"vendors\.default_expense_account_id"):
+                check_runtime_schema(db)
+            db.execute(migrations[-1])
+            db.execute(migrations[-1])
+            check_runtime_schema(db)
+            assert db.execute("SELECT default_expense_account_id FROM vendors WHERE tenant_id=%s",
+                              (vendor,)).fetchone()["default_expense_account_id"] is None
         yield connect
     finally:
         with psycopg.connect(url, autocommit=True) as db:
@@ -97,7 +110,7 @@ def company(database, monkeypatch):
             (own, accounts["1010"], Jsonb({"accountNumber": "123456"})))
         db.execute("INSERT INTO vendors(tenant_id,vendor_name) VALUES (%s,'Triple Six Point Enterprise 666')", (own,))
 
-    for module in (main, accounting, bank, documents, erp, home):
+    for module in (main, accounting, bank, contacts, documents, erp, home):
         monkeypatch.setattr(module, "connect", database)
     monkeypatch.setattr(main, "session_user", lambda db, request: users[request.headers["X-Test-Actor"]])
     client = TestClient(main.app)
@@ -183,6 +196,49 @@ def test_bulk_review_isolated_and_separation_of_duties(company):
         assert {"document.submitted", "document.approved"} <= {row["action"] for row in events}
 
 
+def test_today_lane_lists_include_content_revision(company):
+    connect, tenant, users, _, request = company
+    ready = review_document(company)
+    waiting = review_document(company)
+    ok(request("POST", f"{REVIEW}/bulk-submit", "accountant", json={"items": [waiting]}))
+    with connect() as db:
+        broken = insert_document(db, users["accountant"], status="exception", revision=9)
+        db.execute("""INSERT INTO exceptions(document_id,tenant_id,type,severity,message)
+            VALUES (%s,%s,'open-hold','medium','Check this document.')""", (broken, tenant))
+    for lane, document, revision in (
+        ("ready", ready["documentId"], ready["expectedContentRevision"]),
+        ("to-review", str(broken), 9),
+        ("needs-fixing", str(broken), 9),
+        ("waiting-approval", waiting["documentId"], waiting["expectedContentRevision"]),
+    ):
+        rows = ok(request("GET", f"/api/documents?lane={lane}"))
+        assert all(isinstance(row["contentRevision"], int) for row in rows)
+        assert next(row for row in rows if row["id"] == document)["contentRevision"] == revision
+
+
+@pytest.mark.parametrize("order,printed,field,expected", [
+    ("DMY", "3/4/2026", "date", "2026-04-03"),
+    ("MDY", "3/4/2026", "date", None),
+    ("MDY", "28.2.2026", "date", "2026-02-28"),
+    ("DMY", "2.8.2026 to 31.8.2026", "billing_period", "2026-08-02 to 2026-08-31"),
+    ("DMY", "2-8-2026-30-9-2026", "billing_period", "2026-08-02 to 2026-09-30"),
+    ("DMY", "31/8/2026 - 1/8/2026", "billing_period", None),
+    ("DMY", "1/8/2026 - 31/9/2026", "billing_period", None),
+])
+def test_day_first_fix_respects_date_order_and_validates_range(company, monkeypatch, order, printed, field, expected):
+    connect, tenant, users, _, request = company
+    monkeypatch.setenv("DATE_ORDER", order)
+    with connect() as db:
+        document = insert_document(db, users["accountant"])
+        db.execute("""INSERT INTO validation_results(document_id,tenant_id,content_revision,rule_id,document_type,
+            status,severity,field_key,actual_value,message,prevents_approval)
+            VALUES (%s,%s,1,'BILL-FORMAT','bill','failed','high',%s,%s,'Check date format.',true)""",
+            (document, tenant, field, printed))
+    suggestion, = ok(request("GET", f"/api/documents/{document}/suggested-fixes", "accountant"))
+    assert suggestion["source"] == "rule" and suggestion["suggestedValue"] == expected
+    assert suggestion["explanation"]
+
+
 def test_suggested_fixes_only_use_current_evidence(company):
     connect, tenant, users, _, request = company
     with connect() as db:
@@ -251,6 +307,14 @@ def test_supplier_suggestions_drop_unscoped_saved_matches(company):
     path = f"/api/documents/{document}/suggested-fixes"
     assert ok(request("GET", path, "accountant"))[0]["suggestedValue"] == "Triple Six Point Enterprise 666"
     with connect() as db:
+        second = db.execute("""INSERT INTO vendors(tenant_id,vendor_name)
+            VALUES (%s,'Triple Six Point Enterprize 667') RETURNING id""", (tenant,)).fetchone()["id"]
+    suggestion, = ok(request("GET", path, "accountant"))
+    assert suggestion["suggestedValue"] is None and suggestion["explanation"]
+    with connect() as db:
+        db.execute("UPDATE vendors SET is_active=false WHERE id=%s", (second,))
+    assert ok(request("GET", path, "accountant"))[0]["suggestedValue"] == "Triple Six Point Enterprise 666"
+    with connect() as db:
         corrected = "Unlisted Paper Traders"
         db.execute("UPDATE documents SET content_revision=2 WHERE id=%s", (document,))
         db.execute("""UPDATE field_predictions SET current_value=%s,corrected_by=%s,corrected_at=now()
@@ -269,7 +333,8 @@ def test_supplier_suggestions_drop_unscoped_saved_matches(company):
     assert suggestion["suggestedValue"] is None and suggestion["reason"] and suggestion["explanation"]
 
 
-def insert_record(db, users, *, day=DAY, category="accounts_payable", total="100.00", amount_due=None):
+def insert_record(db, users, *, day=DAY, category="accounts_payable", total="100.00", amount_due=None,
+                  reference=None, vendor_id=None, supplier_name="Supplier"):
     user = users["accountant"]
     tenant = user["tenant_id"]
     kind = "bill" if category == "accounts_payable" else "invoice"
@@ -279,9 +344,10 @@ def insert_record(db, users, *, day=DAY, category="accounts_payable", total="100
     db.execute("""INSERT INTO review_decisions(submission_id,document_id,tenant_id,reviewed_by,decision,approved_content_revision)
         VALUES (%s,%s,%s,%s,'approved',1)""", (submission, document, tenant, users["admin"]["id"]))
     return str(db.execute("""INSERT INTO standardised_records(document_id,tenant_id,category,supplier_name,reference_number,
-        invoice_date,total_amount,amount_due,tax_amount,currency,validation_status,snapshot)
-        VALUES (%s,%s,%s,'Supplier',%s,%s,%s,%s,0,'MYR','passed','{}') RETURNING id""",
-        (document, tenant, category, uuid4().hex, day, total, amount_due)).fetchone()["id"])
+        invoice_date,total_amount,amount_due,tax_amount,currency,validation_status,snapshot,vendor_id)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,0,'MYR','passed','{}',%s) RETURNING id""",
+        (document, tenant, category, supplier_name, reference or uuid4().hex, day, total, amount_due,
+         vendor_id)).fetchone()["id"])
 
 
 def journal(connect, journal_id):
@@ -367,6 +433,41 @@ def test_reversed_scanned_record_can_repost_singly_and_in_bulk(company):
         keys = db.execute("SELECT idempotency_key FROM journal_headers WHERE tenant_id=%s AND source_type='document'",
                           (tenant,)).fetchall()
     assert len(keys) == 3 and sum(":repost:" in row["idempotency_key"] for row in keys) == 2
+
+
+def test_supplier_default_expense_account_through_contacts_preview_and_post(company):
+    connect, tenant, users, accounts, request = company
+    with connect() as db:
+        expense = db.execute("""INSERT INTO ledger_accounts(tenant_id,code,name,account_type)
+            VALUES (%s,'5010','Supplies','expense') RETURNING id""", (tenant,)).fetchone()["id"]
+        foreign = db.execute("""INSERT INTO ledger_accounts(tenant_id,code,name,account_type)
+            VALUES (%s,'5010','Foreign supplies','expense') RETURNING id""",
+            (users["outsider"]["tenant_id"],)).fetchone()["id"]
+    path = "/api/erp/contacts"
+    body = {"kind": "supplier", "legalName": "Preferred supplies", "defaultExpenseAccountId": str(expense)}
+    for bad_id in (foreign, accounts["1010"]):
+        assert request("POST", path, json={**body, "defaultExpenseAccountId": str(bad_id)}).status_code == 422
+    supplier = ok(request("POST", path, json=body), 201)
+    contact = f"{path}/{supplier['id']}"
+    assert ok(request("GET", contact)) == supplier
+    assert supplier in ok(request("GET", f"{path}?kind=supplier"))
+    assert supplier["defaultExpenseAccountCode"] == "5010" and supplier["defaultExpenseAccountName"] == "Supplies"
+    with connect() as db:
+        with pytest.raises(psycopg.errors.ForeignKeyViolation), db.transaction():
+            db.execute("UPDATE vendors SET default_expense_account_id=%s WHERE id=%s", (foreign, supplier["id"]))
+        record = insert_record(db, users, vendor_id=supplier["id"])
+        unlinked = insert_record(db, users, supplier_name="Preferred Supplies.")
+    updated = ok(request("PUT", contact, json={"kind": "supplier", "legalName": body["legalName"]}))
+    assert updated["defaultExpenseAccountId"] == str(expense)
+    preview = ok(request("GET", f"{SCANNED}/{record}/post-preview"))
+    line = preview["lines"][0]
+    assert line["accountId"] == str(expense) and "supplier default" in line["description"]
+    legacy_preview = ok(request("GET", f"{SCANNED}/{unlinked}/post-preview"))
+    assert legacy_preview["lines"][0] == line
+    posted = ok(request("POST", f"{SCANNED}/{record}/post", json={"expectedPlanHash": preview["planHash"]}))
+    assert journal(connect, posted["id"]) == (DAY, preview["lines"])
+    assert ok(request("PUT", contact, json={**body, "defaultExpenseAccountId": None}))["defaultExpenseAccountId"] is None
+    assert ok(request("PUT", contact, json=body))["defaultExpenseAccountId"] == str(expense)
 
 
 def insert_bank_line(company, *, reference="123456", day=DAY, amount="100.00", direction="money_out"):
@@ -498,7 +599,7 @@ def test_record_expense_catalog_closed_period_and_interest(company):
     unknown = insert_bank_line(company, reference="No catalog entry")
     closed = insert_bank_line(company, day=CLOSED)
     missing = request("POST", f"{BANK}/{unknown}/record-expense", json=fee)
-    assert missing.status_code == 422 and missing.json()["detail"] == "Add this bank account in Catalog > Bank accounts first"
+    assert missing.status_code == 422 and missing.json()["detail"] == "Choose the bank account for this statement line."
     assert request("POST", f"{BANK}/{closed}/record-expense", json=fee).status_code == 409
     interest = insert_bank_line(company, reference=" operating account ", amount="3.25", direction="money_in")
     assert request("POST", f"{BANK}/{interest}/record-expense", json=fee).status_code == 422
@@ -508,10 +609,16 @@ def test_record_expense_catalog_closed_period_and_interest(company):
     assert {(line["code"], line["debit"], line["credit"]) for line in journal(connect, result["journalId"])[1]} == {
         ("1010", "3.25", "0.00"), ("4000", "0.00", "3.25")}
     with connect() as db:
-        db.execute("""INSERT INTO erp_catalog_entries(tenant_id,kind,name,code,ledger_account_id)
-            VALUES (%s,'bank-account','123456','ALT',%s)""", (tenant, accounts["1010"]))
+        alternate = db.execute("""INSERT INTO ledger_accounts(tenant_id,code,name,account_type)
+            VALUES (%s,'1011','Alternate bank','asset') RETURNING id""", (tenant,)).fetchone()["id"]
+        account = db.execute("""INSERT INTO erp_catalog_entries(tenant_id,kind,name,code,ledger_account_id)
+            VALUES (%s,'bank-account','123456','ALT',%s) RETURNING id""", (tenant, alternate)).fetchone()["id"]
     ambiguous = insert_bank_line(company)
     assert request("POST", f"{BANK}/{ambiguous}/record-expense", json=fee).json() == missing.json()
+    path = f"{BANK}/{ambiguous}/record-expense"
+    assert request("POST", path, json={**fee, "bankAccountId": str(uuid4())}).status_code == 422
+    chosen = ok(request("POST", path, json={**fee, "bankAccountId": str(account)}), 201)
+    assert journal(connect, chosen["journalId"])[1][1]["accountId"] == str(alternate)
 
 
 def test_match_many_partial_full_rollback_and_tenant_isolation(company):
@@ -568,3 +675,104 @@ def test_match_many_partial_full_rollback_and_tenant_isolation(company):
     assert ok(match((bill_b, "20.00"), expected="80.00"), 201) == {
         "settlementId": first["settlementId"], "allocated": "100.00", "remaining": "0.00", "bankTransactionStatus": "matched",
     }
+
+
+def test_suggestions_include_records_approved_after_statement_import(company):
+    connect, _, users, accounts, request = company
+    imported = ok(request("POST", "/api/bank/imports", json={"sourceBankAccountRef": "123456", "rows": [
+        {"postedDate": DAY, "description": "Supplier payment", "reference": "LATE-1", "debit": "100.00",
+         "currency": "MYR"},
+    ]}), 201)
+    assert imported["candidatesProposed"] == 0
+    line = ok(request("GET", BANK))[0]["id"]
+    path = f"{BANK}/{line}"
+    suggestions_path = "/api/bank/reconciliation/suggestions"
+    assert ok(request("GET", path))["candidates"] == []
+    assert ok(request("GET", suggestions_path))["suggestions"] == []
+    with connect() as db:
+        record = insert_record(db, users, reference="LATE-1")
+    detail = ok(request("GET", path))
+    assert detail["matchStatus"] == "proposed"
+    candidate, = detail["candidates"]
+    suggestion, = ok(request("GET", suggestions_path))["suggestions"]
+    assert suggestion["recordId"] == candidate["recordId"] == record
+    assert suggestion["bankTransactionIds"] == [line] and suggestion["status"] == "MATCHED"
+    assert ok(request("GET", BANK))[0]["candidates"] == [candidate]
+    decision = ok(request("POST", "/api/bank/reconciliation/decisions", "accountant",
+                          json={"candidateId": candidate["id"], "decision": "confirmed",
+                                "expectedRevision": candidate["revision"]}), 201)
+    assert decision["settlementId"]
+    assert ok(request("GET", suggestions_path))["suggestions"] == []
+    period = next(row for row in ok(request("GET", "/api/ledger/periods")) if row["status"] == "open")
+    legacy = ok(request("POST", f"/api/ledger/journals/from-supplier-payment/{line}", json={
+        "periodId": period["id"], "payableAccountId": str(accounts["2000"]),
+        "bankAccountId": str(accounts["1010"]), "journalDate": DAY,
+    }), 201)
+    repeated = ok(request("POST", f"{path}/post-payment", json={}), 201)
+    assert repeated == {"journalId": legacy["id"], "lines": journal(connect, legacy["id"])[1], "idempotent": True}
+
+
+@pytest.mark.parametrize("direction,category,control_code", [
+    ("money_out", "accounts_payable", "2000"),
+    ("money_in", "accounts_receivable", "1100"),
+])
+def test_post_allocated_bank_payment(company, direction, category, control_code):
+    connect, tenant, users, accounts, request = company
+    line = insert_bank_line(company, direction=direction)
+    is_out = direction == "money_out"
+    with connect() as db:
+        special_code = "2001" if is_out else "1101"
+        special = db.execute("""INSERT INTO ledger_accounts(tenant_id,code,name,account_type)
+            VALUES (%s,%s,'Special control',%s) RETURNING id""",
+            (tenant, special_code, "liability" if is_out else "asset")).fetchone()["id"]
+        if not is_out:
+            db.execute("INSERT INTO ledger_accounts(tenant_id,code,name,account_type) VALUES (%s,'1100','Receivables','asset')",
+                       (tenant,))
+        posted_record, fallback, later = [insert_record(db, users, category=category) for _ in range(3)]
+        purpose = "payable" if is_out else "receivable"
+        db.execute("INSERT INTO erp_posting_accounts(tenant_id,purpose,account_id) VALUES (%s,%s,%s)",
+                   (tenant, purpose, special))
+    ok(request("POST", f"{SCANNED}/{posted_record}/post", json={}))
+    with connect() as db:
+        db.execute("DELETE FROM erp_posting_accounts WHERE tenant_id=%s AND purpose=%s", (tenant, purpose))
+    path = f"{BANK}/{line}"
+    payment = f"{path}/post-payment"
+    assert request("POST", payment, json={}).status_code == 409
+
+    def allocate(pairs, expected):
+        return ok(request("POST", f"{path}/match-many", "accountant", json={
+            "expectedAllocated": expected,
+            "allocations": [{"recordId": record, "amount": amount} for record, amount in pairs],
+        }), 201)
+
+    allocate([(posted_record, "30.00"), (fallback, "10.00")], "0.00")
+    detail = ok(request("GET", path))
+    assert detail["matchStatus"] == "partially_matched" and detail["canPostPayment"] and not detail["paymentPosted"]
+    assert not ok(request("GET", path, "accountant"))["canPostPayment"]
+    assert request("POST", payment, "accountant", json={}).status_code == 403
+    closed = request("POST", payment, json={"journalDate": CLOSED})
+    assert closed.status_code == 409 and "closed" in closed.json()["detail"]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        posted, retry = sorted((ok(response, 201) for response in pool.map(
+            lambda _: request("POST", payment, json={}), range(2))), key=lambda result: result["idempotent"])
+    assert not posted["idempotent"] and retry == {**posted, "idempotent": True}
+    assert journal(connect, posted["journalId"]) == (DAY, posted["lines"])
+    amounts = {row["code"]: (row["debit"], row["credit"]) for row in posted["lines"]}
+    assert amounts == ({
+        special_code: ("30.00", "0.00"), control_code: ("10.00", "0.00"), "1010": ("0.00", "40.00"),
+    } if is_out else {
+        "1010": ("40.00", "0.00"), special_code: ("0.00", "30.00"), control_code: ("0.00", "10.00"),
+    })
+    status, = ok(request("GET", f"{BANK}?status=partially_matched"))
+    assert status["paymentPosted"] and not status["canPostPayment"]
+
+    allocate([(later, "60.00")], "40.00")
+    detail = ok(request("GET", path))
+    assert detail["matchStatus"] == "matched" and detail["canPostPayment"] and not detail["paymentPosted"]
+    second = ok(request("POST", payment, json={"journalDate": "2026-08-13"}), 201)
+    assert second["journalId"] != posted["journalId"] and len(second["lines"]) == 2
+    assert journal(connect, second["journalId"])[0] == "2026-08-13"
+    assert ok(request("POST", payment, json={}), 201) == {**second, "idempotent": True}
+    detail = ok(request("GET", path))
+    assert detail["paymentPosted"] and not detail["canPostPayment"]
+    assert str(accounts["1010"]) in {row["accountId"] for row in second["lines"]}

@@ -1,4 +1,5 @@
 """Read-only suggestions drawn from the current extraction and validation findings."""
+import os
 import re
 from datetime import date
 
@@ -8,7 +9,9 @@ from services.extraction.contracts.accounting_contract import FIELD_KEYS, effect
 from services.extraction.contracts.field_catalog import CANONICAL_FIELD_TYPES
 from services.extraction.classification.reconcile_selective import SOURCE_MATCH, SOURCE_ROLE_VERIFIED
 from validation.documents.document_validation import exception_cause
-from validation.matching.vendor_matching import find_vendor_match
+from validation.matching.vendor_matching import FUZZY_MATCH_THRESHOLD, calculate_vendor_similarity
+
+NUMERIC_DATE = r"(?:\d{4}[./-]\d{1,2}[./-]\d{1,2}|\d{1,2}[./-]\d{1,2}[./-]\d{4})"
 
 
 def _alternative(field, prediction):
@@ -39,36 +42,41 @@ def _current_value(prediction):
     return prediction.get("current_value")
 
 
-def _format_date(value):
+def _format_date(value, order):
     match = re.fullmatch(r"(\d{4})([./-])(\d{1,2})\2(\d{1,2})", value or "")
     if match:
         year, month, day = (int(match[i]) for i in (1, 3, 4))
-        orders = ((month, day),)
     else:
         match = re.fullmatch(r"(\d{1,2})([./-])(\d{1,2})\2(\d{4})", value or "")
         if not match:
             return None
-        first, second, year = (int(match[i]) for i in (1, 3, 4))
-        orders = ((first, second), (second, first))
-    dates = set()
-    for month, day in orders:
-        try:
-            dates.add(date(year, month, day).isoformat())
-        except ValueError:
-            continue
-    return next(iter(dates)) if len(dates) == 1 else None
+        day, month, year = (int(match[i]) for i in (1, 3, 4))
+        if order != "DMY" and day <= 12 and day != month:
+            return None
+    try:
+        return date(year, month, day).isoformat()
+    except ValueError:
+        return None
+
+
+def _format_billing_period(value, order):
+    match = re.fullmatch(rf"({NUMERIC_DATE})\s*(?:to|-)\s*({NUMERIC_DATE})", value, re.IGNORECASE)
+    if match:
+        start, end = (_format_date(part, order) for part in match.groups())
+        if start and end and start <= end:
+            return f"{start} to {end}"
+    return None
 
 
 def _supplier_suggestion(db, tenant_id, current):
     # Saved supplier_matches have no extraction or source value. Match the current evidence directly.
     if not current:
         return None
-    vendors = db.execute("SELECT id,vendor_name FROM vendors WHERE tenant_id=%s ORDER BY id",
+    vendors = db.execute("SELECT vendor_name FROM vendors WHERE tenant_id=%s AND is_active",
                          (tenant_id,)).fetchall()
-    match = find_vendor_match(current, vendors)
-    if match["status"] != "NO_MATCH" and match["vendor_name"] != current:
-        return match["vendor_name"]
-    return None
+    matches = [row["vendor_name"] for row in vendors
+               if calculate_vendor_similarity(current, row["vendor_name"]) >= FUZZY_MATCH_THRESHOLD]
+    return matches[0] if len(matches) == 1 and matches[0] != current else None
 
 
 def suggested_fixes(db, user, document_id):
@@ -137,24 +145,29 @@ def suggested_fixes(db, user, document_id):
         source = "rule"
         explanation = f"Check {label.lower()} against the original document and review this finding."
         if canonical == "supplier" and (cause == "UNKNOWN_VENDOR" or value is None):
-            current = _current_value(prediction) if prediction else finding["actual_value"]
+            current = _current_value(prediction) or finding["actual_value"] or prediction.get("raw_value")
             match = _supplier_suggestion(db, tenant_id, current)
             if match:
                 suggestions.append({"field": field, "label": label, "reason": reason, "suggestedValue": match,
                                     "source": "supplier-match", "explanation": "Compare the matched catalog supplier with the original document."})
                 continue
-            explanation = "No replacement was verified for the current supplier name. Check it against the supplier catalog."
+            explanation = "The current name did not identify a unique supplier replacement. Check it against the supplier catalog."
+            value = None
         if value is not None:
             source = "candidate"
             explanation = "The extraction found this alternative. Verify it against the original document."
-        elif cause == "INVALID_FORMAT" and (canonical in {"date", "due"} or CANONICAL_FIELD_TYPES.get(canonical) == "date"):
-            original = _current_value(prediction) or finding["actual_value"] or prediction.get("raw_value")
-            value = _format_date(original)
+        elif cause == "INVALID_FORMAT" and (canonical in {"date", "due", "billing_period"} or
+                                            CANONICAL_FIELD_TYPES.get(canonical) == "date"):
+            original = (_current_value(prediction) or finding["actual_value"] or prediction.get("raw_value") or "").strip()
+            order = os.getenv("DATE_ORDER", "DMY").strip().upper() or "DMY"
+            is_period = canonical == "billing_period"
+            value = _format_billing_period(original, order) if is_period else _format_date(original, order)
+            format_hint = "YYYY-MM-DD to YYYY-MM-DD" if is_period else "YYYY-MM-DD"
             if value and value != original:
-                explanation = "The same date can be written in YYYY-MM-DD format."
+                explanation = f"The printed {label.lower()} can be written as {format_hint}."
             else:
                 value = None
-                explanation = "Check the date on the original document and enter it in YYYY-MM-DD format."
+                explanation = f"Check {label.lower()} on the original document and enter it as {format_hint}."
         suggestions.append({"field": field, "label": label, "reason": reason, "suggestedValue": value,
                             "source": source, "explanation": explanation})
     return suggestions

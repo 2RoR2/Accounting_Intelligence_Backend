@@ -1,8 +1,10 @@
 from __future__ import annotations
 from decimal import Decimal
 from services.routes.accounting.routes import (
+    bank_payment_state,
     get_or_create_bank_settlement,
     mark_bank_line_matched,
+    post_allocated_bank_payment,
     record_settlement_allocation,
     require_no_posted_settlement_journal,
     settlement_allocated,
@@ -23,7 +25,12 @@ from validation.transactions.transaction_anomaly import detect_transaction_anoma
 
 class BankExpenseInput(BaseModel):
     ledgerAccountId: str
+    bankAccountId: str | None = None
     description: str | None = Field(default=None, max_length=4000)
+
+
+class BankPaymentInput(BaseModel):
+    journalDate: date | None = None
 
 
 class BankMatchAllocationInput(BaseModel):
@@ -266,36 +273,65 @@ def _bank_transaction_anomaly(db, row, bank_account_ref):
     return _save_bank_transaction_anomaly(db, row, _calculate_bank_transaction_anomaly(db, row, bank_account_ref))
 
 
-BANK_TRANSACTION_READ = """SELECT t.*,i.source_bank_account_ref,COALESCE(allocation.allocated,0) AS allocated,
+BANK_TRANSACTION_READ = """SELECT t.*,i.source_bank_account_ref,s.id AS settlement_id,COALESCE(allocation.allocated,0) AS allocated,
         h.id AS recorded_id,h.document_number AS recorded_number,h.document_type AS recorded_type
     FROM bank_transactions t JOIN bank_imports i ON i.id=t.import_id AND i.tenant_id=t.tenant_id
     LEFT JOIN erp_document_headers h ON h.id=t.recorded_document_id AND h.tenant_id=t.tenant_id
         AND h.status<>'void' AND h.document_type IN ('money-in','money-out')
+    LEFT JOIN settlements s ON s.tenant_id=t.tenant_id AND s.source_type='bank_import'
+        AND s.source_id=t.id AND s.status='recorded'
     LEFT JOIN LATERAL (
-        SELECT SUM(a.amount) AS allocated FROM settlements s
-        JOIN settlement_allocations a ON a.settlement_id=s.id AND a.tenant_id=s.tenant_id
-        WHERE s.tenant_id=t.tenant_id AND s.source_type='bank_import' AND s.source_id=t.id AND s.status='recorded'
-            AND a.status='active' AND NOT EXISTS (SELECT 1 FROM settlement_allocations undo
+        SELECT SUM(a.amount) AS allocated FROM settlement_allocations a
+        WHERE a.settlement_id=s.id AND a.tenant_id=s.tenant_id AND a.status='active'
+            AND NOT EXISTS (SELECT 1 FROM settlement_allocations undo
                 WHERE undo.tenant_id=a.tenant_id AND undo.reverses_allocation_id=a.id)
     ) allocation ON TRUE"""
 
 
-def _bank_transaction_response(db, row):
-    result = _bank_transaction_dto(row)
-    coding = db.execute("""SELECT c.account_id, c.cost_centre_id, c.decision, c.reason
-        FROM bank_coding_decisions c
-        WHERE c.bank_transaction_id=%s AND c.tenant_id=%s
-        ORDER BY c.created_at DESC, c.id DESC LIMIT 1""", (row['id'], row['tenant_id'])).fetchone()
-    candidates = db.execute("""SELECT c.id, c.record_id, c.status, c.reason_codes,
+def _bank_candidates(db, row, records_by_tenant):
+    tenant_id = row["tenant_id"]
+    can_review = row["status"] in {"imported", "proposed"} and not row["allocated"]
+    if can_review and row["posted_date"] and row["signed_amount_decimal"] and row["reference"]:
+        if tenant_id not in records_by_tenant:
+            by_amount = {}
+            for record in _eligible_records(db, tenant_id):
+                by_amount.setdefault(record["total_amount"], []).append(record)
+            records_by_tenant[tenant_id] = by_amount
+        transaction = {
+            "amount": abs(row["signed_amount_decimal"]), "signed": row["signed_amount_decimal"],
+            "direction": row["direction"], "currency": row["currency"], "reference": row["reference"],
+        }
+        matches = _matching_records(row["id"], transaction, records_by_tenant[tenant_id].get(transaction["amount"], []))
+        if matches:
+            current = db.execute("""SELECT status FROM bank_transactions
+                WHERE tenant_id=%s AND id=%s FOR NO KEY UPDATE""", (tenant_id, row["id"])).fetchone()
+            can_review = current and current["status"] in {"imported", "proposed"}
+            if can_review:
+                settlement = _existing_bank_settlement(db, row)
+                can_review = not settlement or not settlement_allocated(db, tenant_id, settlement["id"])
+            if can_review:
+                row["status"] = "proposed" if _save_candidates(db, tenant_id, row["id"], matches) else current["status"]
+    return db.execute("""SELECT c.id, c.record_id, c.status, c.reason_codes,
             c.amount_delta_decimal, c.date_delta_days, c.score_components,
             r.record_code, r.document_id, r.revision_number, r.category,
-            r.reference_number, r.supplier_name, r.buyer_name, r.currency, r.total_amount,
+            COALESCE(r.reference_number,r.invoice_number) AS reference_number,
+            r.supplier_name, r.buyer_name, r.currency, r.total_amount,
             d.document_code
         FROM reconciliation_candidates c
         JOIN standardised_records r ON r.id=c.record_id AND r.tenant_id=c.tenant_id
         LEFT JOIN documents d ON d.id=r.document_id AND d.tenant_id=r.tenant_id
         WHERE c.bank_transaction_id=%s AND c.tenant_id=%s
-        ORDER BY c.created_at DESC, c.id DESC""", (row['id'], row['tenant_id'])).fetchall()
+            AND (c.status<>'proposed' OR (%s AND r.is_current AND r.validation_status='passed'))
+        ORDER BY c.created_at DESC, c.id DESC""", (row["id"], tenant_id, bool(can_review))).fetchall()
+
+
+def _bank_transaction_response(db, row, records_by_tenant, user):
+    coding = db.execute("""SELECT c.account_id, c.cost_centre_id, c.decision, c.reason
+        FROM bank_coding_decisions c
+        WHERE c.bank_transaction_id=%s AND c.tenant_id=%s
+        ORDER BY c.created_at DESC, c.id DESC LIMIT 1""", (row['id'], row['tenant_id'])).fetchone()
+    candidates = _bank_candidates(db, row, records_by_tenant)
+    result = _bank_transaction_dto(row)
     mapped = [{"id": str(c['id']), "recordId": str(c['record_id']),
         "recordCode": c['record_code'], "documentId": str(c['document_id']) if c['document_id'] else None,
         "documentCode": c['document_code'], "revision": c['revision_number'],
@@ -309,6 +345,7 @@ def _bank_transaction_response(db, row):
     proposed = next((c for c in mapped if c['status'] == 'proposed'), None)
     amount = abs(row['signed_amount_decimal'] or Decimal(0))
     allocated = row['allocated']
+    payment_posted, can_post = bank_payment_state(db, row["tenant_id"], row["settlement_id"]) if allocated else (False, False)
     result.update({"matchStatus": {"matched": "matched", "proposed": "proposed", "ignored": "ignored"}.get(row['status'], "unmatched"),
         "anomaly": _bank_transaction_anomaly(db, row, row['source_bank_account_ref']),
         "accountId": str(coding['account_id']) if coding and coding['account_id'] else None,
@@ -326,6 +363,9 @@ def _bank_transaction_response(db, row):
         "candidates": mapped,
         "allocatedAmount": money(allocated),
         "remainingAmount": money(max(amount - allocated, Decimal(0))),
+        "paymentPosted": payment_posted,
+        "canPostPayment": can_post and user["role"] == "local_admin" and row["status"] != "ignored"
+                          and row["recorded_id"] is None,
         "recordedDocumentId": str(row['recorded_id']) if row['recorded_id'] else None,
         "recordedDocumentNumber": row['recorded_number'],
         "recordedDocumentType": row['recorded_type']})
@@ -348,9 +388,10 @@ def list_bank_transactions(request: Request, direction: str | None = None, statu
                 AND (%s::text IS NULL OR t.status=%s::text OR (%s='partially_matched'
                     AND t.status IN ('imported','needs_review','proposed')
                     AND allocation.allocated>0 AND allocation.allocated<ABS(t.signed_amount_decimal)))
-            ORDER BY t.posted_date DESC NULLS LAST, t.source_row DESC""",
+            ORDER BY t.posted_date DESC NULLS LAST, t.source_row DESC, t.id""",
             (scope, scope, direction, direction, status, status, status)).fetchall()
-        return [_bank_transaction_response(db, row) for row in rows]
+        records_by_tenant = {}
+        return [_bank_transaction_response(db, row, records_by_tenant, user) for row in rows]
 
 def list_bank_imports(request: Request):
     user = require_workspace_user(request, {"super_admin", "local_admin", "accountant"})
@@ -367,23 +408,31 @@ def list_bank_imports(request: Request):
 MAX_STATEMENT_BYTES = 5 * 1024 * 1024
 
 
-def _propose_candidates(db, tenant_id, transaction_id, row, records):
-    """Exact candidates for one imported row. Each still needs a person to confirm it."""
-    proposed = 0
+def _matching_records(transaction_id, row, records):
     transaction = {'transaction_id': str(transaction_id), 'amount': row['amount'], 'signed_amount_decimal': row['signed'],
                    'direction': row['direction'], 'currency': row['currency'], 'reference': row['reference']}
-    for record in records:
-        match = find_bank_match_candidates(dict(record), [transaction])
-        if match['status'] != 'MATCHED':
-            continue
-        candidate = db.execute("""INSERT INTO reconciliation_candidates
-            (tenant_id,bank_transaction_id,record_id,reason_codes,proposed_by)
-            VALUES (%s,%s,%s,%s,'rules') ON CONFLICT (bank_transaction_id,record_id) DO NOTHING
-            RETURNING id""", (tenant_id, transaction_id, record['record_id'],
-            Jsonb(['EXACT_AMOUNT', 'CURRENCY_MATCH', 'REFERENCE_MATCH', 'DIRECTION_MATCH']))).fetchone()
-        if candidate:
-            proposed += 1
-    return proposed
+    return [record['record_id'] for record in records if find_bank_match_candidates(record, [transaction])['status'] == 'MATCHED']
+
+
+def _save_candidates(db, tenant_id, transaction_id, record_ids):
+    if not record_ids:
+        return 0
+    rows = db.execute("""INSERT INTO reconciliation_candidates
+        (tenant_id,bank_transaction_id,record_id,reason_codes,proposed_by)
+        SELECT r.tenant_id,%s,r.id,%s,'rules' FROM standardised_records r
+        WHERE r.tenant_id=%s AND r.id=ANY(%s) AND r.is_current AND r.validation_status='passed'
+          AND NOT EXISTS (SELECT 1 FROM reconciliation_candidates c WHERE c.tenant_id=r.tenant_id
+            AND c.bank_transaction_id=%s AND c.record_id=r.id)
+        ORDER BY r.id FOR SHARE OF r
+        ON CONFLICT (bank_transaction_id,record_id) DO NOTHING RETURNING id""",
+        (transaction_id, Jsonb(['EXACT_AMOUNT', 'CURRENCY_MATCH', 'REFERENCE_MATCH', 'DIRECTION_MATCH']),
+         tenant_id, record_ids, transaction_id)).fetchall()
+    return len(rows)
+
+
+def _propose_candidates(db, tenant_id, transaction_id, row, records):
+    """Exact candidates for one imported row. Each still needs a person to confirm it."""
+    return _save_candidates(db, tenant_id, transaction_id, _matching_records(transaction_id, row, records))
 
 
 def _eligible_records(db, tenant_id):
@@ -638,6 +687,24 @@ def _require_unmatched_bank_line(bank):
         raise HTTPException(422, "The bank transaction needs a direction, date, currency and amount.")
 
 
+def _statement_catalog_account(db, bank, catalog_id=None):
+    tenant_id = bank["tenant_id"]
+    if catalog_id is not None:
+        catalog_id = _uuid_or_422(catalog_id, "bank account id")
+        if not db.execute("""SELECT id FROM erp_catalog_entries
+            WHERE tenant_id=%s AND id=%s AND kind='bank-account' AND is_active FOR SHARE""",
+                          (tenant_id, catalog_id)).fetchone():
+            raise HTTPException(422, "Choose an active bank account for this company.")
+        return catalog_id
+    matches = db.execute("""SELECT id FROM erp_catalog_entries
+        WHERE tenant_id=%s AND kind='bank-account' AND is_active
+          AND lower(%s) IN (lower(btrim(data->>'accountNumber')), lower(btrim(code)), lower(btrim(name)))
+        LIMIT 2 FOR SHARE""", (tenant_id, bank["source_bank_account_ref"].strip())).fetchall()
+    if len(matches) != 1:
+        raise HTTPException(422, "Choose the bank account for this statement line.")
+    return matches[0]["id"]
+
+
 def record_bank_expense(transaction_id: str, data: BankExpenseInput, request: Request):
     from services.routes.erp import documents, posting
 
@@ -646,6 +713,8 @@ def record_bank_expense(transaction_id: str, data: BankExpenseInput, request: Re
     transaction_id = _uuid_or_422(transaction_id, "transaction id")
     with connect() as db:
         bank = _lock_statement_line(db, tenant_id, transaction_id)
+        catalog_id = (_statement_catalog_account(db, bank, data.bankAccountId)
+                      if data.bankAccountId is not None else None)
         if bank["recorded_document_id"]:
             document = db.execute("""SELECT id,document_number,journal_id FROM erp_document_headers
                 WHERE id=%s AND tenant_id=%s""", (bank["recorded_document_id"], tenant_id)).fetchone()
@@ -656,24 +725,30 @@ def record_bank_expense(transaction_id: str, data: BankExpenseInput, request: Re
                 if settlement_allocated(db, tenant_id, settlement["id"]):
                     raise HTTPException(409, "Undo the existing allocations before recording this bank transaction.")
                 require_no_posted_settlement_journal(db, tenant_id, settlement["id"])
-            ref = bank["source_bank_account_ref"].strip()
-            matches = db.execute("""SELECT id FROM erp_catalog_entries
-                WHERE tenant_id=%s AND kind='bank-account' AND is_active
-                  AND lower(%s) IN (lower(btrim(data->>'accountNumber')), lower(btrim(code)), lower(btrim(name)))
-                LIMIT 2""", (tenant_id, ref)).fetchall()
-            if len(matches) != 1:
-                raise HTTPException(422, "Add this bank account in Catalog > Bank accounts first")
+            catalog_id = catalog_id or _statement_catalog_account(db, bank)
             expected = "expense" if bank["direction"] == "money_out" else "income"
             account = posting.ledger_account(db, tenant_id, data.ledgerAccountId, expected=expected, label=expected)
             description = (data.description or "").strip() or bank["description"][:4000] or (
                 "Bank expense" if expected == "expense" else "Bank interest")
-            document = documents.create_document_from_bank(db, user, bank, matches[0]["id"], account["id"], description)
+            document = documents.create_document_from_bank(db, user, bank, catalog_id, account["id"], description)
             mark_bank_line_matched(db, bank, document_id=document["id"])
             _bank_audit(db, user, "bank.expense_recorded", transaction_id,
                         {"documentId": document["id"], "journalId": document["journal_id"],
                          "ledgerAccountId": account["id"], "direction": bank["direction"]})
     return {"documentId": str(document["id"]), "documentNumber": document["document_number"],
             "journalId": str(document["journal_id"]), "bankTransactionStatus": "matched"}
+
+
+def post_bank_payment(transaction_id: str, request: Request, data: BankPaymentInput | None = None):
+    user = require_workspace_user(request, {"local_admin"})
+    transaction_id = _uuid_or_422(transaction_id, "transaction id")
+    with connect() as db:
+        bank = _lock_statement_line(db, user["tenant_id"], transaction_id)
+        settlement = _existing_bank_settlement(db, bank, lock=True)
+        return post_allocated_bank_payment(
+            db, user, bank, settlement, data.journalDate if data else None,
+            lambda: _statement_catalog_account(db, bank),
+        )
 
 
 def match_bank_transaction_many(transaction_id: str, data: BankMatchManyInput, request: Request):
@@ -700,7 +775,7 @@ def match_bank_transaction_many(transaction_id: str, data: BankMatchManyInput, r
             if (settlement["amount"] != abs(bank["signed_amount_decimal"]) or settlement["direction"] != bank["direction"]
                     or settlement["currency"] != bank["currency"]):
                 raise HTTPException(409, "The bank transaction and settlement details do not agree.")
-            require_no_posted_settlement_journal(db, tenant_id, settlement_id)
+            require_no_posted_settlement_journal(db, tenant_id, settlement_id, allow_payment_batches=True)
             total = allocated + sum(allocations.values(), Decimal(0))
             remaining = settlement["amount"] - total
             if remaining < 0:
@@ -730,29 +805,30 @@ def match_bank_transaction_many(transaction_id: str, data: BankMatchManyInput, r
 def list_reconciliation_suggestions(request: Request):
     """Suggest exact reference/amount/currency matches for human review."""
     user = require_workspace_user(request, {"super_admin", "local_admin", "accountant"})
+    scope = tenant_scope(user)
+    grouped = {}
+    records_by_tenant = {}
     with connect() as db:
-        records = db.execute("""SELECT id AS record_id, document_id, category, COALESCE(reference_number, invoice_number) AS reference_number,
-                total_amount, currency, revision_number
-            FROM standardised_records
-            WHERE tenant_id=%s AND is_current=true AND validation_status='passed'
-            ORDER BY created_at, id""", (user["tenant_id"],)).fetchall()
-        transactions = db.execute("""SELECT id AS transaction_id, abs(signed_amount_decimal) AS amount,
-                signed_amount_decimal, reference, currency, direction, status
-            FROM bank_transactions WHERE tenant_id=%s AND status='imported'
-            ORDER BY posted_date, source_row""", (user["tenant_id"],)).fetchall()
-    output = []
-    for record in records:
-        match = find_bank_match_candidates(dict(record), [dict(row) for row in transactions])
-        if match['status'] == 'UNMATCHED':
-            continue
-        output.append({"recordId": str(record['record_id']), "documentId": str(record['document_id']),
-            "revision": record['revision_number'], "category": record['category'],
-            "referenceNumber": record['reference_number'],
-            "totalAmount": str(record['total_amount']) if record['total_amount'] is not None else None,
-            "currency": record['currency'], "status": match['status'],
-            "bankTransactionIds": [str(value) for value in match['candidates']],
-            "reason": match['reason']})
-    return {"suggestions": output, "humanConfirmationRequired": True}
+        transactions = db.execute(BANK_TRANSACTION_READ + """ WHERE i.status='confirmed'
+            AND (%s::uuid IS NULL OR t.tenant_id=%s) AND t.status IN ('imported','proposed')
+            ORDER BY t.posted_date DESC NULLS LAST, t.source_row DESC, t.id""", (scope, scope)).fetchall()
+        for transaction in transactions:
+            for record in _bank_candidates(db, transaction, records_by_tenant):
+                if record["status"] != "proposed":
+                    continue
+                item = grouped.setdefault(record["record_id"], {
+                    "recordId": str(record["record_id"]), "documentId": str(record["document_id"]),
+                    "revision": record["revision_number"], "category": record["category"],
+                    "referenceNumber": record["reference_number"], "currency": record["currency"],
+                    "totalAmount": str(record["total_amount"]) if record["total_amount"] is not None else None,
+                    "bankTransactionIds": [],
+                })
+                item["bankTransactionIds"].append(str(transaction["id"]))
+    for item in grouped.values():
+        unique = len(item["bankTransactionIds"]) == 1
+        item.update(status="MATCHED" if unique else "REVIEW_REQUIRED",
+                    reason=None if unique else "MULTIPLE_MATCH_CANDIDATES")
+    return {"suggestions": list(grouped.values()), "humanConfirmationRequired": True}
 
 def decide_reconciliation(data: ReconciliationDecisionInput, request: Request):
     user = require_workspace_user(request, {"local_admin", "accountant"})
@@ -838,7 +914,7 @@ def get_bank_transaction(transaction_id: str, request: Request):
             (transaction_id, tenant_scope(user), tenant_scope(user))).fetchone()
         if not row:
             raise HTTPException(404, "Bank transaction not found.")
-        result = _bank_transaction_response(db, row)
+        result = _bank_transaction_response(db, row, {}, user)
         # The payable account the matched bill was posted to: the supplier payment must debit it.
         payable = db.execute("""SELECT l.account_id FROM reconciliation_candidates c
             JOIN standardised_records r ON r.id=c.record_id AND r.tenant_id=c.tenant_id
@@ -932,6 +1008,7 @@ def register(router, handlers):
     router.add_api_route('/api/bank/transactions/{transaction_id}', ignore_bank_transaction, methods=['DELETE'])
     router.add_api_route('/api/bank/transactions/{transaction_id}/coding', code_bank_transaction, methods=['POST'], status_code=201)
     router.add_api_route('/api/bank/transactions/{transaction_id}/record-expense', record_bank_expense, methods=['POST'], status_code=201)
+    router.add_api_route('/api/bank/transactions/{transaction_id}/post-payment', post_bank_payment, methods=['POST'], status_code=201)
     router.add_api_route('/api/bank-transactions/{transaction_id}/coding', code_bank_transaction, methods=['POST'], status_code=201)
     router.add_api_route('/api/bank/transactions/{transaction_id}/coding', clear_bank_transaction_coding, methods=['DELETE'])
     router.add_api_route('/api/bank-transactions/{transaction_id}/coding', clear_bank_transaction_coding, methods=['DELETE'])

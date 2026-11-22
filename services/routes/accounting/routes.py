@@ -7,6 +7,9 @@ from psycopg.errors import RaiseException, UniqueViolation
 from pydantic import BaseModel, Field
 from services.routes.accounting.journal_sources import JOURNAL_CURRENCY, JOURNAL_CURRENCY_JOINS, OPENING_JOURNAL
 
+BANK_PAYMENT_KEY_PREFIX = "bank-payment:"
+BANK_ALLOCATION_SOURCE_PREFIX = "bank-allocation:"
+
 class LedgerAccountInput(BaseModel):
     code: str = Field(min_length=1, max_length=40)
     name: str = Field(min_length=1, max_length=200)
@@ -166,7 +169,7 @@ def post_journal(data: JournalInput, request: Request):
     with connect() as db:
         return record_journal(db, user, data)
 
-def record_journal(db, user, data: JournalInput):
+def record_journal(db, user, data: JournalInput, *, bank_payment_batch=False):
     """Post one balanced journal inside the caller's transaction (also used by the opening-balances import)."""
     debits = sum((line.debit for line in data.lines), Decimal("0"))
     credits = sum((line.credit for line in data.lines), Decimal("0"))
@@ -174,6 +177,8 @@ def record_journal(db, user, data: JournalInput):
         raise HTTPException(422, "Journal must have equal non-zero debit and credit totals.")
     period_id = _uuid_or_422(data.periodId, "period id")
     source_id = _uuid_or_422(data.sourceId, "source id") if data.sourceId else None
+    if not bank_payment_batch and data.idempotencyKey.startswith(BANK_PAYMENT_KEY_PREFIX):
+        raise HTTPException(422, "This journal key is reserved for bank payment posting.")
     if data.sourceType == "settlement":
         settlement = db.execute("SELECT id,source_type,source_id FROM settlements WHERE id=%s AND tenant_id=%s FOR UPDATE",
                                 (source_id, user["tenant_id"])).fetchone()
@@ -187,7 +192,9 @@ def record_journal(db, user, data: JournalInput):
         linked = db.execute("""SELECT id,idempotency_key FROM journal_headers
             WHERE tenant_id=%s AND source_type='settlement' AND source_id=%s AND status='posted'""",
             (user["tenant_id"], source_id)).fetchall()
-        if any(journal["idempotency_key"] != data.idempotencyKey for journal in linked):
+        if any(journal["idempotency_key"] != data.idempotencyKey
+               and not (bank_payment_batch and journal["idempotency_key"].startswith(BANK_PAYMENT_KEY_PREFIX))
+               for journal in linked):
             raise HTTPException(409, "A journal already records this settlement.")
     key_query = "SELECT id,status,source_type,source_id FROM journal_headers WHERE tenant_id=%s AND idempotency_key=%s"
     key_params = (user["tenant_id"], data.idempotencyKey)
@@ -255,7 +262,113 @@ def post_supplier_bill(record_id: str, data: SupplierBillPostingInput, request: 
     result.update({"recordId": record_id, "documentId": str(record["document_id"]), "revision": record["revision_number"], "sourceCurrency": record["currency"]})
     return result
 
+def _post_settlement_payment(db, user, payload, transaction_id, *, money_out, details, bank_payment_batch=False):
+    result = record_journal(db, user, payload, bank_payment_batch=bank_payment_batch)
+    if not result["idempotent"]:
+        action = "ledger.supplier_payment_posted" if money_out else "ledger.customer_payment_posted"
+        db.execute("""INSERT INTO audit_logs(tenant_id,user_id,user_name,role,action,resource,details)
+            VALUES (%s,%s,%s,%s,%s,%s,%s)""",
+            (user["tenant_id"], user["id"], user["name"], user["role"], action, result["id"],
+             json.dumps({"transactionId": str(transaction_id), "settlementId": payload.sourceId, **details})))
+    return result
+
+
+def _payment_journal_lines(db, tenant_id, journal_id):
+    from services.routes.erp.common import money
+
+    rows = db.execute("""SELECT l.account_id,a.code,a.name,l.description,l.debit,l.credit
+        FROM journal_lines l JOIN ledger_accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+        WHERE l.tenant_id=%s AND l.journal_id=%s ORDER BY l.line_number""", (tenant_id, journal_id)).fetchall()
+    return [{"accountId": str(row["account_id"]), "code": row["code"], "name": row["name"],
+             "description": row["description"], "debit": money(row["debit"]), "credit": money(row["credit"])}
+            for row in rows]
+
+
+def _payment_allocations(db, tenant_id, settlement_id):
+    # Legacy settlement journals cover the whole settlement. Batch journals identify each covered allocation.
+    return db.execute("""SELECT a.id,a.amount,r.document_id,r.category,EXISTS (
+            SELECT 1 FROM journal_headers j
+            WHERE j.tenant_id=a.tenant_id AND j.source_type='settlement' AND j.source_id=a.settlement_id
+              AND j.status='posted' AND (NOT starts_with(j.idempotency_key,%s) OR EXISTS (
+                SELECT 1 FROM journal_lines l WHERE l.tenant_id=j.tenant_id AND l.journal_id=j.id
+                    AND l.source_field=%s || a.id::text
+              ))) AS posted
+        FROM settlement_allocations a
+        JOIN standardised_records r ON r.id=a.record_id AND r.tenant_id=a.tenant_id
+        WHERE a.tenant_id=%s AND a.settlement_id=%s AND a.status='active'
+          AND NOT EXISTS (SELECT 1 FROM settlement_allocations undo
+                WHERE undo.tenant_id=a.tenant_id AND undo.reverses_allocation_id=a.id)
+        ORDER BY a.created_at,a.id""", (BANK_PAYMENT_KEY_PREFIX, BANK_ALLOCATION_SOURCE_PREFIX,
+                                        tenant_id, settlement_id)).fetchall()
+
+
+def bank_payment_state(db, tenant_id, settlement_id):
+    allocations = _payment_allocations(db, tenant_id, settlement_id) if settlement_id else []
+    pending = any(not row["posted"] for row in allocations)
+    return bool(allocations) and not pending, pending
+
+
+def post_allocated_bank_payment(db, user, bank, settlement, journal_date, resolve_bank_account):
+    from services.routes.erp import posting
+
+    tenant_id = user["tenant_id"]
+    if not settlement or settlement["status"] != "recorded" or bank["status"] == "ignored" or bank["recorded_document_id"]:
+        raise HTTPException(409, "Match this bank line to a record before posting its payment.")
+    if (settlement["amount"] != abs(bank["signed_amount_decimal"] or 0)
+            or settlement["direction"] != bank["direction"] or settlement["currency"] != bank["currency"]):
+        raise HTTPException(409, "The bank transaction and settlement details do not agree.")
+    settlement_id = settlement["id"]
+    # The caller locks the bank line and settlement. Lock posted journals against concurrent reversal.
+    journals = db.execute("""SELECT id FROM journal_headers
+        WHERE tenant_id=%s AND source_type='settlement' AND source_id=%s AND status='posted'
+        ORDER BY posted_at DESC,id DESC FOR UPDATE""", (tenant_id, settlement_id)).fetchall()
+    allocations = _payment_allocations(db, tenant_id, settlement_id)
+    if not allocations:
+        raise HTTPException(409, "Match this bank line to a record before posting its payment.")
+    pending = [row for row in allocations if not row["posted"]]
+    if not pending:
+        journal_id = journals[0]["id"]
+        return {"journalId": str(journal_id), "lines": _payment_journal_lines(db, tenant_id, journal_id),
+                "idempotent": True}
+    if settlement["currency"] != "MYR":
+        raise HTTPException(409, "Payment posting supports MYR only; foreign-currency conversion is not configured.")
+    on = journal_date or bank["posted_date"]
+    if not on:
+        raise HTTPException(422, "Choose a journal date; the bank line has no date.")
+    period = posting.open_period(db, tenant_id, on)
+    account_id = resolve_bank_account()
+    bank_ledger = posting.bank_ledger_account(db, tenant_id, account_id)["id"]
+    money_out = bank["direction"] == "money_out"
+    purpose = "payable" if money_out else "receivable"
+    category = "accounts_payable" if money_out else "accounts_receivable"
+    plan = posting.Plan()
+    total = sum((row["amount"] for row in pending), Decimal(0))
+    if not money_out:
+        plan.debit(bank_ledger, total, "Bank receipt")
+    add_line = plan.debit if money_out else plan.credit
+    for row in pending:
+        if row["category"] != category:
+            raise HTTPException(422, "Money-in payments require receivables and money-out payments require payables.")
+        control = posting.scanned_control_account(db, tenant_id, row["document_id"], purpose)
+        account = control or posting.default_account(db, tenant_id, purpose)["id"]
+        add_line(account, row["amount"], f"Accounts {purpose} settlement", BANK_ALLOCATION_SOURCE_PREFIX + str(row["id"]))
+    if money_out:
+        plan.credit(bank_ledger, total, "Bank payment")
+    result = _post_settlement_payment(db, user, JournalInput(
+        periodId=str(period["id"]), idempotencyKey=f"{BANK_PAYMENT_KEY_PREFIX}{settlement_id}:{uuid.uuid4()}",
+        sourceType="settlement", sourceId=str(settlement_id), journalDate=on,
+        description="Supplier payment settlement" if money_out else "Customer payment settlement",
+        lines=[JournalLineInput(accountId=line.account_id, debit=line.debit, credit=line.credit,
+                                description=line.description, sourceField=line.source_field) for line in plan.lines],
+    ), bank["id"], money_out=money_out, bank_payment_batch=True,
+        details={"allocationIds": [str(row["id"]) for row in pending]})
+    return {"journalId": result["id"], "lines": _payment_journal_lines(db, tenant_id, result["id"]),
+            "idempotent": result["idempotent"]}
+
+
 def post_supplier_payment(transaction_id: str, data: SupplierPaymentPostingInput, request: Request):
+    from services.routes.erp.posting import scanned_control_account
+
     user = require_workspace_user(request, {"local_admin"})
     transaction_id = _uuid_or_422(transaction_id, "bank transaction id")
 
@@ -376,17 +489,12 @@ def post_supplier_payment(transaction_id: str, data: SupplierPaymentPostingInput
             raise HTTPException(409, "The settlement must be fully allocated to this supplier bill before posting.")
 
         # When the bill was posted, the payment must clear the payable account that bill credited.
-        bill_payable = db.execute("""SELECT l.account_id FROM journal_headers j
-            JOIN journal_lines l ON l.journal_id=j.id AND l.tenant_id=j.tenant_id
-            JOIN ledger_accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
-            WHERE j.tenant_id=%s AND j.source_type='document' AND j.source_id=%s AND j.status='posted'
-                AND l.credit>0 AND a.account_type='liability'
-            ORDER BY j.posted_at DESC, l.line_number LIMIT 1""", (user["tenant_id"], match["document_id"])).fetchone()
-        payable_account_text = data.payableAccountId or (str(bill_payable["account_id"]) if bill_payable else None)
+        bill_payable = scanned_control_account(db, user["tenant_id"], match["document_id"], "payable")
+        payable_account_text = data.payableAccountId or (str(bill_payable) if bill_payable else None)
         if not data.periodId or not payable_account_text or not data.bankAccountId or not data.journalDate:
             raise HTTPException(422, "Choose an open accounting period, payable account, bank account, and journal date.")
         payable_account_id = _uuid_or_422(payable_account_text, "payable account id")
-        if bill_payable and str(payable_account_id) != str(bill_payable["account_id"]):
+        if bill_payable and payable_account_id != bill_payable:
             raise HTTPException(422, "Use the payable account this supplier bill was posted to.")
         bank_account_id = _uuid_or_422(data.bankAccountId, "bank account id")
         payable_account = db.execute("""SELECT account_type,is_active FROM ledger_accounts
@@ -398,7 +506,7 @@ def post_supplier_payment(transaction_id: str, data: SupplierPaymentPostingInput
         if not bank_account or not bank_account["is_active"] or bank_account["account_type"] != "asset":
             raise HTTPException(422, "Choose an active asset account for the bank or cash account.")
 
-        result = record_journal(db, user, JournalInput(
+        result = _post_settlement_payment(db, user, JournalInput(
             periodId=data.periodId,
             idempotencyKey=idempotency_key,
             sourceType="settlement",
@@ -411,13 +519,7 @@ def post_supplier_payment(transaction_id: str, data: SupplierPaymentPostingInput
                 JournalLineInput(accountId=str(bank_account_id), credit=payment_amount,
                                  description="Bank payment", sourceField="supplier_payment"),
             ],
-        ))
-        if not result["idempotent"]:
-            db.execute("""INSERT INTO audit_logs(tenant_id,user_id,user_name,role,action,resource,details)
-                VALUES (%s,%s,%s,%s,'ledger.supplier_payment_posted',%s,%s)""",
-                (user["tenant_id"], user["id"], user["name"], user["role"], result["id"],
-                 json.dumps({"transactionId": str(transaction_id), "settlementId": str(settlement["id"]),
-                             "recordId": str(match["record_id"])})))
+        ), transaction_id, money_out=True, details={"recordId": str(match["record_id"])})
 
     return {
         **result,
@@ -816,6 +918,8 @@ def create_allocation(data: AllocationInput, request: Request):
             if bank and (bank["recorded_document_id"] or bank["status"] == "ignored"):
                 raise HTTPException(409, "This bank transaction cannot be allocated in its current status.")
             _refuse_document_settlement(db, user["tenant_id"], settlement_id)
+            if bank:
+                require_no_posted_settlement_journal(db, user["tenant_id"], settlement_id, allow_payment_batches=True)
             row = record_settlement_allocation(db, user, settlement_id, record_id, data.amount)
             if bank and bank["signed_amount_decimal"]:
                 allocated = settlement_allocated(db, bank["tenant_id"], settlement_id)
@@ -870,10 +974,11 @@ def _refuse_document_settlement(db, tenant_id, settlement_id):
         raise HTTPException(409, f"This settlement belongs to payment {owner['document_number']}; change it there.")
 
 
-def require_no_posted_settlement_journal(db, tenant_id, settlement_id):
+def require_no_posted_settlement_journal(db, tenant_id, settlement_id, *, allow_payment_batches=False):
     journal = db.execute("""SELECT id FROM journal_headers
-        WHERE tenant_id=%s AND source_type='settlement' AND source_id=%s AND status='posted'""",
-        (tenant_id, settlement_id)).fetchone()
+        WHERE tenant_id=%s AND source_type='settlement' AND source_id=%s AND status='posted'
+            AND (NOT %s OR NOT starts_with(idempotency_key,%s))""",
+        (tenant_id, settlement_id, allow_payment_batches, BANK_PAYMENT_KEY_PREFIX)).fetchone()
     if journal:
         raise HTTPException(409, "Reverse the posted settlement journal before undoing the allocation.")
 
