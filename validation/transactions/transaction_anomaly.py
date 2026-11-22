@@ -4,9 +4,8 @@ from statistics import median
 from typing import Any, Iterable, Mapping
 
 
-MIN_BASELINE_TRANSACTIONS = 5
-MAD_MULTIPLIER = Decimal("4.4478")
-MEDIAN_MULTIPLIER = Decimal("3")
+MODIFIED_Z_NORMALIZATION = Decimal("0.6745")
+MODIFIED_Z_CUTOFF = Decimal("3.5")
 
 
 def _to_decimal(value: Any) -> Decimal:
@@ -29,7 +28,6 @@ def detect_transaction_anomalies(
     transactions,
     *,
     reference_transactions=None,
-    min_baseline_transactions=MIN_BASELINE_TRANSACTIONS,
 ):
     """Detect unusually large amounts using a separate reference dataset.
 
@@ -37,9 +35,6 @@ def detect_transaction_anomalies(
     to calculate the statistical baseline. Test transactions are not
     included in that baseline.
     """
-    if min_baseline_transactions < 2:
-        raise ValueError("Minimum baseline must be at least 2.")
-
     def prepare_rows(items):
         rows = []
         seen_ids = set()
@@ -84,35 +79,27 @@ def detect_transaction_anomalies(
     groups = defaultdict(list)
 
     for row in reference_rows:
-        groups[row["currency"]].append(row["amount"])
-
-    baselines = {}
-
-    for currency, amounts in groups.items():
-        if len(amounts) < min_baseline_transactions:
-            continue
-
-        center = Decimal(str(median(amounts)))
-        deviations = [abs(amount - center) for amount in amounts]
-        mad = Decimal(str(median(deviations)))
-
-        threshold = center + max(
-            MAD_MULTIPLIER * mad,
-            MEDIAN_MULTIPLIER * center,
-        )
-
-        baselines[currency] = {
-            "median": center,
-            "threshold": threshold,
-            "count": len(amounts),
-        }
+        groups[row["currency"]].append(row)
 
     results = []
 
     for row in test_rows:
         amount = row["amount"]
         currency = row["currency"]
-        baseline = baselines.get(currency)
+        comparable_rows = [
+            reference for reference in groups.get(currency, [])
+            if reference["transaction_id"] != row["transaction_id"]
+        ]
+        baseline = None
+        if comparable_rows:
+            amounts = [reference["amount"] for reference in comparable_rows]
+            center = Decimal(str(median(amounts)))
+            deviations = [abs(value - center) for value in amounts]
+            baseline = {
+                "median": center,
+                "mad": Decimal(str(median(deviations))),
+                "count": len(amounts),
+            }
 
         result = {
             "transaction_id": row["transaction_id"],
@@ -124,33 +111,43 @@ def detect_transaction_anomalies(
             "baseline_median": None,
             "upper_bound": None,
             "baseline_count": 0,
-            "reason": (
-                f"Insufficient reference transactions for {currency}; "
-                f"at least {min_baseline_transactions} are required."
-            ),
+            "reason": f"No reference transactions are available for {currency}.",
         }
 
         if baseline is not None:
-            threshold = baseline["threshold"]
-            is_anomaly = amount > threshold
+            center = baseline["median"]
+            mad = baseline["mad"]
 
-            if threshold > 0:
-                score_text = str(amount / threshold)
-            else:
-                score_text = "Infinity" if amount > 0 else "0"
+            result.update({
+                "baseline_median": str(center),
+                "baseline_count": baseline["count"],
+            })
+
+            if mad == 0:
+                result["reason"] = (
+                    f"Reference transactions for {currency} have zero MAD, "
+                    "so the modified Z-score is undefined; review manually."
+                )
+                results.append(result)
+                continue
+
+            # Iglewicz-Hoaglin modified Z score, as documented by NIST:
+            # M_i = 0.6745 * (x_i - median) / MAD; >3.5 labels a high-side
+            # potential outlier for this amount-only review feature.
+            # Source: https://itl.nist.gov/div898/handbook/eda/section3/eda35h.htm
+            modified_z = MODIFIED_Z_NORMALIZATION * (amount - center) / mad
+            upper_bound = center + (MODIFIED_Z_CUTOFF * mad / MODIFIED_Z_NORMALIZATION)
+            is_anomaly = modified_z > MODIFIED_Z_CUTOFF
 
             result.update({
                 "is_anomaly": is_anomaly,
                 "status": "anomaly" if is_anomaly else "normal",
-                "anomaly_score": score_text,
-                "baseline_median": str(baseline["median"]),
-                "upper_bound": str(threshold),
-                "baseline_count": baseline["count"],
+                "anomaly_score": str(modified_z),
+                "upper_bound": str(upper_bound),
                 "reason": (
-                    f"Amount {amount} {currency} exceeds the statistical "
-                    f"upper bound of {threshold} {currency}."
+                    f"Modified Z-score {modified_z} exceeds {MODIFIED_Z_CUTOFF} for {currency}."
                     if is_anomaly
-                    else f"Amount is within the expected range for {currency}."
+                    else f"Modified Z-score {modified_z} is at or below {MODIFIED_Z_CUTOFF} for {currency}."
                 ),
             })
 

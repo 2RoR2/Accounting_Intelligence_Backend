@@ -26,6 +26,25 @@ def test_detects_extremely_large_transaction():
     assert Decimal(result["anomaly_score"]) > 1
 
 
+def test_modified_z_score_uses_cited_high_side_cutoff():
+    reference = [
+        {"transaction_id": f"H{i}", "amount": str(amount), "currency": "MYR"}
+        for i, amount in enumerate((95, 98, 100, 102, 105), start=1)
+    ]
+    results = detect_transaction_anomalies(
+        [
+            {"transaction_id": "T110", "amount": "110", "currency": "MYR"},
+            {"transaction_id": "T111", "amount": "111", "currency": "MYR"},
+        ],
+        reference_transactions=reference,
+    )
+
+    assert results[0]["status"] == "normal"
+    assert Decimal(results[0]["anomaly_score"]) <= Decimal("3.5")
+    assert results[1]["status"] == "anomaly"
+    assert Decimal(results[1]["anomaly_score"]) > Decimal("3.5")
+
+
 def test_normal_transactions_are_not_flagged():
     amounts = ["100", "110", "95", "105", "98", "102"]
 
@@ -43,13 +62,13 @@ def test_normal_transactions_are_not_flagged():
     assert all(result["status"] == "normal" for result in results)
 
 
-def test_small_dataset_requires_more_baseline_data():
+def test_missing_reference_data_is_reported_as_insufficient_baseline():
     transactions = [
         {"transaction_id": "T1", "amount": "100", "currency": "MYR"},
         {"transaction_id": "T2", "amount": "1000000", "currency": "MYR"},
     ]
 
-    results = detect_transaction_anomalies(transactions)
+    results = detect_transaction_anomalies(transactions, reference_transactions=[])
 
     assert all(
         result["status"] == "insufficient_baseline"
@@ -109,7 +128,10 @@ def test_separate_currency_groups_do_not_share_baselines():
         {"transaction_id": "U1", "amount": "10000", "currency": "USD"},
     ]
 
-    results = detect_transaction_anomalies(transactions)
+    results = detect_transaction_anomalies(
+        transactions,
+        reference_transactions=transactions[:5],
+    )
     usd_result = next(
         result for result in results if result["transaction_id"] == "U1"
     )
@@ -126,7 +148,8 @@ def test_zero_amounts_do_not_crash_detector():
     results = detect_transaction_anomalies(transactions)
 
     assert len(results) == 6
-    assert all(result["status"] == "normal" for result in results)
+    assert all(result["status"] == "insufficient_baseline" for result in results)
+    assert all("zero MAD" in result["reason"] for result in results)
 
 
 def test_reference_history_is_used_for_single_invoice_validation_and_creates_review_exception():
@@ -155,14 +178,14 @@ def test_reference_history_is_used_for_single_invoice_validation_and_creates_rev
     assert anomaly["status"] == "anomaly"
     assert anomaly["baseline_count"] == 5
     assert any(error["code"] == "EX-010" for error in result["errors"])
-    assert "upper bound" in next(
+    assert "Modified Z-score" in next(
         error["message"] for error in result["errors"] if error["code"] == "EX-010"
     )
 
 
-def test_insufficient_history_is_reported_without_blocking_validation():
+def test_zero_mad_is_reported_without_blocking_validation():
     history = [
-        {"transaction_id": f"H{i}", "amount": str(100 + i), "currency": "MYR"}
+        {"transaction_id": f"H{i}", "amount": "100", "currency": "MYR"}
         for i in range(1, 4)
     ]
     result = validate_invoice_document(
@@ -172,4 +195,6 @@ def test_insufficient_history_is_reported_without_blocking_validation():
     )
     anomaly_check = next(check for check in result["checks"] if check["rule"] == "EX-010")
     assert result["transaction_anomaly"]["status"] == "insufficient_baseline"
+    assert result["transaction_anomaly"]["baseline_count"] == 3
     assert anomaly_check["required"] is False
+    assert "zero MAD" in result["transaction_anomaly"]["reason"]

@@ -13,6 +13,8 @@ from services.bank.statement_parser import inspect_statement, parse_bank_stateme
 from validation.matching.bank_reconciliation import find_bank_match_candidates, direction_matches
 from validation.transactions.transaction_anomaly import detect_transaction_anomalies
 
+BANK_ANOMALY_DETECTOR_VERSION = "modified-z-3.5"
+
 def _ensure_reconciliation_period_tables(db):
     """Compatibility bootstrap for existing PoC databases before migrations are installed."""
     db.execute("""CREATE TABLE IF NOT EXISTS bank_reconciliation_periods (
@@ -54,7 +56,7 @@ def _ensure_bank_anomaly_table(db):
         upper_bound NUMERIC(14,2),
         baseline_count INTEGER NOT NULL DEFAULT 0 CHECK (baseline_count >= 0),
         anomaly_score NUMERIC(18,6),
-        detector_version TEXT NOT NULL DEFAULT 'amount-v1',
+        detector_version TEXT NOT NULL DEFAULT 'modified-z-3.5',
         calculated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         PRIMARY KEY (bank_transaction_id, tenant_id),
         FOREIGN KEY (bank_transaction_id, tenant_id) REFERENCES bank_transactions(id, tenant_id) ON DELETE RESTRICT,
@@ -152,15 +154,14 @@ def _calculate_bank_transaction_anomaly(db, row, bank_account_ref):
         FROM bank_transactions b
         JOIN bank_imports i ON i.id=b.import_id AND i.tenant_id=b.tenant_id
         WHERE b.tenant_id=%s
-          AND b.import_id<>%s
           AND i.status='confirmed'
           AND b.status<>'ignored'
           AND b.direction=%s
           AND b.currency=%s
           AND i.source_bank_account_ref=%s
-          AND b.posted_date IS NOT NULL
+          AND b.posted_date < %s
         ORDER BY b.posted_date, b.source_row
-    """, (row['tenant_id'], row['import_id'], direction, currency, bank_account_ref)).fetchall()
+    """, (row['tenant_id'], direction, currency, bank_account_ref, posted_date)).fetchall()
 
     result = detect_transaction_anomalies(
         [{
@@ -183,9 +184,12 @@ def _calculate_bank_transaction_anomaly(db, row, bank_account_ref):
     elif result['status'] == 'normal':
         label = 'No unusual amount detected'
         reason = f"{formatted_amount} is within the usual range for {direction_label} transactions."
+    elif result['baseline_count'] > 0:
+        label = 'Baseline dispersion unavailable'
+        reason = result['reason']
     else:
         label = 'Insufficient history'
-        reason = f"There are not enough prior {direction_label} transactions to establish a reliable range."
+        reason = f"No prior {direction_label} transactions are available to establish a range."
 
     return {
         'status': result['status'],
@@ -206,8 +210,8 @@ def _save_bank_transaction_anomaly(db, row, result):
         return None
     db.execute("""INSERT INTO bank_transaction_anomalies
         (bank_transaction_id,tenant_id,import_id,status,is_anomaly,label,reason,amount,currency,
-         baseline_median,upper_bound,baseline_count,anomaly_score)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+         baseline_median,upper_bound,baseline_count,anomaly_score,detector_version)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         ON CONFLICT (bank_transaction_id,tenant_id) DO UPDATE SET
           status=EXCLUDED.status,is_anomaly=EXCLUDED.is_anomaly,label=EXCLUDED.label,
           reason=EXCLUDED.reason,amount=EXCLUDED.amount,currency=EXCLUDED.currency,
@@ -216,7 +220,8 @@ def _save_bank_transaction_anomaly(db, row, result):
           detector_version=EXCLUDED.detector_version,calculated_at=EXCLUDED.calculated_at""",
         (row['id'], row['tenant_id'], row['import_id'], result['status'], result['isAnomaly'],
          result['label'], result['reason'], result['amount'], result['currency'],
-         result['baselineMedian'], result['upperBound'], result['baselineCount'], result['anomalyScore']))
+         result['baselineMedian'], result['upperBound'], result['baselineCount'], result['anomalyScore'],
+         BANK_ANOMALY_DETECTOR_VERSION))
     return result
 
 
@@ -226,12 +231,11 @@ def _bank_transaction_anomaly(db, row, bank_account_ref):
     New imports are saved during confirmation. The calculate-and-save fallback
     backfills legacy rows once, so list loads never recalculate an existing result.
     """
-    _ensure_bank_anomaly_table(db)
     saved = db.execute("""SELECT status,is_anomaly,label,reason,amount,currency,
-        baseline_median,upper_bound,baseline_count,anomaly_score
+        baseline_median,upper_bound,baseline_count,anomaly_score,detector_version
         FROM bank_transaction_anomalies
         WHERE bank_transaction_id=%s AND tenant_id=%s""", (row['id'], row['tenant_id'])).fetchone()
-    if saved:
+    if saved and saved['detector_version'] == BANK_ANOMALY_DETECTOR_VERSION:
         return {
             'status': saved['status'], 'isAnomaly': saved['is_anomaly'], 'label': saved['label'],
             'reason': saved['reason'], 'amount': str(saved['amount']), 'currency': saved['currency'],
@@ -297,11 +301,12 @@ def list_bank_transactions(request: Request, direction: str | None = None, statu
     if status and status not in {"imported", "needs_review", "proposed", "matched", "ignored"}:
         raise HTTPException(422, "Invalid bank transaction status.")
     with connect() as db:
+        # Ensure the compatibility table once per request, not once per row.
+        _ensure_bank_anomaly_table(db)
         # A statement still in preview is not on the Money pages until someone confirms it.
         rows = db.execute("""SELECT t.* FROM bank_transactions t JOIN bank_imports i ON i.id=t.import_id AND i.tenant_id=t.tenant_id
             WHERE i.status='confirmed' AND (%s::uuid IS NULL OR t.tenant_id=%s::uuid) AND (%s::text IS NULL OR t.direction=%s::text) AND (%s::text IS NULL OR t.status=%s::text)
             ORDER BY t.posted_date DESC NULLS LAST, t.source_row DESC""", (scope, scope, direction, direction, status, status)).fetchall()
-    with connect() as db:
         return [_bank_transaction_response(db, row) for row in rows]
 
 def list_bank_imports(request: Request):
@@ -523,9 +528,14 @@ def _import_bank_rows(data: BankImportInput, user):
             if status == 'imported':
                 candidates_proposed += _propose_candidates(db, user['tenant_id'], transaction_id, {
                     'amount': amount, 'signed': signed, 'direction': direction, 'currency': currency, 'reference': row.reference}, records)
-            if status == 'imported':
-                stored_row = db.execute("SELECT * FROM bank_transactions WHERE id=%s AND tenant_id=%s", (transaction_id, user['tenant_id'])).fetchone()
-                _save_bank_transaction_anomaly(db, stored_row, _calculate_bank_transaction_anomaly(db, stored_row, data.sourceBankAccountRef.strip()))
+        anomaly_rows = db.execute("""SELECT * FROM bank_transactions
+            WHERE import_id=%s AND tenant_id=%s AND status='imported'
+            ORDER BY posted_date, source_row""", (import_id, user['tenant_id'])).fetchall()
+        for stored_row in anomaly_rows:
+            _save_bank_transaction_anomaly(
+                db, stored_row,
+                _calculate_bank_transaction_anomaly(db, stored_row, data.sourceBankAccountRef.strip()),
+            )
     return {"id": str(import_id), "importId": str(import_id), "status": "CONFIRMED",
             "rowCount": len(data.rows), "candidatesProposed": candidates_proposed,
             "sourceHash": source_hash}
@@ -667,6 +677,7 @@ def get_bank_transaction(transaction_id: str, request: Request):
     user = require_workspace_user(request, {"super_admin", "local_admin", "accountant"})
     transaction_id = _uuid_or_422(transaction_id, "transaction id")
     with connect() as db:
+        _ensure_bank_anomaly_table(db)
         row = db.execute("""SELECT b.*, c.account_id, c.cost_centre_id, c.decision AS coding_decision,
                    c.reason AS coding_reason
             FROM bank_transactions b
@@ -678,18 +689,19 @@ def get_bank_transaction(transaction_id: str, request: Request):
             ) c ON TRUE
             WHERE b.id=%s AND (%s IS NULL OR b.tenant_id=%s)""",
             (transaction_id, tenant_scope(user), tenant_scope(user))).fetchone()
+        result = _bank_transaction_response(db, row) if row else None
+        payable = None
+        if row:
+            # The payable account the matched bill was posted to: the supplier payment must debit it.
+            payable = db.execute("""SELECT l.account_id FROM reconciliation_candidates c
+                JOIN standardised_records r ON r.id=c.record_id AND r.tenant_id=c.tenant_id
+                JOIN journal_headers j ON j.tenant_id=r.tenant_id AND j.source_type='document' AND j.source_id=r.document_id AND j.status='posted'
+                JOIN journal_lines l ON l.journal_id=j.id AND l.tenant_id=j.tenant_id AND l.credit>0
+                JOIN ledger_accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id AND a.account_type='liability'
+                WHERE c.bank_transaction_id=%s AND c.tenant_id=%s AND c.status='confirmed'
+                ORDER BY j.posted_at DESC, l.line_number LIMIT 1""", (row["id"], row["tenant_id"])).fetchone()
     if not row:
         raise HTTPException(404, "Bank transaction not found.")
-    with connect() as db:
-        result = _bank_transaction_response(db, row)
-        # The payable account the matched bill was posted to: the supplier payment must debit it.
-        payable = db.execute("""SELECT l.account_id FROM reconciliation_candidates c
-            JOIN standardised_records r ON r.id=c.record_id AND r.tenant_id=c.tenant_id
-            JOIN journal_headers j ON j.tenant_id=r.tenant_id AND j.source_type='document' AND j.source_id=r.document_id AND j.status='posted'
-            JOIN journal_lines l ON l.journal_id=j.id AND l.tenant_id=j.tenant_id AND l.credit>0
-            JOIN ledger_accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id AND a.account_type='liability'
-            WHERE c.bank_transaction_id=%s AND c.tenant_id=%s AND c.status='confirmed'
-            ORDER BY j.posted_at DESC, l.line_number LIMIT 1""", (row["id"], row["tenant_id"])).fetchone()
     result.update({"billPayableAccountId": str(payable["account_id"]) if payable else None})
     result.update({"accountId": str(row["account_id"]) if row["account_id"] else None,
                    "costCentreId": str(row["cost_centre_id"]) if row["cost_centre_id"] else None,
