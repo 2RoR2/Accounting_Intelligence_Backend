@@ -291,3 +291,62 @@ def test_bank_transaction_detail_names_the_payable_account_the_matched_bill_was_
 def _document_of(connect, record_id):
     with connect() as db:
         return db.execute("SELECT document_id FROM standardised_records WHERE id=%s", (record_id,)).fetchone()['document_id']
+
+
+def _manual_journal(ids, amount='10.00'):
+    return accounting.post_journal(accounting.JournalInput(
+        periodId=str(ids['period']), idempotencyKey='manual:' + uuid4().hex, sourceType='manual', journalDate=DAY,
+        description='Synthetic expense', lines=[
+            accounting.JournalLineInput(accountId=str(ids['accounts']['5000']), debit=Decimal(amount)),
+            accounting.JournalLineInput(accountId=str(ids['accounts']['1010']), credit=Decimal(amount))]), None)
+
+
+def test_trial_balance_nets_a_reversed_journal_to_zero(ledger):
+    patcher, ids = _as_admin(ledger)
+    connect, _ = ledger
+    with connect() as db:
+        before = {r['code']: r['net_balance'] for r in db.execute(
+            'SELECT code, net_balance FROM internal_trial_balance WHERE tenant_id=%s', (ids['tenant'],)).fetchall()}
+    with patcher:
+        accounting.reverse_journal(_manual_journal(ids, '37.00')['id'], None)
+    with connect() as db:
+        after = {r['code']: r['net_balance'] for r in db.execute(
+            'SELECT code, net_balance FROM internal_trial_balance WHERE tenant_id=%s', (ids['tenant'],)).fetchall()}
+    # Before the fix the reversed original dropped out and 1010 moved by +37.00 (5000 by -37.00).
+    assert after.get('1010', 0) == before.get('1010', 0)
+    assert after.get('5000', 0) == before.get('5000', 0)
+
+
+def test_a_journal_in_a_closed_period_cannot_be_reversed(ledger):
+    patcher, ids = _as_admin(ledger)
+    connect, _ = ledger
+    with patcher:
+        journal = _manual_journal(ids)
+        with connect() as db:
+            db.execute("UPDATE accounting_periods SET status='closed' WHERE id=%s", (ids['period'],))
+        try:
+            with pytest.raises(HTTPException) as error:
+                accounting.reverse_journal(journal['id'], None)
+        finally:
+            with connect() as db:
+                db.execute("UPDATE accounting_periods SET status='open' WHERE id=%s", (ids['period'],))
+    assert error.value.status_code == 409 and 'is closed' in error.value.detail
+
+
+def test_coding_a_bank_line_without_a_suggestion_is_saved_as_manual(ledger):
+    """The review screen sends decision 'accepted' with no suggestion; that used to break the table check (503)."""
+    from services.routes.bank import routes as bank
+    connect, ids = ledger
+    with connect() as db:
+        account = db.execute("INSERT INTO coa_accounts(tenant_id,code,name,account_class) VALUES (%s,'6230','Bank charges','expense') RETURNING id",
+                             (ids['tenant'],)).fetchone()['id']
+        imported = db.execute("""INSERT INTO bank_imports(tenant_id,source_bank_account_ref,source_hash,input_format,mapping_version,imported_by,status)
+            VALUES (%s,'1234','{}','csv','v1',%s,'confirmed') RETURNING id""".format('a' * 64), (ids['tenant'], ids['admin'])).fetchone()['id']
+        line = db.execute("""INSERT INTO bank_transactions(tenant_id,import_id,source_row,posted_date,description,debit_decimal,
+                signed_amount_decimal,direction,currency,fingerprint)
+            VALUES (%s,%s,1,%s,'SERVICE CHARGE','5.00','-5.00','money_out','MYR',%s) RETURNING id""",
+                          (ids['tenant'], imported, DAY, 'b' * 64)).fetchone()['id']
+    user = {'tenant_id': ids['tenant'], 'id': ids['admin'], 'name': 'Admin', 'role': 'local_admin'}
+    with patch.multiple(bank, connect=connect, require_workspace_user=lambda *_args: user):
+        saved = bank.code_bank_transaction(str(line), bank.BankCodingInput(accountId=str(account), decision='accepted'), None)
+    assert saved['decision'] == 'manual' and saved['reason'] == 'Account chosen by the reviewer'

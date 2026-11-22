@@ -715,7 +715,12 @@ def code_bank_transaction(transaction_id: str, data: BankCodingInput, request: R
     suggestion_id = _uuid_or_422(data.suggestionId, "suggestion id") if data.suggestionId else None
     if data.decision != "cleared" and not account_id:
         raise HTTPException(422, "accountId is required unless the coding is being cleared.")
-    if data.decision != "accepted" and not data.reason:
+    decision, reason = data.decision, data.reason
+    if decision in ("accepted", "overridden") and not suggestion_id:
+        # The review screen sends "accepted" when the reviewer picks an account with no suggestion; without a
+        # suggestion that is a manual choice (the table requires a suggestion for accepted/overridden rows).
+        decision, reason = "manual", reason or "Account chosen by the reviewer"
+    if decision != "accepted" and not reason:
         raise HTTPException(422, "A reason is required for overridden, manual, or cleared coding.")
     with connect() as db:
         transaction = db.execute("SELECT id FROM bank_transactions WHERE id=%s AND tenant_id=%s", (transaction_id, user["tenant_id"])).fetchone()
@@ -733,7 +738,7 @@ def code_bank_transaction(transaction_id: str, data: BankCodingInput, request: R
             (tenant_id,bank_transaction_id,suggestion_id,account_id,cost_centre_id,user_id,decision,reason)
             VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *""",
             (user["tenant_id"], transaction_id, suggestion_id, account_id, cost_centre_id,
-             user["id"], data.decision, data.reason)).fetchone()
+             user["id"], decision, reason)).fetchone()
     return {"id": str(row["id"]), "bankTransactionId": str(row["bank_transaction_id"]),
             "accountId": str(row["account_id"]) if row["account_id"] else None,
             "costCentreId": str(row["cost_centre_id"]) if row["cost_centre_id"] else None,

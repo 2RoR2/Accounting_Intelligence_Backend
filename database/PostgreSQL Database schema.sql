@@ -2961,7 +2961,8 @@ SELECT j.tenant_id,
 FROM journal_headers j
 JOIN journal_lines l ON l.journal_id = j.id AND l.tenant_id = j.tenant_id
 JOIN ledger_accounts a ON a.id = l.account_id AND a.tenant_id = l.tenant_id
-WHERE j.status = 'posted'
+-- A reversed journal stays in the totals: its reversal (status posted) offsets it, so the pair nets to zero.
+WHERE j.status IN ('posted', 'reversed')
 GROUP BY j.tenant_id, l.account_id, a.code, a.name, a.account_type;
 
 -- ============================================================================

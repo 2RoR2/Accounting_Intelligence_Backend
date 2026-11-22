@@ -135,7 +135,7 @@ def public_share(token: str):
         db.execute("UPDATE erp_document_shares SET last_opened_at=now(),open_count=open_count+1 WHERE id=%s", (row["share_id"],))
     payload = row["payload"] or {}
     lines = [{"description": l.get("description") or "", "quantity": str(l.get("quantity", "1")),
-              "unitPrice": money(l.get("unitPrice", 0)), "discount": money(l.get("discount", 0)), "tax": money(l.get("tax", 0))}
+              "unitPrice": str(Decimal(str(l.get("unitPrice", 0)))), "discount": money(l.get("discount", 0)), "tax": money(l.get("tax", 0))}
              for l in payload.get("lines", [])]
     return {"companyName": row["company_name"], "documentType": row["document_type"], "documentLabel": LABELS[row["document_type"]],
             "number": row["document_number"], "documentDate": str(row["document_date"]),
@@ -194,11 +194,13 @@ def list_consolidations(request: Request):
     _require("ENABLE_MYINVOIS_PREP", "MyInvois preparation records")
     user = erp_user(request)
     with connect() as db:
-        rows = db.execute("""SELECT s.*, (SELECT count(*) FROM myinvois_consolidated_documents d WHERE d.submission_id=s.id) AS n
+        rows = db.execute("""SELECT s.*, (SELECT count(*) FROM myinvois_consolidated_documents d WHERE d.submission_id=s.id) AS n,
+                (SELECT COALESCE(array_agg(d.document_id::text), '{}') FROM myinvois_consolidated_documents d
+                 WHERE d.submission_id=s.id) AS document_ids
             FROM myinvois_consolidated_submissions s WHERE s.tenant_id=%s ORDER BY s.created_at DESC""", (user["tenant_id"],)).fetchall()
     return [{"id": str(r["id"]), "documentType": r["document_type"], "dateFrom": str(r["date_from"]), "dateTo": str(r["date_to"]),
              "status": r["status"], "documentCount": r["n"], "totalAmount": money(r["total_amount"]), "note": PREPARED_ONLY,
-             "createdAt": str(r["created_at"])} for r in rows]
+             "createdAt": str(r["created_at"]), "documentIds": list(r["document_ids"])} for r in rows]
 
 
 def register(router):

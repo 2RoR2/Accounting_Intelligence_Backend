@@ -169,6 +169,7 @@ def test_share_links_are_off_by_default_and_follow_the_rules(company, monkeypatc
     assert public.status_code == 200, public.text
     page = public.json()
     assert page['number'] == invoice['number'] and page['total'] == '315.50' and len(page['lines']) == 2
+    assert Decimal(page['lines'][0]['unitPrice']) == Decimal('25.50')  # stored precision, not rounded to cents
     assert 'id' not in page and 'tenantId' not in page and 'journalId' not in page
     assert TestClient(api.app).get('/api/public/erp-share/' + 'x' * 43).status_code == 404
     assert call('GET', f"/api/erp/documents/invoice/{invoice['id']}/shares", admin).json()[0]['openCount'] == 1
@@ -206,4 +207,6 @@ def test_myinvois_record_is_prepared_only_and_off_by_default(company, monkeypatc
     assert again.status_code == 409
     outside = call('POST', '/api/myinvois/consolidated', admin, json={**body, 'idempotencyKey': 'x', 'dateTo': '2026-08-15', 'documentIds': [b['id']]})
     assert outside.status_code == 422
-    assert [r['documentCount'] for r in ok(call('GET', '/api/myinvois/consolidated', admin))] == [2]
+    listed = ok(call('GET', '/api/myinvois/consolidated', admin))
+    assert [r['documentCount'] for r in listed] == [2]
+    assert sorted(listed[0]['documentIds']) == sorted([a['id'], b['id']])  # the picker hides these
