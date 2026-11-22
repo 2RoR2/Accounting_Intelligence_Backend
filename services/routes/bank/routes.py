@@ -42,6 +42,7 @@ class BankMatchManyInput(BaseModel):
     expectedAllocated: Decimal = Field(ge=0, max_digits=18, decimal_places=2)
     allocations: list[BankMatchAllocationInput] = Field(min_length=1, max_length=50)
 
+BANK_ANOMALY_DETECTOR_VERSION = "modified-z-3.5"
 
 def _ensure_reconciliation_period_tables(db):
     """Compatibility bootstrap for existing PoC databases before migrations are installed."""
@@ -84,7 +85,7 @@ def _ensure_bank_anomaly_table(db):
         upper_bound NUMERIC(14,2),
         baseline_count INTEGER NOT NULL DEFAULT 0 CHECK (baseline_count >= 0),
         anomaly_score NUMERIC(18,6),
-        detector_version TEXT NOT NULL DEFAULT 'amount-v1',
+        detector_version TEXT NOT NULL DEFAULT 'modified-z-3.5',
         calculated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         PRIMARY KEY (bank_transaction_id, tenant_id),
         FOREIGN KEY (bank_transaction_id, tenant_id) REFERENCES bank_transactions(id, tenant_id) ON DELETE RESTRICT,
@@ -182,15 +183,14 @@ def _calculate_bank_transaction_anomaly(db, row, bank_account_ref):
         FROM bank_transactions b
         JOIN bank_imports i ON i.id=b.import_id AND i.tenant_id=b.tenant_id
         WHERE b.tenant_id=%s
-          AND b.import_id<>%s
           AND i.status='confirmed'
           AND b.status<>'ignored'
           AND b.direction=%s
           AND b.currency=%s
           AND i.source_bank_account_ref=%s
-          AND b.posted_date IS NOT NULL
+          AND b.posted_date < %s
         ORDER BY b.posted_date, b.source_row
-    """, (row['tenant_id'], row['import_id'], direction, currency, bank_account_ref)).fetchall()
+    """, (row['tenant_id'], direction, currency, bank_account_ref, posted_date)).fetchall()
 
     result = detect_transaction_anomalies(
         [{
@@ -213,9 +213,12 @@ def _calculate_bank_transaction_anomaly(db, row, bank_account_ref):
     elif result['status'] == 'normal':
         label = 'No unusual amount detected'
         reason = f"{formatted_amount} is within the usual range for {direction_label} transactions."
+    elif result['baseline_count'] > 0:
+        label = 'Baseline dispersion unavailable'
+        reason = result['reason']
     else:
         label = 'Insufficient history'
-        reason = f"There are not enough prior {direction_label} transactions to establish a reliable range."
+        reason = f"No prior {direction_label} transactions are available to establish a range."
 
     return {
         'status': result['status'],
@@ -236,8 +239,8 @@ def _save_bank_transaction_anomaly(db, row, result):
         return None
     db.execute("""INSERT INTO bank_transaction_anomalies
         (bank_transaction_id,tenant_id,import_id,status,is_anomaly,label,reason,amount,currency,
-         baseline_median,upper_bound,baseline_count,anomaly_score)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+         baseline_median,upper_bound,baseline_count,anomaly_score,detector_version)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         ON CONFLICT (bank_transaction_id,tenant_id) DO UPDATE SET
           status=EXCLUDED.status,is_anomaly=EXCLUDED.is_anomaly,label=EXCLUDED.label,
           reason=EXCLUDED.reason,amount=EXCLUDED.amount,currency=EXCLUDED.currency,
@@ -246,7 +249,8 @@ def _save_bank_transaction_anomaly(db, row, result):
           detector_version=EXCLUDED.detector_version,calculated_at=EXCLUDED.calculated_at""",
         (row['id'], row['tenant_id'], row['import_id'], result['status'], result['isAnomaly'],
          result['label'], result['reason'], result['amount'], result['currency'],
-         result['baselineMedian'], result['upperBound'], result['baselineCount'], result['anomalyScore']))
+         result['baselineMedian'], result['upperBound'], result['baselineCount'], result['anomalyScore'],
+         BANK_ANOMALY_DETECTOR_VERSION))
     return result
 
 
@@ -256,12 +260,11 @@ def _bank_transaction_anomaly(db, row, bank_account_ref):
     New imports are saved during confirmation. The calculate-and-save fallback
     backfills legacy rows once, so list loads never recalculate an existing result.
     """
-    _ensure_bank_anomaly_table(db)
     saved = db.execute("""SELECT status,is_anomaly,label,reason,amount,currency,
-        baseline_median,upper_bound,baseline_count,anomaly_score
+        baseline_median,upper_bound,baseline_count,anomaly_score,detector_version
         FROM bank_transaction_anomalies
         WHERE bank_transaction_id=%s AND tenant_id=%s""", (row['id'], row['tenant_id'])).fetchone()
-    if saved:
+    if saved and saved['detector_version'] == BANK_ANOMALY_DETECTOR_VERSION:
         return {
             'status': saved['status'], 'isAnomaly': saved['is_anomaly'], 'label': saved['label'],
             'reason': saved['reason'], 'amount': str(saved['amount']), 'currency': saved['currency'],
@@ -381,6 +384,8 @@ def list_bank_transactions(request: Request, direction: str | None = None, statu
     if status and status not in {"imported", "needs_review", "proposed", "matched", "ignored", "partially_matched"}:
         raise HTTPException(422, "Invalid bank transaction status.")
     with connect() as db:
+        # Ensure the compatibility table once per request, not once per row.
+        _ensure_bank_anomaly_table(db)
         # A statement still in preview is not on the Money pages until someone confirms it.
         rows = db.execute(BANK_TRANSACTION_READ + """
             WHERE i.status='confirmed' AND (%s::uuid IS NULL OR t.tenant_id=%s::uuid)
@@ -620,9 +625,14 @@ def _import_bank_rows(data: BankImportInput, user):
             if status == 'imported':
                 candidates_proposed += _propose_candidates(db, user['tenant_id'], transaction_id, {
                     'amount': amount, 'signed': signed, 'direction': direction, 'currency': currency, 'reference': row.reference}, records)
-            if status == 'imported':
-                stored_row = db.execute("SELECT * FROM bank_transactions WHERE id=%s AND tenant_id=%s", (transaction_id, user['tenant_id'])).fetchone()
-                _save_bank_transaction_anomaly(db, stored_row, _calculate_bank_transaction_anomaly(db, stored_row, data.sourceBankAccountRef.strip()))
+        anomaly_rows = db.execute("""SELECT * FROM bank_transactions
+            WHERE import_id=%s AND tenant_id=%s AND status='imported'
+            ORDER BY posted_date, source_row""", (import_id, user['tenant_id'])).fetchall()
+        for stored_row in anomaly_rows:
+            _save_bank_transaction_anomaly(
+                db, stored_row,
+                _calculate_bank_transaction_anomaly(db, stored_row, data.sourceBankAccountRef.strip()),
+            )
     return {"id": str(import_id), "importId": str(import_id), "status": "CONFIRMED",
             "rowCount": len(data.rows), "candidatesProposed": candidates_proposed,
             "sourceHash": source_hash}
@@ -910,6 +920,7 @@ def get_bank_transaction(transaction_id: str, request: Request):
     user = require_workspace_user(request, {"super_admin", "local_admin", "accountant"})
     transaction_id = _uuid_or_422(transaction_id, "transaction id")
     with connect() as db:
+        _ensure_bank_anomaly_table(db)
         row = db.execute(BANK_TRANSACTION_READ + " WHERE t.id=%s AND (%s::uuid IS NULL OR t.tenant_id=%s)",
             (transaction_id, tenant_scope(user), tenant_scope(user))).fetchone()
         if not row:

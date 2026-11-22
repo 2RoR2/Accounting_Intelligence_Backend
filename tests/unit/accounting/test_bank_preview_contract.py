@@ -68,8 +68,13 @@ def test_replacing_a_preview_releases_the_existing_source_hash():
     database = PreviewDatabase()
     try:
         with patch.object(bank, "connect", return_value=database), \
-             patch.object(bank, "parse_bank_csv", return_value=([], "synthetic-mapping/1")):
-            result = bank._preview_bank_statement(USER, b"synthetic statement", "Synthetic account", {}, "iso")
+             patch.object(bank, "parse_bank_statement", return_value=([], "synthetic-mapping/1")) as parse_statement:
+            result = bank._preview_bank_statement(
+                USER, b"synthetic statement", "synthetic.csv", "Synthetic account", {}, "iso"
+            )
+        parse_statement.assert_called_once_with(
+            b"synthetic statement", "synthetic.csv", {}, "iso", TENANT, "Synthetic account", "MYR"
+        )
         rows = database.db.execute("SELECT status FROM bank_imports ORDER BY status").fetchall()
         assert [row[0] for row in rows] == ["previewed", "reverted"]
         assert result["status"] == "previewed"
@@ -113,7 +118,9 @@ def test_frontend_csv_form_reaches_preview_with_its_mapping(client):
                                      "mapping": bank.json.dumps(mapping)})
     assert response.status_code == 201
     assert response.json() == {"status": "previewed"}
-    preview.assert_called_once_with(USER, b"Date,Description,Credit\n", "Synthetic account", mapping, "iso")
+    preview.assert_called_once_with(
+        USER, b"Date,Description,Credit\n", "synthetic.csv", "Synthetic account", mapping, "iso", "MYR"
+    )
 
 
 def test_existing_json_bank_import_still_reaches_the_json_handler(client):
