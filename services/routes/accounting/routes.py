@@ -175,10 +175,15 @@ def record_journal(db, user, data: JournalInput):
     period_id = _uuid_or_422(data.periodId, "period id")
     source_id = _uuid_or_422(data.sourceId, "source id") if data.sourceId else None
     if data.sourceType == "settlement":
-        settlement = db.execute("SELECT id FROM settlements WHERE id=%s AND tenant_id=%s FOR UPDATE",
+        settlement = db.execute("SELECT id,source_type,source_id FROM settlements WHERE id=%s AND tenant_id=%s FOR UPDATE",
                                 (source_id, user["tenant_id"])).fetchone()
         if not settlement:
             raise HTTPException(404, "Settlement not found.")
+        if settlement.get("source_type") == "bank_import":
+            bank = db.execute("SELECT recorded_document_id FROM bank_transactions WHERE tenant_id=%s AND id=%s",
+                              (user["tenant_id"], settlement["source_id"])).fetchone()
+            if bank and bank["recorded_document_id"]:
+                raise HTTPException(409, "This bank transaction already has a money document and journal.")
         linked = db.execute("""SELECT id,idempotency_key FROM journal_headers
             WHERE tenant_id=%s AND source_type='settlement' AND source_id=%s AND status='posted'""",
             (user["tenant_id"], source_id)).fetchall()
@@ -504,6 +509,11 @@ def create_settlement(data: SettlementInput, request: Request):
         raise HTTPException(422, "Invalid settlement direction or source type.")
     source_id = _uuid_or_422(data.sourceId, "source id") if data.sourceId else None
     with connect() as db:
+        if data.sourceType == "bank_import" and source_id:
+            bank = db.execute("SELECT recorded_document_id FROM bank_transactions WHERE tenant_id=%s AND id=%s FOR UPDATE",
+                              (user["tenant_id"], source_id)).fetchone()
+            if bank and bank["recorded_document_id"]:
+                raise HTTPException(409, "This bank transaction already has a money document.")
         row = db.execute("""INSERT INTO settlements(tenant_id,settlement_ref,settlement_date,direction,amount,currency,source_type,source_id,created_by)
             VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *""", (user["tenant_id"], data.settlementRef.strip(), data.settlementDate, data.direction, data.amount, data.currency.upper(), data.sourceType, source_id, user["id"])).fetchone()
     return {"id": str(row["id"]), "settlementRef": row["settlement_ref"], "direction": row["direction"], "amount": str(row["amount"]), "currency": row["currency"], "status": row["status"]}
@@ -514,14 +524,36 @@ def create_settlement_from_bank(transaction_id: str, request: Request):
     with connect() as db:
         bank = db.execute("SELECT * FROM bank_transactions WHERE id=%s AND tenant_id=%s FOR UPDATE", (transaction_id, user["tenant_id"])).fetchone()
         if not bank: raise HTTPException(404, "Bank transaction not found.")
-        existing = db.execute("SELECT * FROM settlements WHERE tenant_id=%s AND source_type='bank_import' AND source_id=%s", (user["tenant_id"], transaction_id)).fetchone()
+        row, existing = get_or_create_bank_settlement(db, user, bank)
         if existing:
-            return {"id": str(existing["id"]), "status": existing["status"], "idempotent": True}
-        if bank["status"] == 'ignored' or not bank["direction"] or not bank["currency"] or not bank["signed_amount_decimal"]:
-            raise HTTPException(409, "Only a classified bank transaction can become a settlement.")
-        row = db.execute("""INSERT INTO settlements(tenant_id,settlement_ref,settlement_date,direction,amount,currency,source_type,source_id,created_by)
-            VALUES (%s,%s,%s,%s,%s,%s,'bank_import',%s,%s) RETURNING *""", (user["tenant_id"], f"BANK-{transaction_id}", bank["posted_date"], bank["direction"], abs(bank["signed_amount_decimal"]), bank["currency"], transaction_id, user["id"])).fetchone()
+            return {"id": str(row["id"]), "status": row["status"], "idempotent": True}
     return {"id": str(row["id"]), "settlementRef": row["settlement_ref"], "direction": row["direction"], "amount": str(row["amount"]), "currency": row["currency"], "status": row["status"], "idempotent": False}
+
+
+def get_or_create_bank_settlement(db, user, bank):
+    """Reuse the bank settlement or create it while the caller holds the bank row lock."""
+    if bank["recorded_document_id"]:
+        raise HTTPException(409, "This bank transaction has already been recorded as a money document.")
+    transaction_id = bank["id"]
+    existing = db.execute("""SELECT * FROM settlements WHERE tenant_id=%s AND source_type='bank_import'
+        AND source_id=%s FOR UPDATE""", (user["tenant_id"], transaction_id)).fetchone()
+    if existing:
+        return existing, True
+    if bank["status"] == "ignored" or not all(bank[k] for k in ("direction", "currency", "signed_amount_decimal", "posted_date")):
+        raise HTTPException(409, "Only a classified bank transaction with a date, currency and amount can become a settlement.")
+    row = db.execute("""INSERT INTO settlements(tenant_id,settlement_ref,settlement_date,direction,amount,currency,source_type,source_id,created_by)
+        VALUES (%s,%s,%s,%s,%s,%s,'bank_import',%s,%s) RETURNING *""",
+        (user["tenant_id"], f"BANK-{transaction_id}", bank["posted_date"], bank["direction"],
+         abs(bank["signed_amount_decimal"]), bank["currency"], transaction_id, user["id"])).fetchone()
+    return row, False
+
+
+def settlement_allocated(db, tenant_id, settlement_id):
+    return db.execute("""SELECT COALESCE(SUM(a.amount),0) AS allocated FROM settlement_allocations a
+        WHERE a.tenant_id=%s AND a.settlement_id=%s AND a.status='active'
+          AND NOT EXISTS (SELECT 1 FROM settlement_allocations undo
+                          WHERE undo.tenant_id=a.tenant_id AND undo.reverses_allocation_id=a.id)""",
+        (tenant_id, settlement_id)).fetchone()["allocated"]
 
 def get_trial_balance(request: Request):
     user = require_workspace_user(request, {"super_admin", "local_admin", "accountant"})
@@ -755,12 +787,26 @@ def create_allocation(data: AllocationInput, request: Request):
     record_id = _uuid_or_422(data.recordId, "record id")
     try:
         with connect() as db:
+            bank = _lock_allocation_bank_line(db, user["tenant_id"], settlement_id)
+            if bank and (bank["recorded_document_id"] or bank["status"] == "ignored"):
+                raise HTTPException(409, "This bank transaction cannot be allocated in its current status.")
             _refuse_document_settlement(db, user["tenant_id"], settlement_id)
-            row = db.execute("""INSERT INTO settlement_allocations(tenant_id,settlement_id,record_id,amount,created_by)
-                VALUES (%s,%s,%s,%s,%s) RETURNING *""", (user["tenant_id"], settlement_id, record_id, data.amount, user["id"])).fetchone()
+            row = record_settlement_allocation(db, user, settlement_id, record_id, data.amount)
     except RaiseException as error:
         raise HTTPException(409, str(error).split('\n')[0])
     return {"id": str(row["id"]), "settlementId": str(row["settlement_id"]), "recordId": str(row["record_id"]), "amount": str(row["amount"]), "status": row["status"]}
+
+
+def record_settlement_allocation(db, user, settlement_id, record_id, amount):
+    return db.execute("""INSERT INTO settlement_allocations(tenant_id,settlement_id,record_id,amount,created_by)
+        VALUES (%s,%s,%s,%s,%s) RETURNING *""", (user["tenant_id"], settlement_id, record_id, amount, user["id"])).fetchone()
+
+
+def _lock_allocation_bank_line(db, tenant_id, settlement_id):
+    return db.execute("""SELECT b.id,b.status,b.recorded_document_id FROM settlements s
+        JOIN bank_transactions b ON b.id=s.source_id AND b.tenant_id=s.tenant_id
+        WHERE s.id=%s AND s.tenant_id=%s AND s.source_type='bank_import' FOR UPDATE OF b""",
+        (settlement_id, tenant_id)).fetchone()
 
 def reverse_allocation(allocation_id: str, request: Request):
     user = require_workspace_user(request, {"local_admin", "accountant"})
@@ -768,13 +814,22 @@ def reverse_allocation(allocation_id: str, request: Request):
     with connect() as db:
         original = db.execute("""SELECT a.* FROM settlement_allocations a
             JOIN settlements s ON s.id=a.settlement_id AND s.tenant_id=a.tenant_id
-            WHERE a.id=%s AND a.tenant_id=%s AND a.status='active' FOR UPDATE OF s""",
+            WHERE a.id=%s AND a.tenant_id=%s AND a.status='active'""",
             (allocation_id, user["tenant_id"])).fetchone()
         if not original: raise HTTPException(404, "Active allocation not found.")
-        _refuse_document_settlement(db, user["tenant_id"], original["settlement_id"])
-        require_no_posted_settlement_journal(db, user["tenant_id"], original["settlement_id"])
+        tenant_id, settlement_id = user["tenant_id"], original["settlement_id"]
+        bank = _lock_allocation_bank_line(db, tenant_id, settlement_id)
+        db.execute("SELECT id FROM settlements WHERE id=%s AND tenant_id=%s FOR UPDATE", (settlement_id, tenant_id))
+        _refuse_document_settlement(db, tenant_id, settlement_id)
+        require_no_posted_settlement_journal(db, tenant_id, settlement_id)
         row = db.execute("""INSERT INTO settlement_allocations(tenant_id,settlement_id,record_id,amount,status,created_by,reversed_at,reversal_reason,reverses_allocation_id)
             VALUES (%s,%s,%s,%s,'reversed',%s,now(),'Allocation undone',%s) RETURNING *""", (user["tenant_id"], original["settlement_id"], original["record_id"], original["amount"], user["id"], original["id"])).fetchone()
+        if bank and bank["status"] == "matched" and not bank["recorded_document_id"]:
+            # A single confirmed match has its own reversal workflow. Allocation-only matches reopen here.
+            db.execute("""UPDATE bank_transactions b SET status='imported'
+                WHERE b.id=%s AND b.tenant_id=%s AND NOT EXISTS (SELECT 1 FROM reconciliation_candidates c
+                    WHERE c.bank_transaction_id=b.id AND c.tenant_id=b.tenant_id AND c.status='confirmed')""",
+                (bank["id"], tenant_id))
     return {"id": str(row["id"]), "reversedAllocationId": allocation_id, "status": "reversed"}
 
 

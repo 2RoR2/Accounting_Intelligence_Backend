@@ -12,6 +12,7 @@ REQUIRED_COLUMNS = {
     "field_predictions": {"extraction_id": "uuid", "raw_value": "text", "current_value": "text"},
     "line_item_corrections": {"document_id": "uuid"},
     "standardised_records": {"document_id": "uuid", "is_current": "bool"},
+    "bank_transactions": {"recorded_document_id": "uuid"},
     # Plan L1 (20261122_erp_module.sql): the sales/purchases module and the shared contact columns.
     "vendors": {"is_active": "bool", "fields": "jsonb"},
     "customers": {"is_active": "bool", "fields": "jsonb"},

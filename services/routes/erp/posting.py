@@ -334,7 +334,7 @@ def scanned_keys(record) -> list[str]:
 
 
 def scanned_posted_journal(db, tenant_id, record):
-    return db.execute("""SELECT id,status FROM journal_headers WHERE tenant_id=%s AND idempotency_key = ANY(%s)
+    return db.execute("""SELECT id,status,journal_date FROM journal_headers WHERE tenant_id=%s AND idempotency_key = ANY(%s)
         ORDER BY posted_at LIMIT 1""", (tenant_id, scanned_keys(record))).fetchone()
 
 

@@ -1,6 +1,12 @@
 from __future__ import annotations
 import json
+import logging
+from typing import Literal
+
+from pydantic import BaseModel, Field
 from main import *
+
+review_logger = logging.getLogger(__name__)
 
 def _notify_tenant_users(db, tenant_id, actor_id, title, message, resource, roles=('local_admin', 'accountant')):
     users = db.execute("SELECT id FROM users WHERE tenant_id=%s AND role=ANY(%s::text[]) AND id<>%s", (tenant_id, list(roles), actor_id)).fetchall()
@@ -1128,50 +1134,126 @@ def _require_approvable_document(db, document, user):
 def submit_document_review(document_id: str, data: ReviewInput, request: Request):
     user = require_workspace_user(request, {"accountant"})
     with connect() as db:
-        document = _lock_workspace_document(db, document_id, user)
-        _require_current_extraction(db, document_id)
-        if document['status'] not in {'extracted','corrected','exception'}:
-            raise HTTPException(409, 'Only extracted documents can be submitted for review.')
-        if data.expectedContentRevision is not None and data.expectedContentRevision != document["content_revision"]:
-            raise HTTPException(409, "The document changed. Refresh it before submitting for approval.")
-        if data.decision != "submitted":
-            raise HTTPException(422, "Accountants submit documents for approval; only local administrators can decide them.")
-        _require_approvable_document(db, document, user)
-        db.execute("SELECT set_config('app.user_id',%s,true), set_config('app.status_reason',%s,true)", (str(user['id']), 'Submitted for independent approval'))
-        db.execute("INSERT INTO review_submissions(document_id,tenant_id,submitted_by,decision,note,content_revision) VALUES (%s,%s,%s,%s,%s,(SELECT content_revision FROM documents WHERE id=%s))", (document_id, user["tenant_id"], user["id"], data.decision, data.note, document_id))
-        _notify_tenant_users(db, user['tenant_id'], user['id'], 'Document submitted for approval',
-                             f"{document.get('document_code', 'A document')} is ready for approval.", f"documents/{document_id}", roles=('local_admin',))
-        next_status = "in_review"
-        db.execute("UPDATE documents SET status=%s,updated_at=now() WHERE id=%s", (next_status, document_id))
-        _document_action(db, user, document_id, 'document.submitted', {'content_revision': document['content_revision'], 'note': data.note})
+        return _submit_document_review(db, user, document_id, data)
+
+
+def _submit_document_review(db, user, document_id, data):
+    document = _lock_workspace_document(db, document_id, user)
+    _require_current_extraction(db, document_id)
+    if document['status'] not in {'extracted','corrected','exception'}:
+        raise HTTPException(409, 'Only extracted documents can be submitted for review.')
+    if data.expectedContentRevision is not None and data.expectedContentRevision != document["content_revision"]:
+        raise HTTPException(409, "The document changed. Refresh it before submitting for approval.")
+    if data.decision != "submitted":
+        raise HTTPException(422, "Accountants submit documents for approval; only local administrators can decide them.")
+    _require_approvable_document(db, document, user)
+    db.execute("SELECT set_config('app.user_id',%s,true), set_config('app.status_reason',%s,true)", (str(user['id']), 'Submitted for independent approval'))
+    db.execute("INSERT INTO review_submissions(document_id,tenant_id,submitted_by,decision,note,content_revision) VALUES (%s,%s,%s,%s,%s,(SELECT content_revision FROM documents WHERE id=%s))", (document_id, user["tenant_id"], user["id"], data.decision, data.note, document_id))
+    _notify_tenant_users(db, user['tenant_id'], user['id'], 'Document submitted for approval',
+                         f"{document.get('document_code', 'A document')} is ready for approval.", f"documents/{document_id}", roles=('local_admin',))
+    next_status = "in_review"
+    db.execute("UPDATE documents SET status=%s,updated_at=now() WHERE id=%s", (next_status, document_id))
+    _document_action(db, user, document_id, 'document.submitted', {'content_revision': document['content_revision'], 'note': data.note})
     return {"documentId": document_id, "decision": data.decision, "status": next_status.upper()}
+
 
 def decide_document_review(document_id: str, data: ReviewDecisionInput, request: Request):
     user = require_workspace_user(request, {"local_admin"})
     with connect() as db:
-        document = _lock_workspace_document(db, document_id, user)
-        _require_current_extraction(db, document_id)
-        if document["status"] != "in_review":
-            raise HTTPException(409, "Only documents currently in review can be approved or returned.")
-        if data.expectedContentRevision is not None and data.expectedContentRevision != document["content_revision"]:
-            raise HTTPException(409, "The document changed. Refresh it before deciding this review.")
-        submission = db.execute("""SELECT id,submitted_by FROM review_submissions
-            WHERE document_id=%s AND tenant_id=%s AND decision='submitted' AND content_revision=%s AND submitted_by<>%s
-            ORDER BY created_at DESC LIMIT 1""", (document_id, user["tenant_id"], document["content_revision"], user["id"])).fetchone()
-        if not submission:
-            raise HTTPException(422, "The document has not been submitted for approval.")
-        if data.decision == 'approved':
-            _require_approvable_document(db, document, user)
-        db.execute("SELECT set_config('app.user_id',%s,true), set_config('app.status_reason',%s,true)", (str(user['id']), 'Independent review: ' + data.decision))
-        db.execute("""INSERT INTO review_decisions(submission_id,document_id,tenant_id,reviewed_by,decision,note,approved_content_revision)
-            SELECT %s,%s,%s,%s,%s,%s,content_revision FROM documents WHERE id=%s AND tenant_id=%s""", (submission["id"], document_id, user["tenant_id"], user["id"], data.decision, data.note, document_id, user["tenant_id"]))
-        next_status = "validated" if data.decision == "approved" else "exception"
-        db.execute("UPDATE documents SET status=%s,updated_at=now() WHERE id=%s", (next_status, document_id))
-        _document_action(db, user, document_id, 'document.' + data.decision, {'content_revision': document['content_revision'], 'submission_id': str(submission['id']), 'note': data.note})
-        title = 'Document approved' if data.decision == 'approved' else 'Document review updated'
-        message = f"{document.get('document_code', 'A document')} was approved." if data.decision == 'approved' else f"{document.get('document_code', 'A document')} review status is {next_status}."
-        db.execute("INSERT INTO notifications(tenant_id,user_id,type,title,message,resource) VALUES (%s,%s,%s,%s,%s,%s)", (user['tenant_id'], submission['submitted_by'], 'document_workflow', title, message, f"documents/{document_id}"))
+        return _decide_document_review(db, user, document_id, data)
+
+
+class _SameReviewer(HTTPException):
+    """Preserve the single endpoint's error while letting bulk give a specific reason."""
+
+    def __init__(self):
+        super().__init__(422, "The document has not been submitted for approval.")
+
+
+def _decide_document_review(db, user, document_id, data):
+    document = _lock_workspace_document(db, document_id, user)
+    _require_current_extraction(db, document_id)
+    if document["status"] != "in_review":
+        raise HTTPException(409, "Only documents currently in review can be approved or returned.")
+    if data.expectedContentRevision is not None and data.expectedContentRevision != document["content_revision"]:
+        raise HTTPException(409, "The document changed. Refresh it before deciding this review.")
+    submission = db.execute("""SELECT id,submitted_by FROM review_submissions
+        WHERE document_id=%s AND tenant_id=%s AND decision='submitted' AND content_revision=%s
+        ORDER BY created_at DESC, id DESC LIMIT 1""", (document_id, user["tenant_id"], document["content_revision"])).fetchone()
+    if not submission:
+        raise HTTPException(422, "The document has not been submitted for approval.")
+    if submission["submitted_by"] == user["id"]:
+        raise _SameReviewer()
+    if data.decision == 'approved':
+        _require_approvable_document(db, document, user)
+    db.execute("SELECT set_config('app.user_id',%s,true), set_config('app.status_reason',%s,true)", (str(user['id']), 'Independent review: ' + data.decision))
+    db.execute("""INSERT INTO review_decisions(submission_id,document_id,tenant_id,reviewed_by,decision,note,approved_content_revision)
+        SELECT %s,%s,%s,%s,%s,%s,content_revision FROM documents WHERE id=%s AND tenant_id=%s""", (submission["id"], document_id, user["tenant_id"], user["id"], data.decision, data.note, document_id, user["tenant_id"]))
+    next_status = "validated" if data.decision == "approved" else "exception"
+    db.execute("UPDATE documents SET status=%s,updated_at=now() WHERE id=%s", (next_status, document_id))
+    _document_action(db, user, document_id, 'document.' + data.decision, {'content_revision': document['content_revision'], 'submission_id': str(submission['id']), 'note': data.note})
+    title = 'Document approved' if data.decision == 'approved' else 'Document review updated'
+    message = f"{document.get('document_code', 'A document')} was approved." if data.decision == 'approved' else f"{document.get('document_code', 'A document')} review status is {next_status}."
+    db.execute("INSERT INTO notifications(tenant_id,user_id,type,title,message,resource) VALUES (%s,%s,%s,%s,%s,%s)", (user['tenant_id'], submission['submitted_by'], 'document_workflow', title, message, f"documents/{document_id}"))
     return {"documentId": document_id, "decision": data.decision, "reviewedBy": str(user["id"]), "status": next_status.upper()}
+
+
+class ReviewBulkItem(BaseModel):
+    documentId: str
+    expectedContentRevision: int
+
+
+class BulkReviewInput(BaseModel):
+    items: list[ReviewBulkItem] = Field(min_length=1, max_length=100)
+    note: str = Field(default="", max_length=4000)
+
+
+class BulkDecisionInput(BulkReviewInput):
+    decision: Literal["approved"]
+
+
+def _bulk_review(user, data, action, review_type, decision):
+    results = []
+    for item in data.items:
+        result = {"documentId": item.documentId}
+        try:
+            document_id = str(_uuid_or_422(item.documentId, "document id"))
+            if item.expectedContentRevision < 1:
+                raise HTTPException(422, "The expected document revision must be at least 1.")
+            review = review_type(decision=decision, note=data.note, expectedContentRevision=item.expectedContentRevision)
+            with connect() as db:
+                response = action(db, user, document_id, review)
+            result.update(ok=True, status=response["status"])
+        except _SameReviewer:
+            result.update(ok=False, reason="Someone else must review this document because you submitted it for approval.")
+        except HTTPException as error:
+            result.update(ok=False, reason=error.detail)
+        except Exception:
+            review_logger.exception("Bulk %s failed for document %s", decision, item.documentId)
+            result.update(ok=False, reason="The document review could not be saved. Check the document and review note.")
+        results.append(result)
+    return {"results": results}
+
+
+def bulk_submit_document_review(data: BulkReviewInput, request: Request):
+    user = require_workspace_user(request, {"accountant"})
+    return _bulk_review(user, data, _submit_document_review, ReviewInput, "submitted")
+
+
+def bulk_decide_document_review(data: BulkDecisionInput, request: Request):
+    user = require_workspace_user(request, {"local_admin"})
+    return _bulk_review(user, data, _decide_document_review, ReviewDecisionInput, data.decision)
+
+
+def get_suggested_fixes(document_id: str, request: Request):
+    from .suggested_fixes import suggested_fixes
+
+    user = require_workspace_user(request, {"accountant", "local_admin"})
+    document_id = _uuid_or_422(document_id, "document id")
+    with connect() as db:
+        db.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        return suggested_fixes(db, user, document_id)
+
 
 def list_document_comments(document_id: str, request: Request):
     user = require_workspace_user(request)
@@ -1433,6 +1515,9 @@ def register(router, handlers):
     router.add_api_route('/api/documents/{document_id}/kind', choose_document_kind, methods=['PATCH'])
     router.add_api_route('/api/documents/{document_id}/validation-review', accept_validation_review, methods=['POST'])
     router.add_api_route('/api/documents/{document_id}/draft', save_document_draft, methods=['POST'])
+    router.add_api_route('/api/documents/review/bulk-submit', bulk_submit_document_review, methods=['POST'])
+    router.add_api_route('/api/documents/review/bulk-decision', bulk_decide_document_review, methods=['POST'])
+    router.add_api_route('/api/documents/{document_id}/suggested-fixes', get_suggested_fixes, methods=['GET'])
     router.add_api_route('/api/documents/{document_id}/review', submit_document_review, methods=['POST'])
     router.add_api_route('/api/documents/{document_id}/review/decision', decide_document_review, methods=['POST'])
     router.add_api_route('/api/documents/{document_id}/comments', list_document_comments, methods=['GET'])
