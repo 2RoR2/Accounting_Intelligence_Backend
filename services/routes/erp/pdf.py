@@ -373,8 +373,23 @@ class _Renderer:
         return lines
 
     # -- blocks ------------------------------------------------------------
+    def header_rows(self) -> list[tuple[str, str]]:
+        doc = self.doc
+        revision = doc.get("revision")
+        return [
+            ("No.", self.number),
+            ("Date", _date(doc.get("documentDate"))),
+            ("Due date", _date(doc.get("dueDate"))),
+            ("Reference", _s(doc.get("referenceNo"))),
+            ("Terms", _s(doc.get("paymentTerms"))),
+            (_s(doc.get("relatedLabel")) or "Related document", _s(doc.get("relatedNumber"))),
+            ("Payment method", _s(doc.get("paymentMethod"))),
+            ("Revision", "" if revision is None else str(revision)),
+            ("Issued", _date(doc.get("issuedAt"))),
+        ]
+
     def header(self) -> None:
-        c, company, doc = self.c, self.company, self.doc
+        c, company = self.c, self.company
         left_width = 290
         yl = TOP
         for ln in c.wrap(company.get("name"), left_width, 14, True):
@@ -397,20 +412,8 @@ class _Renderer:
         yr = TOP + 15
         c.text(RIGHT, yr, self.title, 16, True, "right")
         yr += 6
-        revision = doc.get("revision")
-        rows = [
-            ("No.", self.number),
-            ("Date", _date(doc.get("documentDate"))),
-            ("Due date", _date(doc.get("dueDate"))),
-            ("Reference", _s(doc.get("referenceNo"))),
-            ("Terms", _s(doc.get("paymentTerms"))),
-            (_s(doc.get("relatedLabel")) or "Related document", _s(doc.get("relatedNumber"))),
-            ("Payment method", _s(doc.get("paymentMethod"))),
-            ("Revision", "" if revision is None else str(revision)),
-            ("Issued", _date(doc.get("issuedAt"))),
-        ]
         label_x, value_x, value_width = 372, 452, RIGHT - 452
-        for label, value in rows:
+        for label, value in self.header_rows():
             if not value:
                 continue
             labels = c.wrap(label, value_x - label_x - 4, 8)
@@ -621,4 +624,127 @@ def render_document_pdf(doc: dict, company: dict, *, watermark: str | None = Non
     if watermark:
         canvas.set_watermark(watermark)
     _Renderer(canvas, doc, company, doc_type, title).render()
+    return canvas.to_bytes()
+
+
+# ---------------------------------------------------------------------------
+# Statement of account (same header, contact block and footer as issued documents)
+# ---------------------------------------------------------------------------
+STATEMENT_TITLE = "STATEMENT OF ACCOUNT"
+_STATEMENT_COLUMNS = (
+    ("date", "Date", 55, "left"),
+    ("label", "Transaction", 85, "left"),
+    ("number", "No.", 80, "left"),
+    ("description", "Description", 125, "left"),
+    ("debit", "Debit", 55, "right"),
+    ("credit", "Credit", 55, "right"),
+    ("balance", "Balance", 60, "right"),
+)
+_AGEING_LABELS = {"current": "Current", "1-30": "1-30 days", "31-60": "31-60 days", "61-90": "61-90 days",
+                  "90+": "Over 90 days"}
+
+
+def _blank_zero(value: Any) -> str:
+    return _s(value) if _nonzero(value) else ""
+
+
+class _StatementRenderer(_Renderer):
+    def _fit(self, value: Any, width: float, size: float = 6.5) -> str:
+        """Shorten a reference that would not fit its column even at the smallest size, ending in "..."."""
+        text = _s(value)
+        if self.c.text_width(text, size) <= width:
+            return text
+        while text and self.c.text_width(text + "...", size) > width:
+            text = text[:-1]
+        return text + "..."
+
+    def header_rows(self) -> list[tuple[str, str]]:
+        doc = self.doc
+        return [
+            ("Period", f"{_date(doc.get('fromDate'))} to {_date(doc.get('toDate'))}"),
+            ("Currency", self.currency),
+            ("Account", "Receivable" if doc.get("kind") == "customer" else "Payable"),
+        ]
+
+    def transactions(self) -> None:
+        doc = self.doc
+        rows = [{"date": _date(doc.get("fromDate")), "label": "Opening balance", "number": "", "description": "",
+                 "debit": "", "credit": "", "balance": _s(doc.get("openingBalance"))}]
+        for line in doc.get("lines") or []:
+            rows.append({"date": _date(line.get("date")), "label": _s(line.get("label")), "number": self._fit(line.get("number"), 74),
+                         "description": _s(line.get("description")), "debit": _blank_zero(line.get("debit")),
+                         "credit": _blank_zero(line.get("credit")), "balance": _s(line.get("balance"))})
+        rows.append({"date": _date(doc.get("toDate")), "label": "Closing balance", "number": "", "description": "",
+                     "debit": _s(doc.get("totalDebit")), "credit": _s(doc.get("totalCredit")),
+                     "balance": _s(doc.get("closingBalance"))})
+        self.y += 6
+        self.table(_STATEMENT_COLUMNS, rows, "description")
+
+    def summary(self) -> None:
+        doc, c = self.doc, self.c
+        label = _s(doc.get("balanceLabel")) or "Balance"
+        self.ensure(40)
+        self.y += 20
+        c.line(300, self.y - 13, RIGHT, self.y - 13, 0.75)
+        c.text(468, self.y, f"{label} ({self.currency})", 10, True, "right")
+        self.cell(472, self.y, RIGHT - 472, _s(doc.get("closingBalance")), 10, True, "right")
+        self.y += 8
+
+    def ageing(self) -> None:
+        ageing = self.doc.get("ageing") or {}
+        buckets = ageing.get("buckets") or list(_AGEING_LABELS)
+        totals = ageing.get("totals") or {}
+        width = CONTENT_WIDTH // (len(buckets) + 1)
+        columns = tuple((key, _AGEING_LABELS.get(key, key), width, "right") for key in buckets)
+        columns += (("total", "Open items", CONTENT_WIDTH - width * len(buckets), "right"),)
+        self.ensure(14 + 16 + ROW_LINE + ROW_PAD + 30)
+        self.y += 16
+        self.c.text(LEFT, self.y, f"Ageing at {_date(ageing.get('asOf'))} (days past due)", 9, True)
+        self.y += 4
+        self._ageing_table(columns, {**{k: _s(totals.get(k)) for k in buckets}, "total": _s(ageing.get("openItems"))})
+        extra = []
+        unallocated = _s(ageing.get("unallocatedCredits"))
+        if _nonzero(unallocated):
+            negated = unallocated[1:] if unallocated.startswith("-") else f"-{unallocated}"
+            extra.append(("Payments and credits not allocated to an item", negated))
+            extra.append(("Balance", _s(ageing.get("balance"))))
+        if ageing.get("reconciles") is False:
+            extra.append(("Difference to the closing balance (review)", _s(ageing.get("difference"))))
+        for text, value in extra:
+            self.ensure(13)
+            self.y += 13
+            self.c.text(468, self.y, text, 8.5, False, "right")
+            self.cell(472, self.y, RIGHT - 472, value, 8.5, False, "right")
+
+    def _ageing_table(self, columns: tuple, values: dict) -> None:
+        self.table_header(columns)
+        x = LEFT
+        for key, _head, width, align in columns:
+            self.cell(x, self.y + 10, width, values.get(key, ""), 8.5, key == "total", align)
+            x += width
+        self.y += ROW_LINE + ROW_PAD
+        self.c.line(LEFT, self.y, RIGHT, self.y, 0.25)
+
+    def render(self) -> None:
+        self.header()
+        self.contact()
+        self.transactions()
+        self.summary()
+        self.ageing()
+        self.text_section("Notes", "Amounts are as recorded in the books (tax as recorded on each document). "
+                                   "Please tell us about any difference.")
+        self.footers()
+
+
+def render_statement_pdf(statement: dict, company: dict) -> bytes:
+    """Render a statement of account (already formatted values, as the JSON statement returns them)."""
+    statement = dict(statement or {})
+    company = company or {}
+    contact = statement.get("contact") or {}
+    statement.setdefault("contactLabel", "Statement for")
+    statement["contact"] = {k: contact.get(k) for k in ("name", "code", "registrationNumber", "tin", "address",
+                                                         "phone", "email")}
+    statement["number"] = f"{_date(statement.get('fromDate'))} - {_date(statement.get('toDate'))}"
+    canvas = PdfCanvas(title=f"{STATEMENT_TITLE} {_s(contact.get('name'))}".strip())
+    _StatementRenderer(canvas, statement, company, "statement", STATEMENT_TITLE).render()
     return canvas.to_bytes()
