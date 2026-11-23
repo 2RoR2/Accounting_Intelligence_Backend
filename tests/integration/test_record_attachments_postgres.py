@@ -221,6 +221,17 @@ def test_links_must_be_plain_https(company):
                     VALUES (%s,'erp_document',%s,'file','/x','x','image/png',10485761)""", (ids['tenant'], record))
 
 
+def test_a_link_with_an_uppercase_scheme_is_stored_lowercase_not_a_server_error(company):
+    connect, ids = company
+    accountant, record = ids['accountant'], ids['records']['money-in']
+    made = link(accountant, 'money-in', record, 'HTTPS://Bank.Example.com/Slip/9')
+    assert made.status_code == 201, made.text
+    assert link(accountant, 'money-in', record, 'Https://example.com/b', 'Mixed case').status_code == 201
+    assert [i['url'] for i in listing(accountant, 'money-in', record)] == ['https://Bank.Example.com/Slip/9', 'https://example.com/b']
+    with connect() as db:
+        assert db.execute("SELECT count(*) AS n FROM record_attachments WHERE target_id=%s AND url !~ '^https://'", (record,)).fetchone()['n'] == 0
+
+
 def test_files_are_served_with_the_safe_preview_headers(company):
     _, ids = company
     accountant, record = ids['accountant'], ids['records']['payment']

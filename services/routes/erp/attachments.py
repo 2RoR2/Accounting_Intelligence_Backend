@@ -76,7 +76,8 @@ def validate_link(raw: str) -> str:
         raise HTTPException(422, "The link is not a valid web address.") from None
     if not host or parts.username is not None or parts.password is not None:
         raise HTTPException(422, "The link is not a valid web address.")
-    return url
+    # The scheme is case-insensitive; store it lowercase because the table requires a literal https://.
+    return "https://" + url[8:]
 
 
 def _document(db, user, document_type: str, document_id):
