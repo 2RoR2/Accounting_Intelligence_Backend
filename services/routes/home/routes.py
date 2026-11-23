@@ -42,7 +42,7 @@ def _table_exists(db, name: str) -> bool:
 
 
 def _document_scope(user) -> tuple[str, list]:
-    clauses, params = ['d.tenant_id=%s'], [user['tenant_id']]
+    clauses, params = ['d.tenant_id=%s', 'd.excluded_at IS NULL'], [user['tenant_id']]
     if user['role'] == 'accountant':
         clauses.append(ACCOUNTANT_DOCUMENT_VISIBILITY)
         params += [user['id'], user['id']]
@@ -141,7 +141,7 @@ def typed_open_items(db, user, category: str, today: date, soon_sql, soon_params
     Same windows as the scanned records; the tiles add both so they agree with the ageing report."""
     if not _table_exists(db, 'erp_document_headers'):
         return {}
-    document_type = 'bill' if category == 'accounts_payable' else 'invoice'
+    document_type = ['bill', 'purchase-debit-note'] if category == 'accounts_payable' else ['invoice', 'debit-note']
     balance = """GREATEST(h.total_amount-COALESCE((SELECT SUM(a.amount) FROM erp_document_allocations a
         WHERE a.tenant_id=h.tenant_id AND a.target_document_id=h.id AND a.status='active'),0),0)"""
     return db.execute(f"""SELECT
@@ -153,7 +153,7 @@ def typed_open_items(db, user, category: str, today: date, soon_sql, soon_params
             count(*) FILTER (WHERE {late_sql} AND r.currency<>%s) AS late_other,
             count(*) FILTER (WHERE r.due_date IS NULL) AS no_due_date
         FROM (SELECT h.due_date,h.currency,{balance} AS balance FROM erp_document_headers h
-              WHERE h.tenant_id=%s AND h.document_type=%s AND h.status='ready') r
+              WHERE h.tenant_id=%s AND h.document_type=ANY(%s) AND h.status='ready') r
         WHERE r.balance > 0""",
                       [*soon_params, *soon_params, HOME_CURRENCY, *soon_params, HOME_CURRENCY,
                        *late_params, *late_params, HOME_CURRENCY, *late_params, HOME_CURRENCY,

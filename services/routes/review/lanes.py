@@ -80,7 +80,7 @@ def review_lanes(request: Request, stage: str | None = None):
     stage = stage or ('approve' if user['role'] == 'local_admin' else 'submit')
     if stage not in STAGE_STATUSES:
         raise HTTPException(422, 'stage must be submit or approve.')
-    clauses = ['d.tenant_id=%s', 'd.status = ANY(%s::text[])']
+    clauses = ['d.tenant_id=%s', 'd.status = ANY(%s::text[])', 'd.excluded_at IS NULL']
     params: list[object] = [user['tenant_id'], list(STAGE_STATUSES[stage])]
     if user['role'] == 'accountant':
         clauses.append(ACCOUNTANT_DOCUMENT_VISIBILITY)

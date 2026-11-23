@@ -224,12 +224,15 @@ def record_journal(db, user, data: JournalInput, *, bank_payment_batch=False):
     return {"id": str(header["id"]), "status": "posted", "idempotent": False}
 
 def _refuse_typed_copy(user, record_id):
-    """Plan L5: a scanned invoice/bill already entered and posted as a typed document must not post again."""
+    """Plan L5: a scanned invoice/bill already entered and posted as a typed document must not post again.
+    Plan M2: a captured document never posts as a sale, and never when the company itself is the seller."""
+    from services.company_identity import refuse_own_sales_document
     from services.routes.erp.posting import refuse_if_typed_copy
     with connect() as db:
         record = db.execute("""SELECT r.*,d.kind FROM standardised_records r JOIN documents d ON d.id=r.document_id AND d.tenant_id=r.tenant_id
             WHERE r.id=%s AND r.tenant_id=%s""", (record_id, user["tenant_id"])).fetchone()
         if record:
+            refuse_own_sales_document(db, user["tenant_id"], record)
             refuse_if_typed_copy(db, user["tenant_id"], record)
 
 
@@ -822,12 +825,12 @@ def get_profit_and_loss_dashboard(request: Request, fromDate: date, toDate: date
                     AND COALESCE(r.amount_due,r.total_amount)>0
                 UNION ALL
                 -- Plan L4: typed invoices and bills that are ready (posted), less payments and credit notes allocated to them.
-                SELECT h.id,CASE h.document_type WHEN 'invoice' THEN 'accounts_receivable' ELSE 'accounts_payable' END,
+                SELECT h.id,CASE WHEN h.document_type IN ('invoice','debit-note') THEN 'accounts_receivable' ELSE 'accounts_payable' END,
                     h.currency,h.due_date,
                     GREATEST(h.total_amount-COALESCE((SELECT SUM(a.amount) FROM erp_document_allocations a
                         WHERE a.tenant_id=h.tenant_id AND a.target_document_id=h.id AND a.status='active'),0),0)
                 FROM erp_document_headers h
-                WHERE h.tenant_id=%s AND h.status='ready' AND h.document_type IN ('invoice','bill') AND h.total_amount>0
+                WHERE h.tenant_id=%s AND h.status='ready' AND h.document_type IN ('invoice','bill','debit-note','purchase-debit-note') AND h.total_amount>0
             )
             SELECT category,currency,
                 CASE WHEN due_date IS NULL THEN 'no_due_date'

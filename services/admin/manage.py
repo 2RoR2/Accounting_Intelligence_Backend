@@ -54,7 +54,12 @@ def main():
         "seed-erp-demo", help="local only: typed sales/purchases for a seeded demo company, all posted (Plan L9)"))
     browser_session.add_arguments(commands.add_parser(
         "browser-session", help="local only: Playwright cookie file for a synthetic *.demo.test user"))
+    from services.admin import planm_tidy
+    planm_tidy.add_arguments(commands.add_parser(
+        "planm-tidy", help="local only: contact codes, own-sales captures excluded, M4 names (dry run unless --apply)"))
     args = parser.parse_args()
+    if args.command == "planm-tidy":
+        sys.exit(planm_tidy.run(args))
     if args.command == "browser-session":
         sys.exit(browser_session.run(args))
     if args.command == "seed-demo-company":

@@ -7,8 +7,8 @@ from uuid import UUID
 from main import HTTPException, Request, _uuid_or_422, require_workspace_user
 
 DOCUMENT_TYPES = frozenset({
-    "quotation", "sales-order", "delivery-order", "invoice", "credit-note", "payment",
-    "refund", "purchase-order", "goods-received", "bill", "purchase-credit-note",
+    "quotation", "sales-order", "delivery-order", "invoice", "credit-note", "debit-note", "payment",
+    "refund", "purchase-order", "goods-received", "bill", "purchase-credit-note", "purchase-debit-note",
     "purchase-payment", "purchase-refund", "money-in", "money-out", "bank-transfer",
     "stock-adjustment", "stock-transfer", "journal-entry", "contra", "deemed-payment",
     "store-order", "minipos-order",

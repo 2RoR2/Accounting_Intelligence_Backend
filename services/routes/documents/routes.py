@@ -157,7 +157,7 @@ def list_documents(
     from services.routes.home.lanes import DOCUMENT_LANES
     if lane is not None and lane not in DOCUMENT_LANES:
         raise HTTPException(422, "Unknown document list: " + ", ".join(sorted(DOCUMENT_LANES)) + " are supported.")
-    clauses = ["(%s IS NULL OR d.tenant_id=%s)"]
+    clauses = ["(%s IS NULL OR d.tenant_id=%s)", "d.excluded_at IS NULL"]  # Plan M B1: excluded own-sales captures
     params: list[object] = [scope, scope]
     if user["role"] == "accountant":
         clauses.append("(d.owner_id=%s OR d.assigned_to=%s OR EXISTS (SELECT 1 FROM benchmark_demo_documents bd JOIN benchmark_demo_tenants bt ON bt.tenant_id=bd.tenant_id AND bt.enabled=true WHERE bd.tenant_id=d.tenant_id AND bd.document_id=d.id))")
@@ -218,10 +218,11 @@ def list_documents(
                    COALESCE(sr.supplier_name, supplier_field.value) AS supplier_name,
                    COALESCE(sr.buyer_name, customer_field.value) AS buyer_name,
                    COALESCE(sr.due_date::text, due_field.current_value, due_field.normalized_value, due_field.raw_value) AS due_date_value,
-                   COALESCE(sr.invoice_number, sr.reference_number, identifier_field.value) AS detected_identifier
+                   COALESCE(sr.invoice_number, sr.reference_number, identifier_field.value) AS detected_identifier,
+                   COALESCE(sr.invoice_date::text, date_field.value) AS document_date_value
             FROM documents d
             LEFT JOIN LATERAL (
-                SELECT total_amount, supplier_name, buyer_name, due_date, invoice_number, reference_number
+                SELECT total_amount, supplier_name, buyer_name, due_date, invoice_number, reference_number, invoice_date
                 FROM standardised_records
                 WHERE document_id=d.id
                 ORDER BY revision_number DESC
@@ -243,6 +244,10 @@ def list_documents(
                 WHERE document_id=d.id AND field_key='customer' ORDER BY created_at DESC LIMIT 1
             ) customer_field ON true
             LEFT JOIN LATERAL (
+                SELECT COALESCE(current_value, normalized_value) AS value FROM field_predictions
+                WHERE document_id=d.id AND field_key='date' ORDER BY created_at DESC LIMIT 1
+            ) date_field ON true
+            LEFT JOIN LATERAL (
                 SELECT COALESCE(current_value, normalized_value, raw_value) AS value
                 FROM field_predictions
                 WHERE document_id=d.id
@@ -253,7 +258,33 @@ def list_documents(
             WHERE {' AND '.join(clauses)}
             ORDER BY d.uploaded_at DESC
         """, params).fetchall()
-    return [{"id": str(r["id"]), "code": r["document_code"], "name": _display_filename(r["original_filename"], r["detected_identifier"], r["buyer_name"] if r["category"] == "accounts_receivable" else r["supplier_name"]), "originalFilename": r["original_filename"], "tenantId": str(r["tenant_id"]), "ownerId": str(r["owner_id"]), "assignedTo": str(r["assigned_to"]) if r["assigned_to"] else None, **read_kind(r), "category": r["category"].upper(), "status": r["status"].upper(), "mimeType": r["mime_type"], "fileSize": r["file_size_bytes"], "contentRevision": r["content_revision"], "seconds": float(r["processing_seconds"]) if r["processing_seconds"] is not None else 0, "totalAmount": float(r["total_amount"]) if r["total_amount"] is not None else None, "supplier": r["supplier_name"], "customer": r["buyer_name"], "dueDate": r["due_date_value"], "createdAt": str(r["uploaded_at"]), "updatedAt": str(r["updated_at"])} for r in rows]
+        names = _ReadableNames(db, user)
+    return [{"id": str(r["id"]), "code": r["document_code"], **names.of(r), "name": _display_filename(r["original_filename"], r["detected_identifier"], r["buyer_name"] if r["category"] == "accounts_receivable" else r["supplier_name"]), "originalFilename": r["original_filename"], "tenantId": str(r["tenant_id"]), "ownerId": str(r["owner_id"]), "assignedTo": str(r["assigned_to"]) if r["assigned_to"] else None, **read_kind(r), "category": r["category"].upper(), "status": r["status"].upper(), "mimeType": r["mime_type"], "fileSize": r["file_size_bytes"], "contentRevision": r["content_revision"], "seconds": float(r["processing_seconds"]) if r["processing_seconds"] is not None else 0, "totalAmount": float(r["total_amount"]) if r["total_amount"] is not None else None, "supplier": r["supplier_name"], "customer": r["buyer_name"], "dueDate": r["due_date_value"], "createdAt": str(r["uploaded_at"]), "updatedAt": str(r["updated_at"])} for r in rows]
+
+class _ReadableNames:
+    """Plan M4/M2 for document lists: the rule name from the record and whether the company is the seller."""
+
+    def __init__(self, db, user):
+        from services import naming
+        from services.company_identity import company_identity
+        self.naming = naming
+        self.book = naming.CodeBook(db, user["tenant_id"]) if user.get("tenant_id") else None
+        self.identity = company_identity(db, user["tenant_id"]) if user.get("tenant_id") else None
+
+    def of(self, r) -> dict:
+        from services.company_identity import direction, direction_warning
+        if not self.book:
+            return {"displayName": r["original_filename"]}
+        category = r["category"]
+        party = r["supplier_name"] if category == "accounts_payable" else r["buyer_name"]
+        code = self.book.code("supplier" if category == "accounts_payable" else "customer", party)
+        known = bool(r.get("detected_identifier") or (r.get("document_date_value") and party))
+        name = self.naming.display_name(r.get("document_date_value"), code,
+                                        self.naming.type_code(kind=r["kind"], category=category), r.get("detected_identifier"),
+                                        self.naming.extension_of(r["original_filename"], ".bin")) if known else r["original_filename"]
+        way = direction(self.identity, seller_name=r["supplier_name"], buyer_name=r["buyer_name"])
+        return {"displayName": name, "direction": way, "directionWarning": direction_warning(way)}
+
 
 def get_document_detail(document_id: str, request: Request):
     user = require_workspace_user(request)
@@ -263,9 +294,24 @@ def get_document_detail(document_id: str, request: Request):
         if user["role"] == "accountant":
             params.extend([user["id"], user["id"]])
         r = db.execute(f"SELECT * FROM documents WHERE id=%s AND (%s IS NULL OR tenant_id=%s){visibility}", params).fetchone()
+        if r:
+            named = db.execute("""SELECT d.*,
+                    COALESCE(sr.supplier_name,(SELECT COALESCE(current_value,normalized_value) FROM field_predictions
+                        WHERE document_id=d.id AND field_key='supplier' ORDER BY created_at DESC LIMIT 1)) AS supplier_name,
+                    COALESCE(sr.buyer_name,(SELECT COALESCE(current_value,normalized_value) FROM field_predictions
+                        WHERE document_id=d.id AND field_key='customer' ORDER BY created_at DESC LIMIT 1)) AS buyer_name,
+                    COALESCE(sr.invoice_number,sr.reference_number,(SELECT COALESCE(current_value,normalized_value,raw_value)
+                        FROM field_predictions WHERE document_id=d.id AND field_key IN ('invoice','invoice_number','reference',
+                        'reference_number','bill_number','bill_reference','receipt','receipt_number') ORDER BY created_at DESC LIMIT 1))
+                        AS detected_identifier,
+                    COALESCE(sr.invoice_date::text,(SELECT COALESCE(current_value,normalized_value) FROM field_predictions
+                        WHERE document_id=d.id AND field_key='date' ORDER BY created_at DESC LIMIT 1)) AS document_date_value
+                FROM documents d LEFT JOIN LATERAL (SELECT * FROM standardised_records WHERE document_id=d.id
+                    ORDER BY revision_number DESC LIMIT 1) sr ON true WHERE d.id=%s""", (r["id"],)).fetchone()
+            readable = _ReadableNames(db, {"tenant_id": r["tenant_id"]}).of(named)
     if not r:
         raise HTTPException(404, "Document not found.")
-    return {"id": str(r["id"]), "code": r["document_code"], "name": r["original_filename"], "tenantId": str(r["tenant_id"]), "ownerId": str(r["owner_id"]), "assignedTo": str(r["assigned_to"]) if r["assigned_to"] else None, **read_kind(r), "category": r["category"].upper(), "status": r["status"].upper(), "mimeType": r["mime_type"], "fileSize": r["file_size_bytes"], "contentRevision": r["content_revision"], "createdAt": str(r["uploaded_at"]), "updatedAt": str(r["updated_at"])}
+    return {"id": str(r["id"]), "code": r["document_code"], **readable, "name": r["original_filename"], "tenantId": str(r["tenant_id"]), "ownerId": str(r["owner_id"]), "assignedTo": str(r["assigned_to"]) if r["assigned_to"] else None, **read_kind(r), "category": r["category"].upper(), "status": r["status"].upper(), "mimeType": r["mime_type"], "fileSize": r["file_size_bytes"], "contentRevision": r["content_revision"], "createdAt": str(r["uploaded_at"]), "updatedAt": str(r["updated_at"])}
 
 def get_document_file(document_id: str, request: Request):
     """Return an authorised private source file for preview/download."""

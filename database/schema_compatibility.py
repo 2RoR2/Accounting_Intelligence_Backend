@@ -4,7 +4,7 @@ from pathlib import Path
 import re
 
 REQUIRED_COLUMNS = {
-    "documents": {"id": "uuid", "tenant_id": "uuid", "file_hash_sha256": "text", "content_revision": "int4"},
+    "documents": {"id": "uuid", "tenant_id": "uuid", "file_hash_sha256": "text", "content_revision": "int4", "excluded_at": "timestamptz"},
     "review_submissions": {"document_id": "uuid", "tenant_id": "uuid", "content_revision": "int4"},
     "review_decisions": {"approved_content_revision": "int4"},
     "pending_jobs": {"document_id": "uuid", "tenant_id": "uuid", "dispatch_token": "uuid", "claim_token": "uuid", "dispatch_expires_at": "timestamptz", "processing_expires_at": "timestamptz", "attempt_count": "int4"},
@@ -28,6 +28,9 @@ REQUIRED_COLUMNS = {
     "erp_document_events": {"document_id": "uuid", "event_type": "text"},
     "erp_document_shares": {"token_hash": "text", "expires_at": "timestamptz", "revoked_at": "timestamptz"},
     "myinvois_consolidated_submissions": {"tenant_id": "uuid", "idempotency_key": "text"},
+    # Plan M (20261128_planm_sales_documents.sql): issued copies and the company identity.
+    "erp_document_files": {"document_id": "uuid", "revision": "int4", "content": "bytea", "sha256": "text"},
+    "tenants": {"profile": "jsonb"},
     "myinvois_consolidated_documents": {"submission_id": "uuid", "document_id": "uuid"},
 }
 REQUIRED_INDEXES = {"uq_pending_jobs_open_document": "pending_jobs", "uq_raw_extractions_current": "raw_extractions", "uq_standardised_records_current": "standardised_records"}
