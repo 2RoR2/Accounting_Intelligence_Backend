@@ -55,3 +55,11 @@ def test_a_long_reference_is_shortened_to_its_column():
     statement["lines"][0]["number"] = "BANK-bb3fd9f0-166a-46e5-8349-5e9aab00aef1"
     text = "\n".join(pages_text(render_statement_pdf(statement, COMPANY)))
     assert "BANK-bb3fd9f0" in text and "..." in text and "5e9aab00aef1" not in text
+
+
+def test_footer_explains_unposted_payments_and_amount_due_gap():
+    ageing = {**make_statement()["ageing"], "unallocatedCredits": "0.00", "unpostedPayments": "500.00",
+              "amountDueBelowTotal": "200.00", "balance": "1150.00"}
+    text = "\n".join(pages_text(render_statement_pdf(make_statement(ageing=ageing), COMPANY)))
+    assert "Matched payments not yet posted (still owed)" in text and "500.00" in text
+    assert "total above the amount due shown" in text and "1150.00" in text
