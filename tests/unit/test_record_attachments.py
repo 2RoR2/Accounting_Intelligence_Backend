@@ -23,11 +23,21 @@ def test_media_type_comes_from_the_bytes(head, expected):
 
 
 @pytest.mark.parametrize("url", [
-    "https://bank.example.com/slip/123", "HTTPS://Bank.Example.com/a?b=c#d", "https://example.com:8443/x",
+    "https://bank.example.com/slip/123", "https://Bank.Example.com/a?b=c#d", "https://example.com:8443/x",
     "https://[2001:db8::1]/receipt",
 ])
 def test_https_links_are_accepted(url):
     assert validate_link(url) == url
+
+
+@pytest.mark.parametrize("raw,stored", [
+    ("HTTPS://Bank.Example.com/A?b=C#d", "https://Bank.Example.com/A?b=C#d"),
+    ("Https://example.com/x", "https://example.com/x"),
+    ("  HTTPS://example.com/x  ", "https://example.com/x"),
+])
+def test_an_uppercase_scheme_is_stored_lowercase(raw, stored):
+    # The table check requires a literal lowercase https://, so a mixed-case scheme must be normalised, not stored as typed.
+    assert validate_link(raw) == stored
 
 
 @pytest.mark.parametrize("url", [
