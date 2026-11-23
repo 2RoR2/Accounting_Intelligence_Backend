@@ -341,7 +341,7 @@ def _tax_summary_sheet(report):
 def _exceptions_sheet(db, tenant, start, end):
     rows = db.execute("""SELECT d.document_code,e.type,e.severity,e.message,e.created_at
         FROM exceptions e
-        JOIN documents d ON d.id=e.document_id AND d.tenant_id=e.tenant_id
+        JOIN documents d ON d.id=e.document_id AND d.tenant_id=e.tenant_id AND d.excluded_at IS NULL
         WHERE e.tenant_id=%s AND e.status<>'resolved'
             AND (e.created_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date BETWEEN %s AND %s
         ORDER BY e.created_at,e.id""", (tenant, start, end)).fetchall()

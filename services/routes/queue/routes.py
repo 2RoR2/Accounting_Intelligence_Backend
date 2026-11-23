@@ -70,6 +70,8 @@ def processing_metrics(request: Request):
         exception_params = [scope, scope]
         if user["role"] == "accountant":
             exception_params.extend([user["id"], user["id"]])
+        # Documents the tidy-up excluded (excluded_at) are not counted.
+        exception_filter += " AND EXISTS (SELECT 1 FROM documents x WHERE x.id=exceptions.document_id AND x.excluded_at IS NULL)"
         exceptions = db.execute(f"SELECT count(*) AS n, count(DISTINCT document_id) AS documents FROM exceptions WHERE (%s IS NULL OR tenant_id=%s) AND status <> 'resolved'{exception_filter}", exception_params).fetchone()
     processed = int(row["processed"] or 0)
     succeeded = int(row["succeeded"] or 0)

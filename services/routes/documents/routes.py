@@ -448,7 +448,7 @@ def list_records(request: Request, category: str | None = None, due: str | None 
             if posting:
                 clauses.append(records_to_post())
             rows = db.execute(f"""SELECT r.* FROM standardised_records r
-                JOIN documents d ON d.id=r.document_id AND d.tenant_id=r.tenant_id
+                JOIN documents d ON d.id=r.document_id AND d.tenant_id=r.tenant_id AND d.excluded_at IS NULL
                 WHERE {' AND '.join(clauses)} ORDER BY r.created_at DESC""", params).fetchall()
         else:
             rows = db.execute("SELECT * FROM standardised_records WHERE (%s IS NULL OR tenant_id=%s) ORDER BY created_at DESC", (scope, scope)).fetchall()

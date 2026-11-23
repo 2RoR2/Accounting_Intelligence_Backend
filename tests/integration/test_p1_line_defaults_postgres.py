@@ -143,3 +143,21 @@ def test_product_keeps_default_accounts_and_tax_code_label(company):
     plain = ok(call('POST', '/api/erp/products', admin, json={'name': 'Delivery', 'kind': 'service'}), 201)
     assert plain['defaultTaxCode'] is None
     assert call('POST', '/api/erp/products', admin, json={'name': 'Too long', 'defaultTaxCode': 'X' * 41}).status_code == 422
+
+
+def pdf_text(user, document_type, document):
+    import io
+    from pypdf import PdfReader
+    response = call('GET', f"/api/erp/documents/{document_type}/{document['id']}/preview.pdf", user)
+    assert response.status_code == 200, response.text
+    return ' '.join(page.extract_text() for page in PdfReader(io.BytesIO(response.content)).pages)
+
+
+def test_only_open_items_print_a_due_date(company):
+    _, ids = company
+    admin = ids['admin']
+    invoice = ok(call('POST', '/api/erp/documents/invoice', admin, json={**invoice_body(ids), 'status': 'ready'}), 201)
+    credit = convert(admin, 'invoice', invoice, 'credit-note')
+    assert credit['dueDate'] == '2026-08-26'  # copied with the rest of the invoice; it just must not print
+    assert 'Due date' in pdf_text(admin, 'invoice', invoice)
+    assert 'Due date' not in pdf_text(admin, 'credit-note', credit)

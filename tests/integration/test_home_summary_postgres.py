@@ -291,3 +291,39 @@ def test_summary_is_fast_on_the_fixture(company):
     started = time.perf_counter()
     _summary(connect, user)
     assert time.perf_counter() - started < 1.0  # Generous bound for CI; the target is ~200 ms on the demo data.
+
+
+def test_excluded_documents_leave_every_dashboard_and_exception_count(company):
+    """Plan M: a document the tidy-up excluded (excluded_at) is in no tile, month-end step, records list or exception list."""
+    from services.routes.reporting import routes as reporting
+    from services.routes.validation import routes as validation
+    connect, ids = company
+    admin = _as(ids['admin'], ids['tenant'], 'local_admin')
+
+    def exceptions():
+        request = type('R', (), {'query_params': {}})()
+        with patch.object(validation, 'require_workspace_user', return_value=admin), patch.object(validation, 'connect', connect),              patch.object(validation, 'tenant_scope', return_value=ids['tenant']):
+            return validation.list_exceptions(request)
+
+    def report():
+        with patch.object(reporting, 'require_workspace_user', return_value=admin), patch.object(reporting, 'connect', connect):
+            return reporting.accounting_reports(None)
+
+    assert exceptions() and report()['summary']['documentCount']
+    with connect() as db:
+        db.execute('UPDATE documents SET excluded_at=now() WHERE tenant_id=%s', (ids['tenant'],))
+    try:
+        summary = _summary(connect, admin)
+        tiles = summary['tiles']
+        for key in ('toReview', 'readyToApprove', 'needsFixing', 'waitingApproval', 'billsDueSoon', 'billsOverdue',
+                    'invoicesOverdue', 'journalsToPost'):
+            assert tiles[key]['count'] == 0, key
+        steps = {s['key']: s for s in summary['monthEnd']['steps']}
+        assert steps['reviewed']['total'] == 0 and steps['posted']['total'] == 0
+        assert exceptions() == []
+        counted = report()
+        assert counted['summary']['documentCount'] == 0 and counted['summary']['openExceptions'] == 0 and counted['documents'] == []
+        assert _records(connect, admin, posting='to-post') == []
+    finally:
+        with connect() as db:
+            db.execute('UPDATE documents SET excluded_at=NULL WHERE tenant_id=%s', (ids['tenant'],))

@@ -456,8 +456,9 @@ def _print_data(db, row, *, revision=None, issued_at=None) -> dict:
                             "amount": money(a.get("amount") or 0)})
     discount = sum((posting.cents(l.get("discount") or 0) for l in payload.get("lines", [])), Decimal("0"))
     data = {"type": row["document_type"], "number": row["document_number"], "documentDate": str(row["document_date"]),
-            "dueDate": str(row["due_date"]) if row["due_date"] else None, "referenceNo": row["reference_no"],
-            "paymentTerms": fields.get("paymentTerms"), "currency": row["currency"], "contact": _contact_for_print(db, row),
+            # Only an open item (invoice, bill, debit note) is due: a credit note or receipt copied from one prints no due date.
+            "dueDate": str(row["due_date"]) if row["due_date"] and row["document_type"] in OUTSTANDING_TYPES else None,
+            "referenceNo": row["reference_no"], "paymentTerms": fields.get("paymentTerms"), "currency": row["currency"], "contact": _contact_for_print(db, row),
             "contactLabel": CONTACT_LABELS.get(row["document_type"], "Contact"), "lines": lines,
             "subtotal": money(Decimal(row["subtotal"]) + discount), "discountTotal": money(discount), "taxAmount": money(row["tax_amount"]),
             "total": money(row["total_amount"]), "allocations": allocations, "notes": row["description"] or fields.get("notes"),
