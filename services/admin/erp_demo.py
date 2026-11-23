@@ -213,6 +213,9 @@ def seed(key, pack_root=PACK_ROOT, seed_value=20261121):
     from database.connection import connect
     folder = pack_folder(key, pack_root)
     pack = json.loads((folder / "pack.json").read_text(encoding="utf-8"))
+    from ai.synthetic.knt_pack import COMPANY
+    if pack["company"]["name"] == COMPANY["name"]:
+        raise SeedError("The KNT seed includes typed Sales. Use manage.py seed-knt or reset-knt.")
     months = pack["period"]["months"]
     main.check_schema_compatibility()
     with connect() as db:

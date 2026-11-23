@@ -1,5 +1,38 @@
 # Company packs (plan v2 task A1)
 
+## KNT demo books
+
+Ketapang Nibong Trading Sdn. Bhd. (KNT) is a fictional Malaysian trading company. Its books cover September
+and October 2026 in full and November through 23 November. The pack uses the Malaysian SME chart below.
+Each document's tax amount is entered as a fixed value.
+
+```bash
+python -m ai.synthetic.knt_pack
+python services/admin/manage.py seed-knt
+python services/admin/manage.py tally
+python services/admin/manage.py reset-knt
+```
+
+Run the database commands after the [local schema setup](LOCALHOST.md). They require development mode,
+a loopback PostgreSQL URL and local storage. `seed-knt` creates the books in an empty KNT workspace.
+`reset-knt` clears the existing KNT Inbox and accounting data, including any legacy benchmark imports,
+and rebuilds the books. It keeps KNT's existing users and files under `ai/`. The seed commands show the
+passwords for newly created demo logins once, or accept `--prompt-password`.
+
+The generator writes to `ai/synthetic/output/packs/knt/` by default. It includes the fictional company
+identity, chart and contacts, source purchases named `{YYYY-MM-DD}_{CONTACT}_{TYPE}_{NUMBER}.{ext}`,
+gold manifests, and one bank CSV per cutoff. Import the purchase files into Inbox to test extraction.
+The local seed uses the labels to establish reproducible Inbox states and runs the approval and posting
+steps through the application. Sales is entered through the typed Sales endpoints. The sales debit note
+uses the invoice form and carries the original invoice reference and a debit-note subtype, since the
+Sales form has no native debit-note type.
+
+The tally checks the trial balance, P&L by account, AR and AP open items, and each month-to-date statement
+against the ledger. Each statement keeps one transfer unmatched. The reconciliation shows the resulting
+cumulative adjustment separately from the bank ledger balance.
+
+## Evaluation and test packs
+
 `ai/synthetic/company_pack.py` generates the demo and test books for three fictional Malaysian SMEs.
 Tasks A2 (CSV imports), A3 (demo company seed), C4 (payables/receivables) and C5 (bank reconciliation)
 read these files, so the formats below are a contract: add columns at the end, never rename or reorder.

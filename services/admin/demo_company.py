@@ -486,6 +486,9 @@ def seed(key, month=None, pack_root=PACK_ROOT, prompt_password=False, reset_pass
     from database.connection import connect
     folder = pack_folder(key, pack_root)
     pack = json.loads((folder / "pack.json").read_text(encoding="utf-8"))
+    from ai.synthetic.knt_pack import COMPANY
+    if pack["company"]["name"] == COMPANY["name"]:
+        raise SeedError("Use manage.py seed-knt or reset-knt for Ketapang Nibong Trading.")
     months = pack["period"]["months"]
     if month and month not in months:
         raise SeedError(f"--month must be one of the pack's months: {', '.join(months)}.")
