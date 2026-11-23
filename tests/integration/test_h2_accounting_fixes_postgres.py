@@ -80,6 +80,22 @@ def test_cash_basis_ignores_a_supplier_credit_note_applied_to_a_scanned_bill(com
     assert [t['expenses'] for t in cash['totals']] == ['200.00'], cash['totals']
 
 
+def test_records_export_contains_only_the_records_the_page_showed(company):
+    from unittest.mock import patch
+    from services.routes.reporting import routes as reporting
+    connect, ids = company
+    shown = _scanned_bill(connect, ids, number='INV-SHOWN', total='10.00', tax='0')
+    _scanned_bill(connect, ids, number='INV-HIDDEN', total='20.00', tax='0')
+    with patch.object(reporting, 'connect', side_effect=connect):
+        created = ok(call('POST', '/api/exports', ids['accountant'], json={
+            'resource': 'records', 'filters': {'recordIds': [str(shown)]}, 'format': 'csv'}), 201)
+        assert created['rowCount'] == 1
+        text = call('GET', f"/api/exports/{created['id']}/download", ids['accountant']).text
+        everything = ok(call('POST', '/api/exports', ids['accountant'], json={'resource': 'records', 'format': 'csv'}), 201)
+    assert 'INV-SHOWN' in text and 'INV-HIDDEN' not in text
+    assert everything['rowCount'] == 2  # no recordIds: every current record, as before
+
+
 def test_ageing_counts_a_typed_bill_and_its_approved_scan_once(company):
     connect, ids = company
     admin = ids['admin']
