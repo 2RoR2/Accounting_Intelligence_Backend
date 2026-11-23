@@ -75,7 +75,7 @@ def test_totals_equal_profit_and_loss_balance_sheet_ageing_and_tally(knt, month)
         payables = financial._ageing(db, tenant, cutoff, "payables")
         tax = financial._tax_summary(db, tenant, start, cutoff)
         cash = business_summary._cash_accounts(db, tenant)
-        before = business_summary._bank_balances(db, tenant, start - timedelta(days=1), cash)
+        before = business_summary._position(db, tenant, start - timedelta(days=1), cash)[0]["bank"]
     # Profit and loss: the same figures, and the net profit tally checks against the posted documents.
     assert (result["sales"], result["expenses"], result["netProfit"]) == (
         pnl["totalIncome"], pnl["totalExpenses"], pnl["netProfit"])
@@ -91,6 +91,8 @@ def test_totals_equal_profit_and_loss_balance_sheet_ageing_and_tally(knt, month)
         owed = position[key]
         assert owed["overdue"] + report["totals"]["current"] == owed["total"]
         assert owed["openCount"] == len(report["rows"])
+        # Every KNT receipt and payment is allocated, so the open items and the control account agree.
+        assert owed["openItems"] == report["totals"]["total"] and owed["unallocated"] == ZERO
         assert sum(owed["buckets"].values()) == owed["total"]
     # Bank balance per account: the balance sheet's own cash and bank accounts.
     cash_ids = {str(row["account_id"]) for row in cash}

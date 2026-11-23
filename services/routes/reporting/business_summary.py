@@ -90,10 +90,8 @@ def _cash_accounts(db, tenant):
                              "pattern": CASH_NAME_PATTERN}).fetchall()
 
 
-def _bank_balances(db, tenant, as_of, cash_accounts):
+def _bank_balances(as_of, balances, cash_accounts):
     """Balance per cash/bank account: the same account balances the balance sheet uses."""
-    balances = {row["account_id"]: row["debit"] - row["credit"]
-                for row in financial._account_balances(db, tenant, as_of)}
     accounts = []
     for account in cash_accounts:
         balance = balances.get(account["account_id"], ZERO)
@@ -142,15 +140,32 @@ def _result(pnl, tracked):
             "costOfSalesTracked": tracked}
 
 
-def _owed(db, tenant, as_of, report_type):
+def _control_balance(db, tenant, balances, report_type):
+    """What the books say is owed: the receivables or payables control account, found as the ageing finds it."""
+    _, _, purpose = financial.AGEING_TYPES[report_type]
+    account = db.execute("""SELECT COALESCE(
+            (SELECT account_id FROM erp_posting_accounts WHERE tenant_id=%(tenant)s AND purpose=%(purpose)s),
+            (SELECT id FROM ledger_accounts WHERE tenant_id=%(tenant)s AND code=%(code)s
+                AND account_type=%(account_type)s)) AS id""",
+                         {"tenant": tenant, "purpose": purpose, "code": financial.DEFAULT_CODES[purpose],
+                          "account_type": financial.PURPOSE_TYPES[purpose]}).fetchone()["id"]
+    net = balances.get(account, ZERO)
+    return net if report_type == "receivables" else -net
+
+
+def _owed(db, tenant, as_of, report_type, balances):
     report = financial._ageing(db, tenant, as_of, report_type)
+    control = _control_balance(db, tenant, balances, report_type)
     overdue = [r for r in report["rows"] if r["bucket"] != "current"]
     rows = [{"contactName": r["contactName"], "documentNumber": r["documentNumber"],
              "documentDate": r["documentDate"], "dueDate": r["dueDate"], "outstanding": r["outstanding"],
              "daysOverdue": (as_of - (r["dueDate"] or r["documentDate"])).days}
             for r in overdue]
     rows.sort(key=lambda r: (-r["outstanding"], -r["daysOverdue"], r["documentNumber"] or ""))
-    totals = {"total": report["totals"]["total"],
+    open_items = report["totals"]["total"]
+    # The total is the control account, like the balance sheet. Open items miss payments posted on account
+    # and not yet allocated to an invoice or bill; the difference is shown, not hidden.
+    totals = {"total": control, "openItems": open_items, "unallocated": open_items - control,
               "overdue": sum((r["outstanding"] for r in overdue), ZERO),
               "overdueCount": len(overdue), "openCount": len(report["rows"]),
               "buckets": {bucket: report["totals"][bucket] for bucket in report["buckets"]}}
@@ -158,9 +173,11 @@ def _owed(db, tenant, as_of, report_type):
 
 
 def _position(db, tenant, as_of, cash_accounts):
-    receivables, overdue_invoices = _owed(db, tenant, as_of, "receivables")
-    payables, overdue_bills = _owed(db, tenant, as_of, "payables")
-    return {"asOf": as_of, "bank": _bank_balances(db, tenant, as_of, cash_accounts),
+    balances = {row["account_id"]: row["debit"] - row["credit"]
+                for row in financial._account_balances(db, tenant, as_of)}
+    receivables, overdue_invoices = _owed(db, tenant, as_of, "receivables", balances)
+    payables, overdue_bills = _owed(db, tenant, as_of, "payables", balances)
+    return {"asOf": as_of, "bank": _bank_balances(as_of, balances, cash_accounts),
             "receivables": receivables, "payables": payables}, overdue_invoices, overdue_bills
 
 
@@ -282,6 +299,9 @@ def _summary_sheet(summary, start, end):
     rows.append(("Bank balance", "Total", position["bank"]["total"]))
     for label, key in (("Owed to us (receivables)", "receivables"), ("Owed by us (payables)", "payables")):
         rows += [(label, "Total outstanding", position[key]["total"]), (label, "Overdue", position[key]["overdue"])]
+        if position[key]["unallocated"] != ZERO:
+            rows.append((label, "Open items less unallocated payments", position[key]["openItems"]))
+            rows.append((label, "Unallocated payments", position[key]["unallocated"]))
     rows += [("Recorded tax", "Output tax", month["recordedTax"]["outputTax"]),
              ("Recorded tax", "Input tax", month["recordedTax"]["inputTax"])]
     rows += [("Top customers", c["name"], c["amount"]) for c in summary["topCustomers"]]
