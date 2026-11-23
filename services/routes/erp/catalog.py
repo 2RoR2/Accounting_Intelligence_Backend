@@ -16,7 +16,7 @@ from .common import DOCUMENT_TYPES, audit, erp_user, money, parse_uuid
 
 VISIBLE_CATALOG_KINDS = (
     "payment-term", "payment-method", "currency", "bank-account", "tag", "category",
-    "location", "custom-field", "number-format",
+    "location", "custom-field", "number-format", "tax-code",
 )
 CATALOG_KINDS = VISIBLE_CATALOG_KINDS + (
     "product-group", "coupon", "content-page", "price-level", "asset-type",
@@ -40,6 +40,8 @@ class ERPProductInput(BaseModel):
     groupName: str | None = Field(default=None, max_length=200)
     incomeAccountId: str | None = None
     expenseAccountId: str | None = None
+    # A label from the tax-code catalog offered when the product is chosen on a line; the tax amount is still typed.
+    defaultTaxCode: str | None = Field(default=None, max_length=40)
     fields: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -111,6 +113,7 @@ def _product_dto(row):
         "quantity": str(row["quantity"]), "groupName": row["group_name"], "fields": row["fields"] or {},
         "incomeAccountId": str(row["income_account_id"]) if row["income_account_id"] else None,
         "expenseAccountId": str(row["expense_account_id"]) if row["expense_account_id"] else None,
+        "defaultTaxCode": row.get("default_tax_code"),
         "isActive": row["is_active"], "createdAt": str(row["created_at"]), "updatedAt": str(row["updated_at"]),
     }
 
@@ -157,21 +160,22 @@ def _save_product(db, user, data, product_id=None):
         income = _ledger_account(db, tenant_id, data.incomeAccountId, "income account id", "income")["id"]
     if data.expenseAccountId is not None:
         expense = _ledger_account(db, tenant_id, data.expenseAccountId, "expense account id", "expense")["id"]
+    tax_code = (data.defaultTaxCode or "").strip() or None
     values = (_name(data.name), data.sku, data.kind, data.unit, data.salePrice, data.purchasePrice,
-              data.quantity, data.groupName, income, expense, Jsonb(data.fields))
+              data.quantity, data.groupName, income, expense, tax_code, Jsonb(data.fields))
     try:
         if product_id is None:
             row = db.execute(
                 """INSERT INTO erp_products
                    (name,sku,kind,unit,sale_price,purchase_price,quantity,group_name,
-                    income_account_id,expense_account_id,fields,tenant_id,created_by)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *""",
+                    income_account_id,expense_account_id,default_tax_code,fields,tenant_id,created_by)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *""",
                 (*values, tenant_id, user["id"]),
             ).fetchone()
         else:
             row = db.execute(
                 """UPDATE erp_products SET name=%s,sku=%s,kind=%s,unit=%s,sale_price=%s,purchase_price=%s,
-                   quantity=%s,group_name=%s,income_account_id=%s,expense_account_id=%s,fields=%s,updated_at=now()
+                   quantity=%s,group_name=%s,income_account_id=%s,expense_account_id=%s,default_tax_code=%s,fields=%s,updated_at=now()
                    WHERE tenant_id=%s AND id=%s RETURNING *""",
                 (*values, tenant_id, product_id),
             ).fetchone()
@@ -376,6 +380,12 @@ def _validate_catalog_values(kind, data):
             raise HTTPException(422, "ledgerAccountId is required for bank-account entries.")
         _optional_string(values, "accountNumber")
         _optional_string(values, "bankName")
+    if kind == "tax-code":
+        # The code is the label printed on a line (LineInput.taxCode is at most 40 characters); the name explains it.
+        label = (data.code or "").strip()
+        if not label or len(label) > 40:
+            raise HTTPException(422, "A tax code needs a label of 1 to 40 characters, for example SST-10 or SV-8.")
+        return label
     if kind == "number-format":
         document_type = values.get("documentType")
         if not isinstance(document_type, str) or document_type not in DOCUMENT_TYPES:
@@ -391,6 +401,9 @@ def _check_catalog_conflict(db, tenant_id, kind, entry_id, name, code, data):
     if kind == "currency":
         query = "SELECT 1 FROM erp_catalog_entries WHERE tenant_id=%s AND kind='currency' AND upper(code)=%s"
         value, message = code, "This currency code already exists."
+    elif kind == "tax-code":
+        query = "SELECT 1 FROM erp_catalog_entries WHERE tenant_id=%s AND kind='tax-code' AND lower(code)=lower(%s)"
+        value, message = code, "This tax code already exists."
     elif kind == "number-format" and data.active:
         query = """SELECT 1 FROM erp_catalog_entries
                    WHERE tenant_id=%s AND kind='number-format' AND is_active AND data->>'documentType'=%s"""
@@ -470,7 +483,7 @@ def _save_catalog(db, user, kind, data, entry_id=None):
     account = None
     if kind == "bank-account":
         account = _ledger_account(db, tenant_id, data.ledgerAccountId, "ledger account id", "asset")
-    if kind in ("currency", "number-format", "custom-field"):
+    if kind in ("currency", "number-format", "custom-field", "tax-code"):
         # These uniqueness rules have no matching database constraint.
         db.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"erp.catalog:{tenant_id}:{kind}",))
         _check_catalog_conflict(db, tenant_id, kind, entry_id, name, code, data)
