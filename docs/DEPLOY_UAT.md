@@ -24,12 +24,10 @@ Rotating it signs users out and requires re-enrollment for accounts with existin
    The Blueprint selects Brevo and supplies `BREVO_FROM_NAME`. [Brevo sender setup](https://help.brevo.com/hc/en-us/articles/208836149-Create-a-new-sender-From-name-and-From-email)
 2. In Render, choose **New → Blueprint**, select the backend repository and the approved branch
    containing `render.yaml`, and review the single Python web service. The Blueprint selects the
-   Free plan. The build installs the slim runtime, checks the packaged OCR weights and then runs
-   `python services/admin/manage.py migrate`, because Free services have no pre-deploy command.
-   Startup checks schema compatibility and `/api/health` checks database access. A Free service
-   sleeps after a period without traffic, so the first request after a pause waits for it to wake;
-   open `/api/health` before a test session. If section 5 calls for Starter, change `plan` to
-   `starter`, move the `migrate` command from `buildCommand` to `preDeployCommand` and redeploy.
+   Starter plan (0.5 CPU, 512 MB). On Free (0.1 CPU) the first scanned document was killed for
+   memory on 24 Nov 2026 and OCR would miss the 20 s p95. The build installs the slim runtime and checks the
+   packaged OCR weights; the pre-deploy command runs `python services/admin/manage.py migrate`. OCR is
+   tuned for 512 MB with `LITE_OCR_REC_BATCH=1` and `LITE_OCR_DET_SIDE=736`.
    [Render deploy commands](https://render.com/docs/deploys)
 3. Add the `uat` connection as `DATABASE_URL` and a fresh random `AUTH_SECRET` of at least 32
    characters. `JWT_SECRET` is reserved for legacy setup and may be left unset. Supply `S3_BUCKET`

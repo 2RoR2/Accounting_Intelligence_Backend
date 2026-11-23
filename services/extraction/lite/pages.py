@@ -84,7 +84,12 @@ def _get_engine():
     if _engine is None:
         from rapidocr import RapidOCR
         threads = _int_env('OCR_THREADS', 2, 1, 16)
+        # Memory on a 512 MB host: cap the detection input and recognise one text line at a time
+        # (the library defaults batch 6 lines, about 70 MB more at peak on a scanned receipt).
         params = {'Global.use_cls': False,
+                  'Det.limit_type': 'max',
+                  'Det.limit_side_len': _int_env('LITE_OCR_DET_SIDE', 960, 320, 2048),
+                  'Rec.rec_batch_num': _int_env('LITE_OCR_REC_BATCH', 1, 1, 16),
                   'EngineConfig.onnxruntime.use_cuda': False,
                   'EngineConfig.onnxruntime.use_dml': False,
                   'EngineConfig.onnxruntime.intra_op_num_threads': threads,
