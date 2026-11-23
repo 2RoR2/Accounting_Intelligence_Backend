@@ -52,6 +52,12 @@ class ExceptionListFilterTests(unittest.TestCase):
         self.assertEqual(params[-1], DOC)
         self.assertNotIn(DOC, sql)
 
+    def test_the_company_list_leaves_out_excluded_documents_but_a_documents_own_list_does_not(self):
+        sql, _ = self.run_list()
+        self.assertIn('x.excluded_at IS NULL', sql)
+        sql, _ = self.run_list(documentId=DOC)
+        self.assertNotIn('excluded_at', sql)
+
     def test_invalid_document_id_is_rejected(self):
         with self.assertRaises(HTTPException) as caught:
             self.run_list(documentId="x' OR '1'='1")

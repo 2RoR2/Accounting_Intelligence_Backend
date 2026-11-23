@@ -8,17 +8,21 @@ def accounting_reports(request: Request):
     user = require_workspace_user(request, {"local_admin", "accountant"})
     tenant_id = user["tenant_id"]
     with connect() as db:
+        # Documents the tidy-up excluded (excluded_at) are left out of every count here.
         totals = db.execute("""SELECT count(*) AS documents,
-            coalesce(sum(total_amount),0) AS total_amount
-            FROM standardised_records WHERE tenant_id=%s""", (tenant_id,)).fetchone()
+            coalesce(sum(r.total_amount),0) AS total_amount
+            FROM standardised_records r JOIN documents d ON d.id=r.document_id AND d.tenant_id=r.tenant_id AND d.excluded_at IS NULL
+            WHERE r.tenant_id=%s""", (tenant_id,)).fetchone()
         lines = db.execute("""SELECT count(*) AS items, coalesce(sum(amount),0) AS amount
             FROM line_items li JOIN documents d ON d.id=li.document_id
-            WHERE d.tenant_id=%s""", (tenant_id,)).fetchone()
+            WHERE d.tenant_id=%s AND d.excluded_at IS NULL""", (tenant_id,)).fetchone()
         reconciled = db.execute("SELECT count(*) AS n FROM document_reconciliations WHERE tenant_id=%s", (tenant_id,)).fetchone()["n"]
-        exceptions = db.execute("SELECT count(*) AS n FROM exceptions WHERE tenant_id=%s AND status <> 'resolved'", (tenant_id,)).fetchone()["n"]
+        exceptions = db.execute("""SELECT count(*) AS n FROM exceptions e
+            JOIN documents d ON d.id=e.document_id AND d.tenant_id=e.tenant_id AND d.excluded_at IS NULL
+            WHERE e.tenant_id=%s AND e.status <> 'resolved'""", (tenant_id,)).fetchone()["n"]
         audit = db.execute("SELECT count(*) AS n FROM audit_logs WHERE tenant_id=%s", (tenant_id,)).fetchone()["n"]
         documents = db.execute("""SELECT document_code AS reference, kind, status,
-            uploaded_at AS date FROM documents WHERE tenant_id=%s ORDER BY uploaded_at DESC LIMIT 100""", (tenant_id,)).fetchall()
+            uploaded_at AS date FROM documents WHERE tenant_id=%s AND excluded_at IS NULL ORDER BY uploaded_at DESC LIMIT 100""", (tenant_id,)).fetchall()
     amount = float(totals["total_amount"] or 0)
     item_amount = float(lines["amount"] or 0)
     # Only expose reports backed by data that this workspace currently owns.

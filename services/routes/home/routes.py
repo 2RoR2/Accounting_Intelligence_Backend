@@ -166,7 +166,8 @@ def journals_tile(db, user) -> dict:
         return unavailable('The ledger is not set up on this server yet, so nothing can be posted.', link)
     row = db.execute(f"""SELECT count(*) AS records,
             (SELECT count(*) FROM journal_headers WHERE tenant_id=%s AND status='draft') AS drafts
-        FROM standardised_records r WHERE r.tenant_id=%s AND {records_to_post()}""",
+        FROM standardised_records r JOIN documents d ON d.id=r.document_id AND d.tenant_id=r.tenant_id AND d.excluded_at IS NULL
+        WHERE r.tenant_id=%s AND {records_to_post()}""",
                      (user['tenant_id'], user['tenant_id'])).fetchone()
     return {'available': True, 'scope': 'company', 'count': row['records'], 'draftJournals': row['drafts'], 'link': link}
 
@@ -208,7 +209,7 @@ def month_end(db, user, today: date) -> dict:
     steps = []
     docs = db.execute("""SELECT count(*) AS total,
             count(*) FILTER (WHERE d.status IN ('in_review','validated','standardised','completed')) AS done
-        FROM documents d WHERE d.tenant_id=%s AND d.uploaded_at::date BETWEEN %s AND %s""", (tenant, start, end)).fetchone()
+        FROM documents d WHERE d.tenant_id=%s AND d.excluded_at IS NULL AND d.uploaded_at::date BETWEEN %s AND %s""", (tenant, start, end)).fetchone()
     steps.append(_step('reviewed', docs['done'], docs['total'], _link('documents', 'lane=to-review'),
                        'Documents uploaded in this period that were checked and submitted or approved.'))
     if _table_exists(db, 'bank_transactions'):
@@ -222,7 +223,8 @@ def month_end(db, user, today: date) -> dict:
         steps.append({'key': 'matched', **unavailable('Bank statements are not set up on this server yet.', _link('reconciliation'))})
     if _table_exists(db, 'journal_headers'):
         posted = db.execute(f"""SELECT count(*) AS total, count(*) FILTER (WHERE {POSTED_JOURNAL_FOR_RECORD}) AS done
-            FROM standardised_records r WHERE r.tenant_id=%s AND {APPROVED_RECORD}
+            FROM standardised_records r JOIN documents d ON d.id=r.document_id AND d.tenant_id=r.tenant_id AND d.excluded_at IS NULL
+            WHERE r.tenant_id=%s AND {APPROVED_RECORD}
               AND COALESCE(r.invoice_date, r.created_at::date) BETWEEN %s AND %s""", (tenant, start, end)).fetchone()
         steps.append(_step('posted', posted['done'], posted['total'], _link('records', 'posting=to-post'),
                            'Approved records dated in this period that have a posted journal.'))
