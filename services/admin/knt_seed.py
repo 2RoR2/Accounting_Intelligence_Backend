@@ -9,8 +9,9 @@ from pathlib import Path
 from urllib.parse import urlsplit
 from uuid import uuid4
 
+from ai.synthetic.knt_extra import CASH_ACCOUNT, PAYMENT_TERMS, PRODUCTS, TAX_CODES
 from ai.synthetic.knt_pack import (
-    BANK_MAPPING, COMPANY, CONTACTS, MONTHS, OPENING_BANK, OPENING_CASH, books, generate, money,
+    BANK_MAPPING, COMPANY, CONTACTS, MONTHS, OPENING_BANK, OPENING_CASH, books, contact_header, extras, generate, money,
 )
 from services.admin.demo_company import (
     Api, SeedError, _create_periods, _is_loopback, generated_password, import_csv, issue_tokens, refusal_reason,
@@ -89,15 +90,54 @@ def admin_call(api, method, path, body):
     return api.call("local_admin", method, path, json=body).json()
 
 
-def typed_sales(api, documents, contacts, accounts):
-    actual = {}
+def line_body(line, accounts, products):
+    """One document line: the product, the typed tax label and amount, and the account the sale is posted to."""
+    return {"itemId": products[line.sku]["id"] if line.sku else None, "description": line.description,
+            "quantity": str(line.quantity),
+            "unitPrice": money(line.price), "discount": money(line.discount), "tax": money(line.tax),
+            "taxCode": line.tax_code, "accountId": accounts[line.account_code]["id"]}
+
+
+def pass_through(api, source_type, source, steps, start, end, description):
+    """Turn an accepted quotation into sales orders / delivery orders (record-only, issued) and return the last one."""
+    node_type, node = source_type, source
+    for number, step in enumerate(steps, 1):
+        node = admin_call(api, "POST", f"{ERP}/{node_type}/{node['id']}/transfer", {"targetType": step})
+        on = start + timedelta(days=(end - start).days * number // (len(steps) + 1))
+        admin_call(api, "PATCH", f"{ERP}/{step}/{node['id']}", {"documentDate": str(on), "description": description})
+        node = admin_call(api, "POST", f"{ERP}/{step}/{node['id']}/transition",
+                          {"status": "ready", "reason": "Issued to the customer"})
+        node_type = step
+    return node_type, node
+
+
+def typed_sales(api, documents, contacts, accounts, products, actual=None):
+    # `actual` may already hold documents made earlier (the extension of an existing company): number -> document.
+    actual = {} if actual is None else actual
     for doc in documents:
         fields = {"demo": "KNT", "fixtureNumber": doc.number}
-        lines = [{"description": doc.description, "quantity": "1", "unitPrice": money(doc.subtotal),
-                  "tax": money(doc.tax), "accountId": accounts[doc.account]["id"]}]
+        if doc.lines:
+            lines = [line_body(line, accounts, products) for line in doc.lines]
+        else:
+            lines = [{"description": doc.description, "quantity": "1", "unitPrice": money(doc.subtotal),
+                      "tax": money(doc.tax), "accountId": accounts[doc.account]["id"]}]
         params = {"contactId": contacts[doc.contact], "documentDate": str(doc.issued),
                   "dueDate": str(doc.due) if doc.due else None, "lines": lines, "fields": fields,
                   "description": doc.description}
+        if doc.quote and doc.quoted:
+            quote = admin_call(api, "POST", f"{ERP}/quotation", {
+                **params, "fields": {"demo": "KNT", "quoteOutcome": "accepted"}, "number": doc.quote,
+                "status": "ready", "documentDate": str(doc.quoted), "dueDate": str(doc.valid_until),
+                "description": "Accepted by the customer",
+            })
+            kind_now, node = pass_through(api, "quotation", quote, doc.flow, doc.quoted, doc.issued,
+                                          f"Delivery for {doc.number}")
+            invoice = admin_call(api, "POST", f"{ERP}/{kind_now}/{node['id']}/transfer", {"targetType": "invoice"})
+            path = f"{ERP}/invoice/{invoice['id']}"
+            admin_call(api, "PATCH", path, params)
+            actual[doc.number] = admin_call(api, "POST", path + "/transition",
+                                            {"status": "ready", "reason": "Quotation accepted"})
+            continue
         if doc.quote:
             quote = admin_call(api, "POST", f"{ERP}/quotation", {
                 **params, "fields": {"demo": "KNT", "quoteOutcome": "accepted"},
@@ -131,6 +171,58 @@ def typed_sales(api, documents, contacts, accounts):
         actual[doc.number] = admin_call(api, "POST", f"{ERP}/{kind}",
                                         {**params, "number": doc.number, "status": "ready"})
     return actual
+
+
+def typed_quotes(api, quotes, contacts, accounts, products):
+    """Quotations that were not turned into an invoice: still open, expired, or accepted into a sales order."""
+    for quote in quotes:
+        made = admin_call(api, "POST", f"{ERP}/quotation", {
+            "contactId": contacts[quote.contact], "number": quote.number, "status": "ready",
+            "documentDate": str(quote.issued), "dueDate": str(quote.valid_until), "description": quote.description,
+            "lines": [line_body(line, accounts, products) for line in quote.lines],
+            "fields": {"demo": "KNT", "quoteOutcome": quote.outcome},
+        })
+        if quote.outcome == "expired":
+            admin_call(api, "POST", f"{ERP}/quotation/{made['id']}/transition",
+                       {"status": "expired", "reason": "Validity lapsed without acceptance"})
+        if quote.via:
+            pass_through(api, "quotation", made, quote.via, quote.issued, quote.issued + timedelta(days=3),
+                         f"For {quote.number}")
+
+
+def typed_bills(api, bills, contacts, accounts, products):
+    """Typed supplier bills, posted: the stock bought for the sales above, telephone and one repair."""
+    made = {}
+    for bill in bills:
+        made[bill.number] = admin_call(api, "POST", f"{ERP}/bill", {
+            "number": bill.number, "contactId": contacts[bill.contact], "documentDate": str(bill.issued),
+            "dueDate": str(bill.due), "description": bill.description, "status": "ready",
+            "lines": [line_body(line, accounts, products) for line in bill.lines],
+            "fields": {"demo": "KNT", "fixtureNumber": bill.number},
+        })
+    return made
+
+
+def typed_cash(api, cash, purchases, contacts, sales, records, bills, cash_account):
+    """Payments received from customers and made to suppliers, all through cash in hand (no bank statement line)."""
+    suppliers = {doc.number: doc.contact for doc in purchases}
+    for line in cash:
+        incoming = line.kind == "cash_in"
+
+        def target(number):
+            if incoming:
+                return {"targetId": sales[number]["id"], "source": "typed"}
+            if number in bills:  # a typed bill; the original suppliers' bills are scanned
+                return {"targetId": bills[number]["id"], "source": "typed"}
+            return {"targetId": records[number], "source": "scanned"}
+
+        targets = [{**target(number), "amount": money(amount)} for number, amount in line.targets]
+        contact = sales[line.targets[0][0]]["contactId"] if incoming else contacts[suppliers[line.targets[0][0]]]
+        admin_call(api, "POST", f"{ERP}/{'payment' if incoming else 'purchase-payment'}", {
+            "number": line.reference, "contactId": contact, "documentDate": str(line.posted), "status": "ready",
+            "referenceNo": line.reference, "description": line.description, "amount": money(abs(line.amount)),
+            "bankAccountId": cash_account, "allocations": targets,
+        })
 
 
 def capture_purchase(connect, owner, doc, source):
@@ -299,6 +391,73 @@ def import_and_match_bank(api, connect, tenant, folder, pack, bank_lines, bank_a
         })
 
 
+def contact_body(code, accounts):
+    kind, name, account, address = CONTACTS[code]
+    head = contact_header(code)
+    return {"kind": kind, "code": code, "legalName": name, "registrationNumber": head.ssm, "address": address,
+            "city": head.city, "state": "Sarawak", "postcode": head.postcode, "phone": head.phone,
+            "email": f"accounts@{code.lower()}.knt.test",
+            "defaultExpenseAccountId": accounts[account]["id"] if kind == "supplier" else None,
+            "fields": {"tin": head.tin, "sstNumber": head.sst, "paymentTermDays": head.terms,
+                       "defaultAccountCode": account, "currency": "MYR", "category": head.category}}
+
+
+def create_contacts(api, accounts, existing=None, fill_blanks=False):
+    """Add every KNT contact. `existing` ({code: contact}) are kept as they are; with fill_blanks a contact that is
+    already there only gets the header values it does not have yet (nothing it already holds is overwritten)."""
+    contacts = {}
+    for code in CONTACTS:
+        body = contact_body(code, accounts)
+        current = (existing or {}).get(code)
+        if current is None:
+            contacts[code] = admin_call(api, "POST", "/api/erp/contacts", body)["id"]
+            continue
+        contacts[code] = current["id"]
+        if not fill_blanks:
+            continue
+        merged = {key: current.get(key) or body[key] for key in
+                  ("registrationNumber", "address", "city", "state", "postcode", "phone", "email")}
+        fields = {**body["fields"], **(current.get("fields") or {})}
+        extra = {"defaultExpenseAccountId": current.get("defaultExpenseAccountId") or body["defaultExpenseAccountId"]}
+        if (merged, fields, extra["defaultExpenseAccountId"]) != (
+                {key: current.get(key) for key in merged}, current.get("fields") or {},
+                current.get("defaultExpenseAccountId")):
+            admin_call(api, "PUT", f"/api/erp/contacts/{current['id']}", {
+                "kind": body["kind"], "code": current.get("code") or code, "legalName": current["legalName"],
+                **merged, "fields": fields, **(extra if body["kind"] == "supplier" else {})})
+    return contacts
+
+
+def setup_catalogue(api, accounts):
+    """Tax-code labels, payment terms, a cash-in-hand account and the product catalogue (idempotent by label/SKU)."""
+    def entries(kind):
+        return {row["code"]: row for row in api.call("local_admin", "GET", f"/api/erp/catalog/{kind}",
+                                                     params={"includeInactive": "true"}).json()}
+
+    for kind, rows in (("tax-code", {code: (desc, {"ratePercent": f"{rate * 100:.0f}"})
+                                     for code, (desc, rate) in TAX_CODES.items()}),
+                       ("payment-term", {code: (name, {"days": days}) for code, (name, days) in PAYMENT_TERMS.items()})):
+        have = entries(kind)
+        for code, (name, data) in rows.items():
+            if code not in have:
+                admin_call(api, "POST", f"/api/erp/catalog/{kind}", {"code": code, "name": name, "data": data})
+    have = entries("bank-account")
+    cash = have.get(CASH_ACCOUNT["code"]) or admin_call(api, "POST", "/api/erp/catalog/bank-account", {
+        "code": CASH_ACCOUNT["code"], "name": CASH_ACCOUNT["name"],
+        "ledgerAccountId": accounts[CASH_ACCOUNT["ledger"]]["id"], "data": {"bankName": "Cash"}})
+    existing = {row["sku"]: row for row in api.call("local_admin", "GET", "/api/erp/products",
+                                                    params={"includeInactive": "true"}).json()}
+    products = {}
+    for product in PRODUCTS:
+        products[product.sku] = existing.get(product.sku) or admin_call(api, "POST", "/api/erp/products", {
+            "name": product.name, "sku": product.sku, "kind": product.kind, "unit": product.unit,
+            "salePrice": money(product.sale), "purchasePrice": money(product.cost), "quantity": str(product.stock),
+            "groupName": product.group, "incomeAccountId": accounts[product.income]["id"],
+            "expenseAccountId": accounts[product.expense]["id"], "defaultTaxCode": product.tax_code,
+        })
+    return cash["id"], products
+
+
 def seed(connect, folder, password=None):
     from fastapi.testclient import TestClient
     import main
@@ -327,14 +486,8 @@ def seed(connect, folder, password=None):
             accounts = setup.accounts()
             bank_account = setup.ensure_bank_account(accounts, COMPANY["bank_account_number"])
             periods = {p["periodCode"]: p["id"] for p in api.call("local_admin", "GET", "/api/ledger/periods").json()}
-            contacts = {}
-            for code, (kind, name, account, address) in CONTACTS.items():
-                contact = admin_call(api, "POST", "/api/erp/contacts", {
-                    "kind": kind, "code": code, "legalName": name, "address": address, "city": "Kuching",
-                    "state": "Sarawak", "email": f"accounts@{code.lower()}.knt.test",
-                    "defaultExpenseAccountId": accounts[account]["id"] if kind == "supplier" else None,
-                })
-                contacts[code] = contact["id"]
+            cash_account, products = setup_catalogue(api, accounts)
+            contacts = create_contacts(api, accounts)
             admin_call(api, "POST", "/api/ledger/journals", {
                 "periodId": periods["2026-09"], "sourceType": "manual", "idempotencyKey": "knt:opening",
                 "journalDate": "2026-09-01", "description": "KNT opening funds",
@@ -343,10 +496,14 @@ def seed(connect, folder, password=None):
                            ("3000", "credit", OPENING_BANK + OPENING_CASH))],
             })
             sales, purchases, bank = books()
-            typed = typed_sales(api, sales, contacts, accounts)
+            typed = typed_sales(api, sales, contacts, accounts, products)
+            quotes, cash, bills = extras()
+            typed_quotes(api, quotes, contacts, accounts, products)
+            typed_supplier_bills = typed_bills(api, bills, contacts, accounts, products)
             scanned, note_journals = capture_purchases(api, connect, users["accountant"], purchases, folder, accounts, periods)
             import_and_match_bank(api, connect, tenant["id"], folder, pack, bank, bank_account, accounts,
                                   typed, scanned, note_journals)
+            typed_cash(api, cash, [*purchases, *bills], contacts, typed, scanned, typed_supplier_bills, cash_account)
     finally:
         with connect() as db:
             db.execute("DELETE FROM web_sessions WHERE session_id=ANY(%s)", (sessions,))

@@ -6,7 +6,7 @@ from pypdf import PdfReader
 
 from ai.evaluation.dataset_contract import validate_collection
 from ai.synthetic.company_pack import COA
-from ai.synthetic.knt_pack import BANK_MAPPING, COMPANY, MONTHS, books, generate
+from ai.synthetic.knt_pack import BANK_MAPPING, COMPANY, MONTHS, OPENING_CASH, books, generate
 from services.bank.csv_parser import parse_bank_csv
 
 
@@ -57,3 +57,62 @@ def test_knt_pack_is_deterministic_and_contains_only_purchases(tmp_path):
                 assert Decimal(printed["Balance"]) == opening
         prior_closing = Decimal(statement["closing"])
         assert opening == prior_closing
+
+
+def test_extension_adds_contacts_products_and_history_without_touching_the_original_books():
+    import re
+
+    from ai.synthetic.knt_extra import PRODUCT_BY_SKU, PRODUCTS, TAX_CODES, extension
+    from ai.synthetic.knt_pack import BASE_CONTACTS, CONTACTS, contact_header, extras, original_books
+
+    # The original fixture is unchanged and the bank statements are the original ones.
+    base_sales, base_purchases, base_bank = original_books()
+    sales, purchases, bank = books()
+    assert sales[: len(base_sales)] == base_sales and purchases == base_purchases and bank == base_bank
+    assert BASE_CONTACTS == ("SEN", "KU", "PAU", "TUA", "REN") and list(CONTACTS)[:5] == list(BASE_CONTACTS)
+    kinds = Counter(row[0] for row in CONTACTS.values())
+    assert kinds == {"customer": 17, "supplier": 13} and len(PRODUCTS) == 41
+
+    # Contacts: short codes the forms accept, and full invented header data nobody else shares.
+    for kind in kinds:
+        codes = [code for code, row in CONTACTS.items() if row[0] == kind]
+        assert len(set(codes)) == len(codes) and all(re.fullmatch(r"[A-Z0-9-]{1,12}", code) for code in codes)
+        heads = [contact_header(code) for code in codes]
+        for field in ("ssm", "tin", "sst", "phone"):
+            assert len({getattr(head, field) for head in heads}) == len(heads)
+        assert all(head.terms in {14, 30, 45} and head.postcode.isdigit() for head in heads)
+
+    # Every customer is invoiced and every supplier billed (typed or scanned); every product is on a line.
+    found = extension()
+    quotes, cash, bills = extras()
+    assert {doc.contact for doc in sales if doc.kind == "invoice"} == {c for c, r in CONTACTS.items() if r[0] == "customer"}
+    assert {doc.contact for doc in (*purchases, *bills)} == {c for c, r in CONTACTS.items() if r[0] == "supplier"}
+    on_lines = {line.sku for doc in (*found.sales, *quotes, *bills) for line in doc.lines if line.sku}
+    assert on_lines == set(PRODUCT_BY_SKU)
+
+    # Numbers are unique; every document is dated inside its month's cutoff; typed totals are the sum of the lines.
+    numbers = [doc.number for doc in (*sales, *bills)] + [line.reference for line in cash]
+    assert len(numbers) == len(set(numbers))
+    quote_numbers = [q.number for q in quotes] + [doc.quote for doc in sales if doc.quote]
+    assert len(quote_numbers) == len(set(quote_numbers))
+    for doc in (*found.sales, *bills):
+        assert doc.issued <= MONTHS[f"{doc.issued:%Y-%m}"]
+        assert doc.subtotal == sum(line.net for line in doc.lines) and doc.tax == sum(line.tax for line in doc.lines)
+        assert all(line.tax_code in TAX_CODES for line in doc.lines)
+        if doc.related:
+            assert doc.issued >= next(d.issued for d in sales if d.number == doc.related)
+    for doc in found.sales:
+        if doc.quoted:
+            assert doc.quoted < doc.issued and doc.valid_until >= doc.quoted
+    assert {q.outcome for q in quotes} == {"open", "expired", "accepted"}
+    assert sum(1 for doc in sales if doc.quoted) >= 5 and {"sales-order", "delivery-order"} <= {
+        step for doc in sales for step in doc.flow}
+
+    # Cash in hand never goes negative while the payments are applied in date order.
+    balance = OPENING_CASH
+    movements = [(doc.issued, -doc.total) for doc in purchases if doc.kind == "receipt"]
+    movements += [(line.posted, line.amount) for line in cash]
+    for _, amount in sorted(movements):
+        balance += amount
+        assert balance >= 0
+

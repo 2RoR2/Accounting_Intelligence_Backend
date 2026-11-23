@@ -132,7 +132,7 @@ def test_six_month_trend_matches_each_months_profit_and_loss(knt):
             assert (row["sales"], row["expenses"], row["netProfit"]) == (
                 pnl["totalIncome"], pnl["totalExpenses"], pnl["netProfit"])
     assert summary["trend"][-1]["netProfit"] == summary["month"]["netProfit"]
-    assert [row["netProfit"] for row in summary["trend"][3:]] == [Decimal("2403.50"), Decimal("3067.50"), Decimal("2551.50")]
+    assert [row["netProfit"] for row in summary["trend"][3:]] == [Decimal("5571.30"), Decimal("11670.00"), Decimal("12269.30")]
 
 
 def test_today_is_the_single_day_and_a_quiet_day_is_zero(knt):

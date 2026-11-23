@@ -94,7 +94,14 @@ def test_reset_removes_legacy_benchmark_and_tally_detects_drift(local_knt):
         with connect() as db:
             first = tally(db)
             assert [row[-1] for row in first] == [1, 1, 1]
-            assert first[-1][3:7] == tuple(map(Decimal, ("4032.00", "2402.00", "25368.76", "25538.76")))
+            # AR, AP, bank ledger, bank statement: the bank figures are the original fixture's, unchanged by the
+            # richer data (its payments go to cash in hand).
+            assert first[-1][3:7] == tuple(map(Decimal, ("71450.13", "56751.38", "25368.76", "25538.76")))
+            counts = {table: db.execute(f"SELECT count(*) AS n FROM {table} WHERE tenant_id=%s", (legacy,)).fetchone()["n"]
+                      for table in ("customers", "vendors", "erp_products")}
+            assert counts == {"customers": 17, "vendors": 13, "erp_products": 41}
+            assert db.execute("""SELECT count(*) AS n FROM erp_catalog_entries WHERE tenant_id=%s
+                AND kind IN ('tax-code','payment-term')""", (legacy,)).fetchone()["n"] == 9
             assert db.execute("SELECT id FROM tenants WHERE tenant_code='KNT'").fetchone()["id"] == legacy
             assert db.execute("SELECT 1 FROM users WHERE id=%s", (owner,)).fetchone()
             assert db.execute("SELECT 1 FROM tenants WHERE id=%s", (other,)).fetchone()
@@ -102,7 +109,7 @@ def test_reset_removes_legacy_benchmark_and_tally_detects_drift(local_knt):
             assert not db.execute("SELECT 1 FROM benchmark_demo_tenants WHERE tenant_id=%s", (legacy,)).fetchone()
             assert (ROOT / "ai/assets/invoice/INV00001.pdf").is_file()
             assert db.execute("""SELECT count(*) AS n FROM erp_document_links
-                WHERE tenant_id=%s AND link_type='transfer'""", (legacy,)).fetchone()["n"] == 3
+                WHERE tenant_id=%s AND link_type='transfer'""", (legacy,)).fetchone()["n"] == 20
             db.execute("UPDATE bank_reconciliation_periods SET closing_balance=closing_balance+1 WHERE tenant_id=%s",
                        (legacy,))
             with pytest.raises(SeedError, match="closingBalance"):
@@ -111,3 +118,70 @@ def test_reset_removes_legacy_benchmark_and_tally_detects_drift(local_knt):
         reset(connect, local_knt, "FixtureDemo!2026")
         with connect() as db:
             assert tally(db) == first
+
+
+@pytest.mark.parametrize("allow,host_env,message", [
+    (False, None, "not on this machine"),
+    (True, None, "not on this machine"),
+    (True, "other.example", "not on this machine"),
+])
+def test_extend_refuses_a_remote_database_unless_confirmed_by_name(allow, host_env, message):
+    from services.admin.knt_extend import require_target
+
+    environ = {"DATABASE_URL": "postgresql://operator@db.example.invalid/uat"}
+    if host_env:
+        environ["KNT_EXTEND_REMOTE_HOST"] = host_env
+    with pytest.raises(SeedError, match=message):
+        require_target(allow, environ)
+    assert callable(require_target(True, {**environ, "KNT_EXTEND_REMOTE_HOST": "DB.example.invalid"}))
+    assert callable(require_target(False, {"DATABASE_URL": "postgresql://operator@127.0.0.1/knt"}))
+
+
+def test_extend_adds_the_rich_data_to_original_books_without_touching_them(local_knt, monkeypatch):
+    """The hosted-UAT path: books built from the original fixture only, then extended in place."""
+    from ai.synthetic import knt_extra, knt_pack
+    from services.admin import knt_extend, knt_seed
+
+    preserved = ("tenants", "users", "documents", "raw_extractions", "standardised_records", "journal_headers",
+                 "journal_lines", "bank_imports", "bank_transactions", "bank_reconciliation_periods",
+                 "erp_document_headers", "erp_document_links", "erp_document_allocations", "settlements",
+                 "settlement_allocations", "customers", "vendors", "ledger_accounts")
+
+    def fingerprints(db):
+        return {table: {row["h"] for row in db.execute(f"SELECT md5(row_to_json(t)::text) AS h FROM {table} t").fetchall()}
+                for table in preserved}
+
+    with locked_database() as connect:  # held only while rebuilding: extend takes the same lock itself
+        with monkeypatch.context() as original:  # build what hosted UAT holds today: the original fixture alone
+            original.setattr(knt_seed, "books", knt_pack.original_books)
+            original.setattr(knt_seed, "extras", lambda: ([], [], []))
+            original.setattr(knt_seed, "setup_catalogue", lambda api, accounts: (None, {}))
+            original.setattr(knt_seed, "CONTACTS", {code: knt_pack.CONTACTS[code] for code in knt_pack.BASE_CONTACTS})
+            reset(connect, local_knt, "FixtureDemo!2026")
+    with connect() as db:
+        tenant = db.execute("SELECT id FROM tenants WHERE tenant_code='KNT'").fetchone()["id"]
+        before = fingerprints(db)
+        assert db.execute("SELECT count(*) AS n FROM erp_products").fetchone()["n"] == 0
+        found = knt_extend.plan(knt_extend.read_state(db, tenant), knt_extra.extension())
+        assert {kind: len(items) for kind, items in found.items()} == {
+            "contacts": 25, "tax codes": 4, "payment terms": 5, "cash account": 1, "products": 41,
+            "quotations": 8, "sales documents": 36, "supplier bills": 27, "payments": 30}
+    # Dry run writes nothing; --apply adds everything; the books still tally.
+    assert knt_extend.extend(connect, "admin@knt.demo.test") is None
+    with connect() as db:
+        assert fingerprints(db) == before
+    summaries = knt_extend.extend(connect, "admin@knt.demo.test", apply=True)
+    assert summaries[-1][3:7] == tuple(map(Decimal, ("71450.13", "56751.38", "25368.76", "25538.76")))
+    with connect() as db:
+        after = fingerprints(db)
+        for table in preserved:  # every row that was there is still there, unedited
+            assert before[table] <= after[table], table
+        assert tally(db) == summaries
+        assert all(not items for items in knt_extend.plan(knt_extend.read_state(db, tenant),
+                                                          knt_extra.extension()).values())
+    # A second run has nothing to do.
+    knt_extend.extend(connect, "admin@knt.demo.test", apply=True)
+    with connect() as db:
+        assert fingerprints(db) == after
+    with pytest.raises(SeedError, match="company admin"):
+        knt_extend.extend(connect, "accountant@knt.demo.test")

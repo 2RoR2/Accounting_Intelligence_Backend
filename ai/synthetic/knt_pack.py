@@ -15,6 +15,7 @@ from pathlib import Path
 
 from ai.synthetic.company_pack import COA, COA_COLUMNS, CONTACT_COLUMNS, DEFAULT_OUT, NOTICE, ZERO
 from ai.synthetic.generate import Generator, Page, write_manifests
+from ai.synthetic.knt_extra import EXTRA_CONTACTS, contact_details
 
 COMPANY = {
     "code": "KNT", "name": "Ketapang Nibong Trading Sdn. Bhd.", "ssm": "2021034769157",
@@ -31,6 +32,16 @@ CONTACTS = {
     "TUA": ("supplier", "Tualang Power Services Sdn. Bhd.", "6110", "Lot 45, Jalan Tualang Contoh"),
     "REN": ("supplier", "Rengas Stationers", "6140", "Lot 56, Jalan Rengas Contoh"),
 }
+BASE_CONTACTS = tuple(CONTACTS)
+CONTACTS.update(EXTRA_CONTACTS)  # the original five keep their codes; the extension adds the rest
+
+
+def contact_header(code):
+    """Header data for a contact: SSM, TIN, SST number, phone, terms, address parts. Customers and suppliers are
+    numbered separately in the order they appear in CONTACTS."""
+    kind = CONTACTS[code][0]
+    position = [c for c, row in CONTACTS.items() if row[0] == kind].index(code) + 1
+    return contact_details(code, kind, position)
 TITLES = {"invoice": "Invoice", "bill": "Electricity Bill", "receipt": "Cash Receipt",
           "credit_note": "Credit Note", "debit_note": "Debit Note"}
 FILE_TYPES = {"invoice": "INV", "bill": "BILL", "receipt": "REC", "credit_note": "CN", "debit_note": "DN"}
@@ -52,10 +63,26 @@ class Document:
     related: str | None = None
     state: str = "posted"
     quote: str | None = None
+    # Product lines (knt_extra.Line); empty for the original one-line documents. quoted/valid_until are the
+    # quotation's own dates and flow the sales order / delivery order it passed through before this invoice.
+    lines: tuple = ()
+    flow: tuple = ()
+    quoted: date | None = None
+    valid_until: date | None = None
 
     @property
     def total(self):
         return self.subtotal + self.tax
+
+    @property
+    def amounts(self):
+        """Net amount per ledger account: one account for the original documents, the lines' accounts otherwise."""
+        if not self.lines:
+            return {self.account: self.subtotal}
+        result = {}
+        for line in self.lines:
+            result[line.account_code] = result.get(line.account_code, ZERO) + line.net
+        return result
 
     @property
     def filename(self):
@@ -73,8 +100,29 @@ class BankLine:
     targets: tuple[tuple[str, Decimal], ...] = ()
 
 
-def books():
-    """The fixed scenario is also the independent source for tally expectations."""
+def books(include_extension=True):
+    """The fixed scenario is also the independent source for tally expectations.
+
+    The original fixture comes first; with include_extension the richer typed sales from knt_extra follow it.
+    The bank statements never change: the extension's payments go to cash in hand (see extras())."""
+    sales, purchases, bank = original_books()
+    if include_extension:
+        from ai.synthetic.knt_extra import extension
+
+        sales = sales + extension().sales
+    return sales, purchases, bank
+
+
+def extras():
+    """The extension's quotations, cash payments (received and made) and typed supplier bills.
+    The payments have no bank statement lines; the bills are typed, so they are not Inbox files."""
+    from ai.synthetic.knt_extra import extension
+
+    found = extension()
+    return found.quotes, found.cash, found.bills
+
+
+def original_books():
     sales, purchases, bank = [], [], []
     for index, cutoff in enumerate(MONTHS.values()):
         tag = cutoff.strftime("%y%m")
@@ -222,8 +270,9 @@ def generate(folder):
     write_manifests(folder, renderer.dataset, renderer.revision, manifests)
     write_csv(folder / "coa.csv", COA_COLUMNS, COA)
     write_csv(folder / "contacts.csv", CONTACT_COLUMNS, [
-        (code, kind, name, "customer" if kind == "customer" else "trade", "", "", "", address,
-         f"accounts@{code.lower()}.knt.test", "", 14, account, "MYR")
+        (code, kind, name, "customer" if kind == "customer" else "trade", contact_header(code).ssm, contact_header(code).tin,
+         contact_header(code).sst, f"{address}, {contact_header(code).postcode} {contact_header(code).city}, Sarawak",
+         f"accounts@{code.lower()}.knt.test", contact_header(code).phone, contact_header(code).terms, account, "MYR")
         for code, (kind, name, account, address) in CONTACTS.items()
     ])
     opening, statements = OPENING_BANK, {}
