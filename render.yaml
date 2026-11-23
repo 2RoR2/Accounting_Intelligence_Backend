@@ -3,9 +3,11 @@ services:
   - type: web
     name: accounting-intelligence-api
     runtime: python
-    plan: starter
-    buildCommand: bash scripts/render_build.sh
-    preDeployCommand: python services/admin/manage.py migrate
+    # Free first (0.1 CPU, 512 MB, sleeps when idle). Move to starter only if scanned documents
+    # miss 20 s at p95 (docs/DEPLOY_UAT.md section 5). Free has no pre-deploy command, so the
+    # build runs migrate; on starter, move migrate to preDeployCommand.
+    plan: free
+    buildCommand: bash scripts/render_build.sh && python services/admin/manage.py migrate
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /api/health
     envVars:

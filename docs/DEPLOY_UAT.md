@@ -23,13 +23,14 @@ Rotating it signs users out and requires re-enrollment for accounts with existin
    sender or authenticate its domain. Set `BREVO_API_KEY` and `BREVO_FROM_EMAIL` in Render.
    The Blueprint selects Brevo and supplies `BREVO_FROM_NAME`. [Brevo sender setup](https://help.brevo.com/hc/en-us/articles/208836149-Create-a-new-sender-From-name-and-From-email)
 2. In Render, choose **New → Blueprint**, select the backend repository and the approved branch
-   containing `render.yaml`, and review the single Python web service. The Blueprint selects Starter
-   for pre-deploy command support. The build installs the slim runtime and checks the packaged OCR
-   weights. The pre-deploy command runs `python services/admin/manage.py migrate` before Uvicorn
-   starts. Startup checks schema compatibility and `/api/health` checks database access. On a plan
-   without pre-deploy support, remove `preDeployCommand` in the Blueprint and use
-   `python services/admin/manage.py migrate && exec uvicorn main:app --host 0.0.0.0 --port $PORT`
-   as `startCommand`. [Render deploy commands](https://render.com/docs/deploys)
+   containing `render.yaml`, and review the single Python web service. The Blueprint selects the
+   Free plan. The build installs the slim runtime, checks the packaged OCR weights and then runs
+   `python services/admin/manage.py migrate`, because Free services have no pre-deploy command.
+   Startup checks schema compatibility and `/api/health` checks database access. A Free service
+   sleeps after a period without traffic, so the first request after a pause waits for it to wake;
+   open `/api/health` before a test session. If section 5 calls for Starter, change `plan` to
+   `starter`, move the `migrate` command from `buildCommand` to `preDeployCommand` and redeploy.
+   [Render deploy commands](https://render.com/docs/deploys)
 3. Add the `uat` connection as `DATABASE_URL` and a fresh random `AUTH_SECRET` of at least 32
    characters. `JWT_SECRET` is reserved for legacy setup and may be left unset. Supply `S3_BUCKET`
    for a private UAT bucket and `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` for a role or key
@@ -49,8 +50,8 @@ Rotating it signs users out and requires re-enrollment for accounts with existin
 
 ## 3. Initialize the UAT database
 
-Render runs the initial `migrate` on `uat` during the first deploy and checks for pending migrations
-on later deploys. If initializing it manually before the first deploy, use the backend repository
+Render runs `migrate` on `uat` in every build; it applies pending migrations and leaves an
+up-to-date schema unchanged. If initializing it manually before the first deploy, use the backend repository
 root in a private operator terminal with the runtime dependencies installed and the verified `uat`
 connection in that terminal's `DATABASE_URL`. Run `python services/admin/manage.py migrate` and
 check for `Schema prerequisites verified.`
@@ -101,7 +102,33 @@ In the UAT run record, copy the full backend commit SHA and deployment ID from t
 deploy and the full frontend commit SHA and deployment ID from the matching Vercel deployment.
 Record UTC time, the Neon branch, migration and tally outcomes, and the smoke-test results.
 
-## 5. Roll back
+## 5. Free or Starter: scanned-document timing (SC3)
+
+Keep the Free plan unless scanned documents miss 20 s at p95. On the Free service, wake it with
+`/api/health`, then upload at least 20 scanned documents (JPG/PNG receipts and image-only PDFs from
+the KNT Inbox set) one after another, as a tester would. Exclude the first upload after a wake-up
+and report it separately as the cold-start time. When every upload has left `queued`/`processing`,
+run this read-only query on `uat` (replace the time with the start of the run, UTC):
+
+```sql
+SELECT count(*) AS documents,
+       percentile_disc(0.95) WITHIN GROUP (ORDER BY processing_seconds) AS p95_reading_s,
+       percentile_disc(0.95) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM processing_completed_at - uploaded_at))
+         AS p95_upload_to_done_s,
+       max(processing_seconds) AS max_reading_s
+FROM documents
+WHERE uploaded_at >= TIMESTAMPTZ '2026-11-24 00:00:00+00'
+  AND processing_completed_at IS NOT NULL
+  AND (mime_type LIKE 'image/%' OR original_filename ILIKE '%scan%');
+```
+
+`p95_reading_s` is the SC3 figure (`processing_seconds`, as on the Evaluation page);
+`p95_upload_to_done_s` adds queue wait. Pass when `p95_reading_s` is 20 s or less. If it is over
+20 s, or the service restarts with an out-of-memory event during the run (Render **Events**),
+switch to Starter as described in section 2, redeploy and repeat the run. Record the plan, both
+p95 figures, the cold-start time and the document count in the UAT run record.
+
+## 6. Roll back
 
 1. Pause automatic deploys. If the database schema is compatible with the previous backend, use
    **Manual Deploy → Deploy a specific commit** in Render and select the last known-good backend
