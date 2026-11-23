@@ -23,7 +23,7 @@ from security.authentication import create_access_token
 from services.imports import opening
 from services.routes.accounting import routes as accounting
 from services.routes.erp import posting
-from services.routes.reporting import financial
+from services.routes.reporting import business_summary, financial
 
 ROOT = Path(__file__).resolve().parents[2]
 PERIODS = "/api/ledger/periods"
@@ -158,7 +158,7 @@ def _post_journal(client, *args, **kwargs):
 def workspace(ledger):
     connect, ids = ledger
     with pytest.MonkeyPatch.context() as patch:
-        for module in (main, accounting, financial):
+        for module in (main, accounting, financial, business_summary):
             patch.setattr(module, "connect", connect)
         patch.setenv("AUTH_SECRET", "financial-report-integration-test-" + uuid4().hex)
         clients = []
@@ -452,8 +452,15 @@ def test_csv_and_month_pack(workspace, monkeypatch):
     assert response.status_code == 200, response.text
     assert response.headers["content-disposition"] == 'attachment; filename="month-pack-2026-08.xlsx"'
     book = load_workbook(BytesIO(response.content), data_only=True)
-    assert book.sheetnames == ["Profit and loss", "Balance sheet", "Trial balance", "General ledger",
+    assert book.sheetnames == ["Business summary", "Profit and loss", "Balance sheet", "Trial balance", "General ledger",
                                "Receivables ageing", "Payables ageing", "Tax summary", "Open exceptions"]
+    summary = book["Business summary"]
+    assert summary["A1"].value == "Financial Test Co. | Business summary | 2026-08-01 to 2026-08-31"
+    assert summary["A2"].value == "Recorded tax, not a tax return. Profit figures exclude recorded tax."
+    assert [cell.value for cell in summary[3]] == ["Section", "Item", "Amount"]
+    rows = [tuple(row) for row in summary.values]
+    assert ("Profit and loss", "Sales", 200) in rows and ("Profit and loss", "Net profit", 150) in rows
+    assert ("Recorded tax", "Output tax", 12) in rows and ("Top suppliers", "Scanned Supplier", 50) in rows
     assert book["Profit and loss"]["A1"].value == "Financial Test Co. | Profit and loss | 2026-08-01 to 2026-08-31"
     assert book["Profit and loss"]["D3"].value == 200
     assert book["Profit and loss"]["D3"].number_format == "0.00"
@@ -494,6 +501,70 @@ def test_month_pack_uses_saved_dates_for_custom_and_month_like_codes(workspace):
     assert book["Profit and loss"]["A1"].value.endswith("2026-11-06 to 2026-11-20")
     assert book["Profit and loss"]["D3"].value == 95
     assert accountant.get(PACK, params={"period": "unconfigured"}).status_code == 404
+
+
+SUMMARY = "/api/reports/business-summary"
+
+
+def test_business_summary_endpoint_matches_the_reports_it_reuses(workspace):
+    _, accountant, _, ids = workspace
+    response = accountant.get(SUMMARY, params={"date": "2026-08-31", "month": "2026-08"})
+    assert response.status_code == 200, response.text
+    body, month = response.json(), response.json()["month"]
+    assert (body["company"], body["date"], body["monthCode"]) == ("Financial Test Co.", "2026-08-31", "2026-08")
+    assert (month["fromDate"], month["toDate"]) == ("2026-08-01", "2026-08-31")
+    pnl = _report(accountant, "profit-and-loss", AUGUST)
+    assert (month["sales"], month["expenses"], month["netProfit"]) == (pnl["totalIncome"], pnl["totalExpenses"], pnl["netProfit"])
+    assert (month["sales"], month["expenses"], month["netProfit"]) == ("200.00", "50.00", "150.00")
+    # No cost-of-sales account in this chart, so gross profit is sales and the page says so.
+    assert (month["costOfSalesTracked"], month["costOfSales"], month["grossProfit"], month["operatingExpenses"]) == (
+        False, "0.00", "200.00", "50.00")
+    tax = _report(accountant, "tax-summary", AUGUST)["totals"]
+    assert month["recordedTax"] == {**tax, "note": "Recorded tax, not a tax return"}
+    # The August sale comes in; the temporary expense goes out and its reversal comes back in.
+    assert (month["cashIn"], month["cashOut"]) == ("227.00", "15.00")
+    # Bank balance: the balance sheet's figure for the same account and date.
+    balance = _report(accountant, "balance-sheet", AS_OF)
+    sheet_bank = next(row["amount"] for section in balance["sections"] for row in section["accounts"]
+                      if row["accountId"] == str(ids["accounts"]["1010"]))
+    bank = month["position"]["bank"]
+    assert bank["accounts"] == [{"accountId": str(ids["accounts"]["1010"]), "code": "1010", "name": "Bank", "balance": sheet_bank}]
+    assert bank["total"] == sheet_bank
+    for key, kind in (("receivables", "receivables"), ("payables", "payables")):
+        ageing = _report(accountant, "ageing", {**AS_OF, "type": kind})
+        assert month["position"][key]["total"] == ageing["totals"]["total"] != "0.00"
+    # Customers and suppliers come from the documents behind the journals.
+    assert body["salesByCustomer"] == body["topCustomers"] == [
+        {"name": "Typed Buyer", "amount": "200.00", "entries": 1, "named": True}]
+    assert body["purchasesBySupplier"] == body["topSuppliers"] == [
+        {"name": "Scanned Supplier", "amount": "50.00", "entries": 1, "named": True}]
+    assert body["salesByProduct"] == [{"name": "Not itemised by product", "sku": None, "quantity": None,
+                                       "amount": "200.00", "named": False}]
+    assert [row["month"] for row in body["trend"]] == ["2026-03", "2026-04", "2026-05", "2026-06", "2026-07", "2026-08"]
+    assert [row["netProfit"] for row in body["trend"]][-2:] == ["100.00", "150.00"]
+    assert body["today"]["date"] == "2026-08-31" and body["today"]["sales"] == "0.00"
+    assert body["today"]["cashIn"] == body["today"]["cashOut"] == "0.00"
+
+    # A month still in progress stops at the chosen day, and Today is that day alone.
+    early = accountant.get(SUMMARY, params={"date": "2026-08-05", "month": "2026-08"}).json()
+    assert (early["month"]["toDate"], early["month"]["sales"], early["month"]["expenses"]) == ("2026-08-05", "200.00", "0.00")
+    assert (early["today"]["sales"], early["today"]["cashIn"]) == ("200.00", "212.00")
+
+
+def test_business_summary_is_tenant_scoped_and_validates_input(workspace):
+    _, accountant, outsider, _ = workspace
+    empty = outsider.get(SUMMARY, params={"date": "2026-08-31", "month": "2026-08"}).json()
+    assert empty["month"]["sales"] == empty["month"]["netProfit"] == "0.00"
+    assert empty["month"]["position"]["bank"] == {"asOf": "2026-08-31", "accounts": [], "total": "0.00"}
+    assert empty["month"]["position"]["receivables"]["total"] == "0.00"
+    assert [empty[key] for key in ("salesByCustomer", "purchasesBySupplier", "salesByProduct", "topCustomers",
+                                   "overdueInvoices", "overdueBills")] == [[]] * 6
+    for params in ({"month": "2026-13"}, {"month": "Aug 2026"}, {"month": "2026-8"}, {"date": "2026-02-31"},
+                   {"date": "31/08/2026"}, {"date": "2026-08-31", "month": "2026-09"}, {"date": "2999-01-01"}):
+        response = accountant.get(SUMMARY, params=params)
+        assert response.status_code == 422, params
+        assert isinstance(response.json()["detail"], str)
+    assert TestClient(main.app).get(SUMMARY).status_code in {401, 403}
 
 
 def test_isolation_and_parameters(workspace):
