@@ -157,14 +157,11 @@ def _ageing_bucket(days):
 def _without_typed_copies(db, tenant, rows):
     """Drop scanned open items that a ready typed bill/invoice already records (same party and number).
     Posting refuses the second copy of an obligation, so ageing must count it once too (Codex H2)."""
-    from services.routes.erp.posting import typed_copy_of_scanned
+    from services.routes.erp.posting import typed_copy_record_ids
     scanned = [row["record_id"] for row in rows if row["record_id"]]
     if not scanned:
         return rows
-    records = db.execute("""SELECT r.*,d.kind FROM standardised_records r
-        JOIN documents d ON d.id=r.document_id AND d.tenant_id=r.tenant_id
-        WHERE r.tenant_id=%s AND r.id=ANY(%s)""", (tenant, scanned)).fetchall()
-    copies = {record["id"] for record in records if typed_copy_of_scanned(db, tenant, record)}
+    copies = typed_copy_record_ids(db, tenant, scanned)
     return [row for row in rows if row["record_id"] not in copies]
 
 

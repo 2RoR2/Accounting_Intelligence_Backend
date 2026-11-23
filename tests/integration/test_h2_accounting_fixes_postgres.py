@@ -111,3 +111,9 @@ def test_ageing_counts_a_typed_bill_and_its_approved_scan_once(company):
     assert payables['totals']['total'] == Decimal('1250.00'), payables['rows']
     assert sorted((r['source'], r['documentNumber']) for r in payables['rows']) == [
         ('scanned', 'INV-2000'), ('typed', typed['number'])]
+
+    # The ledger P&L page shows its own ageing summary; it counts the bill once too.
+    report = ok(call('GET', '/api/ledger/profit-and-loss', admin, params={'fromDate': '2026-08-01', 'toDate': '2026-08-31'}))
+    payable = [a for a in report['aging'] if a['category'] == 'accounts_payable']
+    assert sum(Decimal(a['amount']) for a in payable) == Decimal('1250.00'), payable
+    assert sum(a['itemCount'] for a in payable) == 2

@@ -807,10 +807,12 @@ def get_profit_and_loss_dashboard(request: Request, fromDate: date, toDate: date
             user["tenant_id"], fromDate, toDate, user["tenant_id"], granularity, user["tenant_id"], fromDate, toDate,
             granularity, user["tenant_id"], fromDate, toDate, granularity, user["tenant_id"], fromDate, toDate)
 
+    from services.routes.erp.posting import typed_copy_record_ids
     from services.routes.home.lanes import OPEN_ITEM_KINDS, company_today
     with connect() as db:
         rows = db.execute(pnl_sql, pnl_params).fetchall()
         today = company_today(db, user["tenant_id"])
+        typed_copies = list(typed_copy_record_ids(db, user["tenant_id"]))
         aging_rows = db.execute("""WITH active_allocations AS (
                 SELECT a.id,a.record_id,a.amount
                 FROM settlement_allocations a
@@ -831,6 +833,8 @@ def get_profit_and_loss_dashboard(request: Request, fromDate: date, toDate: date
                     AND ((r.category='accounts_payable' AND d.kind = ANY(%s))
                         OR (r.category='accounts_receivable' AND d.kind = ANY(%s)))
                     AND COALESCE(r.amount_due,r.total_amount)>0
+                    -- A scan of a typed invoice/bill is the same obligation; the typed one is counted (Codex H2).
+                    AND NOT (r.id = ANY(%s::uuid[]))
                 UNION ALL
                 -- Plan L4: typed invoices and bills that are ready (posted), less payments and credit notes allocated to them.
                 SELECT h.id,CASE WHEN h.document_type IN ('invoice','debit-note') THEN 'accounts_receivable' ELSE 'accounts_payable' END,
@@ -851,7 +855,7 @@ def get_profit_and_loss_dashboard(request: Request, fromDate: date, toDate: date
             FROM outstanding WHERE balance>0
             GROUP BY category,currency,age_bucket ORDER BY category,currency,age_bucket""",
             (user["tenant_id"], user["tenant_id"], list(OPEN_ITEM_KINDS["accounts_payable"]),
-             list(OPEN_ITEM_KINDS["accounts_receivable"]), user["tenant_id"], today, today, today, today)).fetchall()
+             list(OPEN_ITEM_KINDS["accounts_receivable"]), typed_copies, user["tenant_id"], today, today, today, today)).fetchall()
 
     period_totals = {}
     currency_totals = {}
