@@ -140,6 +140,34 @@ def test_confirm_and_post_refused_in_a_locked_period_leaves_the_match_unconfirme
     assert counts(connect, line, candidate)["journals"] == 0
 
 
+def test_delayed_confirm_and_post_retry_after_a_reversal_posts_nothing_new(company):
+    connect, _, _, _, request = company
+    line, candidate = proposed_match(company)
+    posted = ok(confirm(request, candidate, postPayment=True), 201)["payment"]
+    ok(request("POST", f"/api/ledger/journals/{posted['journalId']}/reverse", json={}), 201)
+    assert counts(connect, line, candidate)["journals"] == 0  # the original is now reversed
+
+    # A late retry of the same Confirm and post must not post the payment a second time.
+    retry = confirm(request, candidate, postPayment=True)
+    assert retry.status_code == 409 and "reversed" in retry.json()["detail"]
+    with connect() as db:
+        journals = db.execute("""SELECT j.status FROM journal_headers j JOIN settlements s ON s.id=j.source_id
+            WHERE j.source_type='settlement' AND s.source_type='bank_import' AND s.source_id=%s""", (line,)).fetchall()
+    assert [row["status"] for row in journals] == ["reversed"]
+
+
+def test_preview_refuses_confirm_and_post_on_a_partially_allocated_line(company):
+    connect, _, users, _, request = company
+    line, candidate = proposed_match(company)
+    with connect() as db:
+        other = insert_record(db, users, total="30.00")
+    ok(request("POST", f"{BANK}/{line}/match-many", "accountant", json={
+        "expectedAllocated": "0.00", "allocations": [{"recordId": other, "amount": "30.00"}]}), 201)
+    preview = ok(request("GET", f"{BANK}/{line}/payment-preview", params={"candidateId": candidate["id"]}))
+    assert not preview["canPost"] and preview["lines"] == []
+    assert confirm(request, candidate, postPayment=True).status_code == 409
+
+
 def test_post_payment_flag_needs_a_confirm_decision(company):
     _, _, _, _, request = company
     _, candidate = proposed_match(company)
