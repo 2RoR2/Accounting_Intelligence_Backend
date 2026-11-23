@@ -225,12 +225,16 @@ def record_journal(db, user, data: JournalInput, *, bank_payment_batch=False):
 
 def _refuse_typed_copy(user, record_id):
     """Plan L5: a scanned invoice/bill already entered and posted as a typed document must not post again.
-    Plan M2: a captured document never posts as a sale, and never when the company itself is the seller."""
+    Plan M2: a captured document never posts as a sale, and never when the company itself is the seller.
+    Codex H2: a credit note lowers what is owed, so it never posts through the bill/invoice routes."""
     from services.company_identity import refuse_own_sales_document
     from services.routes.erp.posting import refuse_if_typed_copy
     with connect() as db:
         record = db.execute("""SELECT r.*,d.kind FROM standardised_records r JOIN documents d ON d.id=r.document_id AND d.tenant_id=r.tenant_id
             WHERE r.id=%s AND r.tenant_id=%s""", (record_id, user["tenant_id"])).fetchone()
+        if record and record["kind"] == "credit_note":
+            raise HTTPException(422, "This is a credit note: it reduces the bill or invoice it corrects. "
+                                     "Post it from the scanned documents list, not as a bill or invoice.")
         if record:
             refuse_own_sales_document(db, user["tenant_id"], record)
             refuse_if_typed_copy(db, user["tenant_id"], record)
@@ -721,6 +725,10 @@ def get_profit_and_loss_dashboard(request: Request, fromDate: date, toDate: date
                 WHERE r.is_current AND r.validation_status='passed' AND COALESCE(bank.posted_date,s.settlement_date) BETWEEN %s AND %s
                     AND ((r.category='accounts_receivable' AND s.direction='money_in')
                         OR (r.category='accounts_payable' AND s.direction='money_out'))
+                    -- A credit note applied to a scanned invoice/bill settles it without moving cash (Codex H2).
+                    AND NOT EXISTS (SELECT 1 FROM erp_document_headers note
+                        WHERE s.source_type='manual_record' AND note.id=s.source_id AND note.tenant_id=s.tenant_id
+                            AND note.document_type IN ('credit-note','purchase-credit-note'))
                 GROUP BY period,s.currency,account_type,account_code,account_name
             ),
             bank_allocated AS (

@@ -154,6 +154,20 @@ def _ageing_bucket(days):
     return BUCKETS[min((days - 1) // 30 + 1, 4)]
 
 
+def _without_typed_copies(db, tenant, rows):
+    """Drop scanned open items that a ready typed bill/invoice already records (same party and number).
+    Posting refuses the second copy of an obligation, so ageing must count it once too (Codex H2)."""
+    from services.routes.erp.posting import typed_copy_of_scanned
+    scanned = [row["record_id"] for row in rows if row["record_id"]]
+    if not scanned:
+        return rows
+    records = db.execute("""SELECT r.*,d.kind FROM standardised_records r
+        JOIN documents d ON d.id=r.document_id AND d.tenant_id=r.tenant_id
+        WHERE r.tenant_id=%s AND r.id=ANY(%s)""", (tenant, scanned)).fetchall()
+    copies = {record["id"] for record in records if typed_copy_of_scanned(db, tenant, record)}
+    return [row for row in rows if row["record_id"] not in copies]
+
+
 def _ageing(db, tenant, end, report_type):
     document_type, category, purpose = AGEING_TYPES[report_type]
     # Include allocations recorded by the cutoff for payments dated by the cutoff.
@@ -171,7 +185,7 @@ def _ageing(db, tenant, end, report_type):
                     WHERE a.tenant_id=h.tenant_id AND a.target_document_id=h.id
                         AND s.document_date<=%(end)s
                         AND (a.reversed_at IS NULL OR (a.reversed_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date>%(end)s)
-                ),0) AS outstanding
+                ),0) AS outstanding,NULL::uuid AS record_id
             FROM erp_document_headers h
             WHERE h.tenant_id=%(tenant)s AND h.document_type=ANY(%(type)s) AND h.currency='MYR'
                 AND (h.status='ready' OR (h.status='void' AND (h.voided_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date>%(end)s))
@@ -188,7 +202,7 @@ def _ageing(db, tenant, end, report_type):
                         AND NOT EXISTS (SELECT 1 FROM settlement_allocations x
                             WHERE x.tenant_id=a.tenant_id AND x.reverses_allocation_id=a.id
                                 AND (COALESCE(x.reversed_at,x.created_at) AT TIME ZONE 'Asia/Kuala_Lumpur')::date<=%(end)s)
-                ),0)
+                ),0),r.id
             FROM standardised_records r
             JOIN documents d ON d.id=r.document_id AND d.tenant_id=r.tenant_id AND d.excluded_at IS NULL
             WHERE r.tenant_id=%(tenant)s AND {APPROVED_RECORD} AND r.category=%(category)s
@@ -199,7 +213,7 @@ def _ageing(db, tenant, end, report_type):
                 COALESCE(NULLIF(BTRIM(substring(l.description FROM ', contact ([^,]+)')),''),
                     'Opening balance (not itemised)'),
                 'Opening balance',j.journal_date,NULL,
-                CASE WHEN %(purpose)s='receivable' THEN l.debit-l.credit ELSE l.credit-l.debit END
+                CASE WHEN %(purpose)s='receivable' THEN l.debit-l.credit ELSE l.credit-l.debit END,NULL::uuid
             {POSTED_LINES}
             WHERE {POSTED_JOURNALS} AND {OPENING_JOURNAL} AND j.reversed_journal_id IS NULL
                 AND j.journal_date<=%(end)s AND a.account_type=%(account_type)s
@@ -215,6 +229,7 @@ def _ageing(db, tenant, end, report_type):
          "purpose": purpose, "code": DEFAULT_CODES[purpose], "account_type": PURPOSE_TYPES[purpose],
          "item_description": f"Opening {purpose} %",
          "kinds": list(OPEN_ITEM_KINDS[category])}).fetchall()
+    rows = _without_typed_copies(db, tenant, rows)
     items = []
     totals = dict.fromkeys(BUCKETS, ZERO)
     for row in rows:
