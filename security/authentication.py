@@ -37,6 +37,14 @@ def needs_rehash(encoded: str) -> bool:
 def digest(value: str) -> str: return hashlib.sha256(value.encode()).hexdigest()
 def otp_hash(secret: str, email: str, code: str) -> str: return hmac.new(secret.encode(), f"{email}:{code}".encode(), hashlib.sha256).hexdigest()
 
+def revoke_user_sessions(db, user_id, *, keep_session_id=None):
+    if keep_session_id is None:
+        db.execute("DELETE FROM web_sessions WHERE user_id=%s", (user_id,))
+    else:
+        db.execute("DELETE FROM web_sessions WHERE user_id=%s AND session_id<>%s",
+                   (user_id, keep_session_id))
+
+
 def jwt_secret() -> str:
     value = os.getenv("AUTH_SECRET", "")
     if len(value) < 32 or value.startswith("replace-"): raise RuntimeError("Configure a random AUTH_SECRET of at least 32 characters.")

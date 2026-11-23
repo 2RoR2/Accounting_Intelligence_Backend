@@ -92,6 +92,13 @@ def list_exports(request: Request):
         rows = db.execute("SELECT * FROM export_history WHERE tenant_id=%s ORDER BY created_at DESC", (user["tenant_id"],)).fetchall()
     return [{"id": str(r["id"]), "resource": r["resource"], "format": r["format"], "status": r["status"], "rowCount": r["row_count"], "createdAt": str(r["created_at"])} for r in rows]
 
+def _safe_csv_cell(value):
+    if (isinstance(value, str) and value.startswith(("=", "+", "-", "@", "\t", "\r"))
+            and not re.fullmatch(r"-[0-9]+(?:\.[0-9]+)?", value)):
+        return "'" + value
+    return value
+
+
 def download_export(export_id: str, request: Request):
     # Keep the legacy XLSX route unambiguous if this dynamic route is reached
     # before it in FastAPI's route table.
@@ -107,7 +114,7 @@ def download_export(export_id: str, request: Request):
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(headers)
-    writer.writerows(values)
+    writer.writerows([_safe_csv_cell(value) for value in row] for row in values)
     return StreamingResponse(iter([output.getvalue()]), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="export-{export_id}.csv"'})
 
 def export_records_xlsx(request: Request):

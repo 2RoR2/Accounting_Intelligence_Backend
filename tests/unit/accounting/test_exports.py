@@ -30,7 +30,9 @@ class Result:
 
 
 class FakeDb:
-    def __init__(self): self.calls, self.stored_filters = [], {}
+    def __init__(self):
+        self.calls, self.stored_filters = [], {}
+        self.record = RECORD
     def __enter__(self): return self
     def __exit__(self, *_): return False
     def execute(self, sql, params=None):
@@ -43,7 +45,7 @@ class FakeDb:
         if "COALESCE(sr.invoice_number,sr.reference_number)" in sql:
             return Result([XLSX_RECORD])
         if "FROM standardised_records" in sql:
-            return Result([RECORD])
+            return Result([self.record])
         return Result([])
 
 
@@ -95,6 +97,20 @@ class ExportTests(unittest.TestCase):
         self.assertEqual(row["total_amount"], "10.60")
         self.assertEqual(row["buyer_name"], "")
         self.assertNotEqual(rows[0], header)
+
+    def test_csv_neutralises_formulas_and_preserves_negative_numbers(self):
+        formulas = {"category": "\tvalue", "supplier_name": "=1+1", "buyer_name": "+1+1",
+                    "invoice_number": "-1+1", "reference_number": "@SUM(1)", "validation_status": "\rvalue"}
+        self.db.record = {**RECORD, **formulas, "record_code": "-12.50", "total_amount": Decimal("-12.50")}
+
+        response = self.client.get("/api/exports/33333333-3333-4333-8333-333333333333/download")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        row, = csv.DictReader(io.StringIO(response.text, newline=""))
+        for column, formula in formulas.items():
+            self.assertEqual(row[column], "'" + formula)
+        self.assertEqual(row["record_code"], "-12.50")
+        self.assertEqual(row["total_amount"], "-12.50")
 
     def test_xlsx_contains_values_not_column_names(self):
         response = self.client.get("/api/exports/xlsx")

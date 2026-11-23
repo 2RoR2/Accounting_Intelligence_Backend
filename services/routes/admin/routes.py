@@ -1,11 +1,12 @@
 from __future__ import annotations
 from main import *
 from main import _lock_upload_identity, _processing_error, _lock_workspace_document, _require_current_extraction, _authorised_document, _bank_row_values, _bank_transaction_dto, _uuid_or_422, _account_dto, _cost_centre_dto
+from security.authentication import revoke_user_sessions
 
 def list_tenants(request: Request):
     user = require_workspace_user(request)
     with connect() as db:
-        rows = db.execute("SELECT * FROM tenants WHERE (%s IS NULL OR id=%s) ORDER BY name", (tenant_scope(user), tenant_scope(user))).fetchall()
+        rows = db.execute("SELECT * FROM tenants WHERE (%s::uuid IS NULL OR id=%s) ORDER BY name", (tenant_scope(user), tenant_scope(user))).fetchall()
     return [{"id": str(r["id"]), "name": r["name"], "registration": r["registration_number"], "adminEmail": r["admin_email"], "accountLimit": r["seat_limit"], "status": r["status"].upper(), "createdAt": str(r["created_at"])} for r in rows]
 
 def change_tenant_status(tenant_id: str, request: Request):
@@ -93,6 +94,7 @@ def update_user_credentials(user_id: str, data: AdminCredentialsInput, request: 
             if not strong_password(data.password):
                 raise HTTPException(422, "Password does not meet the required strength.")
             row = db.execute("UPDATE users SET name=%s,password_hash=%s,must_change_password=true WHERE id=%s RETURNING *", (data.name, hash_password(data.password), user_id)).fetchone()
+            revoke_user_sessions(db, user_id)
         else:
             row = db.execute("UPDATE users SET name=%s WHERE id=%s RETURNING *", (data.name, user_id)).fetchone()
     return api_user(row)

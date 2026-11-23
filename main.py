@@ -46,8 +46,23 @@ from security.authentication import (
 )
 from services.extraction.contracts.reliability import extraction_guidance
 from database.connection import connect
+from database.object_storage import object_store
 from services.notifications.mailer import send_login_code, send_reset_code
 from services.routes import router
+
+
+PRODUCTION_STORAGE_ERROR = "Production uploads require object storage. Configure S3_BUCKET and install boto3."
+
+
+def is_production():
+    return os.getenv("APP_ENV", "").strip().lower() == "production"
+
+
+def _configured_frontend_origins(development_default):
+    configured = os.getenv("FRONTEND_ORIGINS", "")
+    if not configured and not is_production():
+        configured = os.getenv("FRONTEND_ORIGIN", development_default)
+    return [value.strip().rstrip("/") for value in configured.split(",") if value.strip()]
 
 
 def auth_cookie_samesite():
@@ -109,7 +124,9 @@ def warm_ocr_on_start():
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    """Check schema prerequisites without mutating the database at startup."""
+    """Check storage and schema prerequisites at startup."""
+    if is_production() and not object_store.enabled():
+        raise RuntimeError(PRODUCTION_STORAGE_ERROR)
     check_schema_compatibility()
     # With the default in-process queue this API is also the extraction worker:
     # start the loop that recovers expired leases and dispatches waiting jobs.
@@ -133,11 +150,13 @@ app = FastAPI(
     lifespan=lifespan,
 )
 log = logging.getLogger(__name__)
-_frontend_origins = [value.strip().rstrip("/") for value in (os.getenv("FRONTEND_ORIGINS") or os.getenv("FRONTEND_ORIGIN", "http://localhost:3000,http://127.0.0.1:3000,https://accounting-intelligence-frontend.vercel.app")).split(",") if value.strip()]
+_frontend_origins = _configured_frontend_origins(
+    "http://localhost:3000,http://127.0.0.1:3000,https://accounting-intelligence-frontend.vercel.app"
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_frontend_origins,
-    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|0\.0\.0\.0|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+):(3000|3001|3002)$",
+    allow_origin_regex=None if is_production() else r"^https?://(localhost|127\.0\.0\.1|0\.0\.0\.0|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+):(3000|3001|3002)$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -198,16 +217,16 @@ def secret():
 async def protect_requests(request: Request, call_next):
     if request.method not in ("GET", "HEAD", "OPTIONS"):
         origin = request.headers.get("origin")
-        configured_origins = os.getenv("FRONTEND_ORIGINS") or os.getenv("FRONTEND_ORIGIN", "http://localhost:3000")
-        allowed_origins = {value.strip().rstrip("/") for value in configured_origins.split(",") if value.strip()}
+        allowed_origins = set(_configured_frontend_origins("http://localhost:3000"))
         # Keep local development ports consistent with the CORS middleware and
         # the Playwright server (3000 is the normal app, 3001/3002 are test and
         # review servers). Production origins remain explicitly configured.
-        allowed_origins.update({
-            f"http://{host}:{port}"
-            for host in ("localhost", "127.0.0.1", "0.0.0.0")
-            for port in (3000, 3001, 3002)
-        })
+        if not is_production():
+            allowed_origins.update({
+                f"http://{host}:{port}"
+                for host in ("localhost", "127.0.0.1", "0.0.0.0")
+                for port in (3000, 3001, 3002)
+            })
         if request.headers.get("x-requested-with") != "AccountingIntelligence" or (origin and origin.rstrip("/") not in allowed_origins):
             return JSONResponse({"detail": "Request origin is not allowed."}, status_code=403)
     response = await call_next(request)

@@ -336,7 +336,7 @@ def get_document_file(document_id: str, request: Request):
         params = [document_id, tenant_scope(user), tenant_scope(user)]
         if user["role"] == "accountant":
             params.extend([user["id"], user["id"]])
-        row = db.execute(f"SELECT storage_path, original_filename, mime_type FROM documents WHERE id=%s AND (%s IS NULL OR tenant_id=%s){visibility}", params).fetchone()
+        row = db.execute(f"SELECT storage_path, original_filename FROM documents WHERE id=%s AND (%s IS NULL OR tenant_id=%s){visibility}", params).fetchone()
     if not row:
         raise HTTPException(404, "Document not found.")
     temporary = None
@@ -350,8 +350,29 @@ def get_document_file(document_id: str, request: Request):
             raise HTTPException(404, "The original document is unavailable.")
     if not path.is_file():
         raise HTTPException(404, "The original document is unavailable.")
+    with path.open("rb") as stored_file:
+        signature = stored_file.read(16)
+    if signature.startswith(b"%PDF-"):
+        media_type = "application/pdf"
+    elif signature.startswith(b"\x89PNG\r\n\x1a\n"):
+        media_type = "image/png"
+    elif signature.startswith(b"\xff\xd8\xff"):
+        media_type = "image/jpeg"
+    elif signature.startswith(b"RIFF") and signature[8:16] in (b"WEBPVP8 ", b"WEBPVP8L", b"WEBPVP8X"):
+        media_type = "image/webp"
+    else:
+        media_type = "application/octet-stream"
     cleanup = BackgroundTask(temporary.unlink, missing_ok=True) if temporary else None
-    return FileResponse(path, media_type=row["mime_type"] or "application/octet-stream", filename=row["original_filename"], content_disposition_type="inline", background=cleanup)
+    headers = {"X-Content-Type-Options": "nosniff"}
+    if media_type != "application/pdf":
+        # Browsers' built-in PDF viewers refuse sandboxed documents; PDFs run no page script on this origin.
+        headers["Content-Security-Policy"] = "sandbox"
+    return FileResponse(
+        path, media_type=media_type, filename=row["original_filename"],
+        content_disposition_type="attachment" if media_type == "application/octet-stream" else "inline",
+        headers=headers,
+        background=cleanup,
+    )
 
 def update_document_status(document_id: str, status: str, request: Request):
     require_workspace_user(request, {"super_admin", "local_admin", "accountant"})
@@ -521,8 +542,9 @@ async def upload_document(request: Request, file: UploadFile = File(...), kind: 
     # allowed placeholder kind and a neutral DOC_ code, which marks it as not yet typed.
     auto_kind = kind == AUTO_KIND
     stored_kind = PLACEHOLDER_KIND if auto_kind else kind
-    data = await file.read()
-    if len(data) > 20 * 1024 * 1024:
+    limit = 20 * 1024 * 1024
+    data = await file.read(limit + 1)
+    if len(data) > limit:
         raise HTTPException(413, "This file exceeds the 20 MB limit. Choose a smaller file.")
     validate_uploaded_bytes(file.filename or "document", data)
     tenant_id = user["tenant_id"]
@@ -535,6 +557,8 @@ async def upload_document(request: Request, file: UploadFile = File(...), kind: 
     object_key = document_key(tenant_id, user["id"], user.get("name"), upload_id, original_filename)
     from database.object_storage.object_store import enabled as object_storage_enabled
     use_object_storage = object_storage_enabled()
+    if is_production() and not use_object_storage:
+        raise HTTPException(503, PRODUCTION_STORAGE_ERROR)
     storage_path = None
     storage_uri = None
     if use_object_storage:

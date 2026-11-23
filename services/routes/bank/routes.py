@@ -518,8 +518,10 @@ async def create_bank_import(request: Request):
         filename = str(getattr(upload, 'filename', '') or '')
         if Path(filename).suffix.lower() not in {'.csv', '.xlsx', '.pdf'}:
             raise HTTPException(422, "Bank statements must be CSV, Excel (.xlsx), or PDF files.")
-        content = await upload.read()
-        if not content or len(content) > MAX_STATEMENT_BYTES:
+        content = await upload.read(MAX_STATEMENT_BYTES + 1)
+        if len(content) > MAX_STATEMENT_BYTES:
+            raise HTTPException(413, "The statement exceeds the 5 MB limit. Choose a smaller file.")
+        if not content:
             raise HTTPException(422, "The statement must be a non-empty CSV, Excel, or PDF file of at most 5 MB.")
         if str(form.get('inspect_only') or '').lower() == 'true':
             try:
