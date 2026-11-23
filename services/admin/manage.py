@@ -54,7 +54,35 @@ def main():
         "seed-erp-demo", help="local only: typed sales/purchases for a seeded demo company, all posted (Plan L9)"))
     browser_session.add_arguments(commands.add_parser(
         "browser-session", help="local only: Playwright cookie file for a synthetic *.demo.test user"))
+    for command, help_text in (("seed-knt", "load the KNT demo books into a local database"),
+                               ("reset-knt", "delete and rebuild the local KNT demo books"),
+                               ("tally", "verify the local KNT books and print a reconciliation summary")):
+        subparser = commands.add_parser(command, help=help_text)
+        if command != "tally":
+            subparser.add_argument("--out", type=Path, default=ROOT / "ai/synthetic/output/packs/knt",
+                                   help="directory for the generated KNT pack")
+            subparser.add_argument("--prompt-password", action="store_true", help="choose new demo users' password")
     args = parser.parse_args()
+    if args.command in {"seed-knt", "reset-knt", "tally"}:
+        from services.admin.knt_seed import locked_database, seed
+        from services.admin.knt_tally import print_tally, tally
+        from services.admin.knt_reset import reset
+
+        try:
+            with locked_database() as local_connect:
+                if args.command != "tally":
+                    password = None
+                    if args.prompt_password:
+                        password = getpass.getpass("Password for new KNT demo users: ")
+                        if not strong_password(password) or password != getpass.getpass("Confirm password: "):
+                            raise demo_company.SeedError("Passwords must match and meet local password requirements.")
+                    (reset if args.command == "reset-knt" else seed)(local_connect, args.out, password)
+                with local_connect() as db:
+                    db.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+                    print_tally(tally(db))
+        except demo_company.SeedError as error:
+            parser.exit(2, f"{error}\n")
+        return
     if args.command == "browser-session":
         sys.exit(browser_session.run(args))
     if args.command == "seed-demo-company":
