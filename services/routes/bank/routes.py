@@ -889,6 +889,14 @@ def decide_reconciliation(data: BankMatchDecisionInput, request: Request):
                                  (candidate_id, user["tenant_id"])).fetchone()
             if current["status"] == "confirmed":
                 # A retry or double click: the match stands, so post (or return) its payment exactly once.
+                # A payment journal for this match that was later reversed means the retry came too late: posting
+                # again would pay twice. Re-posting after a reversal is an explicit action ("Post payment to ledger").
+                if db.execute("""SELECT 1 FROM journal_headers j JOIN settlements s
+                        ON s.id=j.source_id AND s.tenant_id=j.tenant_id AND s.source_type='bank_import'
+                    WHERE j.tenant_id=%s AND j.source_type='settlement' AND s.source_id=%s AND j.status='reversed'
+                    LIMIT 1""", (user["tenant_id"], candidate["bank_transaction_id"])).fetchone():
+                    raise HTTPException(409, "The payment for this match was posted and then reversed, so this retry "
+                                             "posts nothing. Post the payment again from the bank line if you mean to.")
                 try:
                     payment = _post_matched_payment(db, user, candidate["bank_transaction_id"], data.journalDate)
                 except RaiseException as error:
@@ -988,6 +996,13 @@ def preview_bank_payment(transaction_id: str, request: Request, candidateId: str
                 (_uuid_or_422(candidateId, "candidate id"), tenant_id, transaction_id)).fetchone()
             if not candidate:
                 raise HTTPException(404, "Reconciliation candidate not found.")
+            settlement = _existing_bank_settlement(db, bank)
+            if (candidate["status"] != "proposed" or bank["status"] not in {"imported", "proposed"}
+                    or (settlement and settlement_allocated(db, tenant_id, settlement["id"]))):
+                # Confirm and post would refuse (decided candidate, matched or partially allocated line).
+                return {"canPost": False, "blockedReason": "This suggested match can no longer be confirmed as a "
+                        "full match. Finish or undo the existing allocations first.",
+                        "journalDate": None, "periodCode": None, "lines": []}
             pending = [{"id": None, "amount": abs(bank["signed_amount_decimal"] or Decimal(0)),
                         "document_id": candidate["document_id"], "category": candidate["category"]}]
         else:
