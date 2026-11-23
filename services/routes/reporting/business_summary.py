@@ -41,9 +41,11 @@ OTHER_SUPPLIER = "Other costs (no supplier named)"
 NOT_ITEMISED = "Not itemised by product"
 # Cost of sales is read from the account's report section, which the chart import keeps.
 COST_OF_SALES_SECTION = "cost of"
-# Cash and bank accounts: linked to a bank-account catalog entry, the bank posting account,
-# or an asset account whose name starts with Bank or Cash.
-CASH_NAME_PATTERN = r"^(bank|cash)\M"
+# Cash and bank accounts. The ledger has no cash/bank account type (asset, liability, equity, income, expense only), so
+# an asset account counts when it is linked to a bank-account catalog entry, is the bank posting account, sits in a
+# cash or bank report section, or names a bank or cash account anywhere in its name ("Maybank Current Account",
+# "Petty cash", "CIMB savings account"); not only when the name starts with Bank or Cash.
+CASH_NAME_PATTERN = r"(bank|cash|current account|current a/c|savings account|savings a/c|fixed deposit)"
 
 
 def _month_bounds(month: str | None, today: Date):
@@ -85,15 +87,13 @@ def _cash_accounts(db, tenant):
         LEFT JOIN catalog c ON c.ledger_account_id=a.id
         WHERE a.tenant_id=%(tenant)s AND a.account_type='asset'
             AND (c.ledger_account_id IS NOT NULL OR a.id=(SELECT id FROM bank_posting)
-                OR a.name ~* %(pattern)s)
+                OR a.name ~* %(pattern)s OR COALESCE(a.report_section,'') ~* %(pattern)s)
         ORDER BY a.code""", {"tenant": tenant, "bank_code": financial.DEFAULT_CODES["bank"],
                              "pattern": CASH_NAME_PATTERN}).fetchall()
 
 
-def _bank_balances(db, tenant, as_of, cash_accounts):
+def _bank_balances(as_of, balances, cash_accounts):
     """Balance per cash/bank account: the same account balances the balance sheet uses."""
-    balances = {row["account_id"]: row["debit"] - row["credit"]
-                for row in financial._account_balances(db, tenant, as_of)}
     accounts = []
     for account in cash_accounts:
         balance = balances.get(account["account_id"], ZERO)
@@ -142,15 +142,32 @@ def _result(pnl, tracked):
             "costOfSalesTracked": tracked}
 
 
-def _owed(db, tenant, as_of, report_type):
+def _control_balance(db, tenant, balances, report_type):
+    """What the books say is owed: the receivables or payables control account, found as the ageing finds it."""
+    _, _, purpose = financial.AGEING_TYPES[report_type]
+    account = db.execute("""SELECT COALESCE(
+            (SELECT account_id FROM erp_posting_accounts WHERE tenant_id=%(tenant)s AND purpose=%(purpose)s),
+            (SELECT id FROM ledger_accounts WHERE tenant_id=%(tenant)s AND code=%(code)s
+                AND account_type=%(account_type)s)) AS id""",
+                         {"tenant": tenant, "purpose": purpose, "code": financial.DEFAULT_CODES[purpose],
+                          "account_type": financial.PURPOSE_TYPES[purpose]}).fetchone()["id"]
+    net = balances.get(account, ZERO)
+    return net if report_type == "receivables" else -net
+
+
+def _owed(db, tenant, as_of, report_type, balances):
     report = financial._ageing(db, tenant, as_of, report_type)
+    control = _control_balance(db, tenant, balances, report_type)
     overdue = [r for r in report["rows"] if r["bucket"] != "current"]
     rows = [{"contactName": r["contactName"], "documentNumber": r["documentNumber"],
              "documentDate": r["documentDate"], "dueDate": r["dueDate"], "outstanding": r["outstanding"],
              "daysOverdue": (as_of - (r["dueDate"] or r["documentDate"])).days}
             for r in overdue]
     rows.sort(key=lambda r: (-r["outstanding"], -r["daysOverdue"], r["documentNumber"] or ""))
-    totals = {"total": report["totals"]["total"],
+    open_items = report["totals"]["total"]
+    # The total is the control account, like the balance sheet. Open items miss payments posted on account
+    # and not yet allocated to an invoice or bill; the difference is shown, not hidden.
+    totals = {"total": control, "openItems": open_items, "unallocated": open_items - control,
               "overdue": sum((r["outstanding"] for r in overdue), ZERO),
               "overdueCount": len(overdue), "openCount": len(report["rows"]),
               "buckets": {bucket: report["totals"][bucket] for bucket in report["buckets"]}}
@@ -158,9 +175,11 @@ def _owed(db, tenant, as_of, report_type):
 
 
 def _position(db, tenant, as_of, cash_accounts):
-    receivables, overdue_invoices = _owed(db, tenant, as_of, "receivables")
-    payables, overdue_bills = _owed(db, tenant, as_of, "payables")
-    return {"asOf": as_of, "bank": _bank_balances(db, tenant, as_of, cash_accounts),
+    balances = {row["account_id"]: row["debit"] - row["credit"]
+                for row in financial._account_balances(db, tenant, as_of)}
+    receivables, overdue_invoices = _owed(db, tenant, as_of, "receivables", balances)
+    payables, overdue_bills = _owed(db, tenant, as_of, "payables", balances)
+    return {"asOf": as_of, "bank": _bank_balances(as_of, balances, cash_accounts),
             "receivables": receivables, "payables": payables}, overdue_invoices, overdue_bills
 
 
@@ -282,6 +301,9 @@ def _summary_sheet(summary, start, end):
     rows.append(("Bank balance", "Total", position["bank"]["total"]))
     for label, key in (("Owed to us (receivables)", "receivables"), ("Owed by us (payables)", "payables")):
         rows += [(label, "Total outstanding", position[key]["total"]), (label, "Overdue", position[key]["overdue"])]
+        if position[key]["unallocated"] != ZERO:
+            rows.append((label, "Open items less unallocated payments", position[key]["openItems"]))
+            rows.append((label, "Unallocated payments", position[key]["unallocated"]))
     rows += [("Recorded tax", "Output tax", month["recordedTax"]["outputTax"]),
              ("Recorded tax", "Input tax", month["recordedTax"]["inputTax"])]
     rows += [("Top customers", c["name"], c["amount"]) for c in summary["topCustomers"]]

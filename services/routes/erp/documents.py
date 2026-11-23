@@ -80,7 +80,27 @@ def _converted_due_date(db, tenant_id, source, target_type, document_date) -> da
         contact = db.execute("SELECT fields FROM customers WHERE id=%s AND tenant_id=%s", (source["customer_id"], tenant_id)).fetchone()
     elif source["vendor_id"]:
         contact = db.execute("SELECT fields FROM vendors WHERE id=%s AND tenant_id=%s", (source["vendor_id"], tenant_id)).fetchone()
-    return due_date_from_terms(document_date, payment_term_days(contact))
+    days = payment_term_days(contact)
+    if days is None and source["vendor_id"]:
+        days = _imported_supplier_terms(db, tenant_id, source["vendor_id"])
+    return due_date_from_terms(document_date, days)
+
+
+def _imported_supplier_terms(db, tenant_id, vendor_id) -> int | None:
+    """Payment terms the contacts CSV import kept for a supplier (its supplier_contacts notes), used when the contact
+    page has none of its own."""
+    rows = db.execute("""SELECT notes FROM supplier_contacts WHERE tenant_id=%s AND vendor_id=%s AND notes<>''
+        ORDER BY created_at DESC""", (tenant_id, vendor_id)).fetchall()
+    for row in rows:
+        try:
+            notes = json.loads(row["notes"])
+        except (TypeError, ValueError):
+            continue
+        if isinstance(notes, dict) and notes.get("source") == "contacts-import":
+            days = payment_term_days({"fields": {"paymentTermDays": notes.get("payment_terms_days")}})
+            if days is not None:
+                return days
+    return None
 
 
 class LineInput(BaseModel):

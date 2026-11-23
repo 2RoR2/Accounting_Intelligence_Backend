@@ -262,3 +262,32 @@ def test_search_is_tenant_scoped_and_hides_other_accountants_uploads(world):
     # The upload is the admin's: the accountant finds the record (company-wide) but not the file.
     assert 'record' in {g['group'] for g in call('GET', '/api/search', accountant, params={'q': 'INV-7781'}).json()['groups']}
     assert 'upload' not in {g['group'] for g in call('GET', '/api/search', accountant, params={'q': code}).json()['groups']}
+
+
+def test_trace_keeps_two_allocations_between_the_same_settlement_and_record(world):
+    """Codex P2: RM40 then RM60 from one settlement to one bill are two links, not one."""
+    connect, ids = world
+    record = _scanned_bill(connect, ids, number='INV-100', total='100.00', tax='0')
+    with connect() as db:
+        settlement = db.execute("""INSERT INTO settlements(tenant_id,settlement_ref,settlement_date,direction,amount,
+                currency,source_type,created_by)
+            VALUES (%s,'SET-SPLIT','2026-08-20','money_out',100,'MYR','manual_record',%s) RETURNING id""",
+                                (ids['tenant'], ids['admin']['id'])).fetchone()['id']
+        for amount in ('40.00', '60.00'):
+            db.execute("""INSERT INTO settlement_allocations(tenant_id,settlement_id,record_id,amount,created_by)
+                VALUES (%s,%s,%s,%s,%s)""", (ids['tenant'], settlement, record, amount, ids['admin']['id']))
+    for kind, start in (('record', record), ('settlement', settlement)):
+        found = next(n for n in trace(ids['admin'], kind, start)['nodes'] if n['kind'] == 'settlement')
+        assert sorted(v['amount'] for v in found['via'] if v['text'] == 'Applied to') == ['40.00', '60.00'], kind
+
+
+def test_search_puts_an_exact_scanned_number_ahead_of_newer_partial_matches(world):
+    """Codex P2: the exact invoice number must survive the limit, however many newer numbers start with it."""
+    connect, ids = world
+    exact = _scanned_bill(connect, ids, number='INV-12', total='12.00', tax='0')
+    for number in ('INV-120', 'INV-121', 'INV-122'):  # same invoice date, recorded later: newer than the exact match
+        _scanned_bill(connect, ids, number=number, total='5.00', tax='0')
+    response = call('GET', '/api/search', ids['admin'], params={'q': 'INV-12', 'limit': 2})
+    assert response.status_code == 200, response.text
+    records = next(g for g in response.json()['groups'] if g['group'] == 'record')['items']
+    assert records[0]['id'] == str(exact) and len(records) == 2

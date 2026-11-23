@@ -165,7 +165,9 @@ def _without_typed_copies(db, tenant, rows):
     return [row for row in rows if row["record_id"] not in copies]
 
 
-def _ageing(db, tenant, end, report_type):
+def _ageing(db, tenant, end, report_type, *, ids=False):
+    """Open receivables or payables at `end`. With ids, each row also carries its typed document or scanned record id
+    (itemId), which tells apart a typed number repeated across document types."""
     document_type, category, purpose = AGEING_TYPES[report_type]
     # Include allocations recorded by the cutoff for payments dated by the cutoff.
     rows = db.execute(f"""WITH control_account AS (
@@ -175,7 +177,7 @@ def _ageing(db, tenant, end, report_type):
                     AND account_type=%(account_type)s)
             ) AS id
         ), open_items AS (
-            SELECT 'typed' AS source,h.contact_name,h.document_number,h.document_date,h.due_date,
+            SELECT 'typed' AS source,h.id AS item_id,h.contact_name,h.document_number,h.document_date,h.due_date,
                 h.total_amount-COALESCE((
                     SELECT SUM(a.amount) FROM erp_document_allocations a
                     JOIN erp_document_headers s ON s.id=a.source_document_id AND s.tenant_id=a.tenant_id
@@ -187,7 +189,7 @@ def _ageing(db, tenant, end, report_type):
             WHERE h.tenant_id=%(tenant)s AND h.document_type=ANY(%(type)s) AND h.currency='MYR'
                 AND (h.status='ready' OR (h.status='void' AND (h.voided_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date>%(end)s))
             UNION ALL
-            SELECT 'scanned',
+            SELECT 'scanned',r.id,
                 CASE WHEN r.category='accounts_payable' THEN r.supplier_name ELSE r.buyer_name END,
                 COALESCE(NULLIF(BTRIM(r.invoice_number),''),NULLIF(BTRIM(r.reference_number),''),d.document_code),
                 COALESCE(r.invoice_date,(d.uploaded_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date),r.due_date,
@@ -206,7 +208,7 @@ def _ageing(db, tenant, end, report_type):
                 AND d.kind=ANY(%(kinds)s) AND r.currency='MYR'
             UNION ALL
             -- The opening import keeps its contact label in the journal line description.
-            SELECT 'opening',
+            SELECT 'opening',NULL::uuid,
                 COALESCE(NULLIF(BTRIM(substring(l.description FROM ', contact ([^,]+)')),''),
                     'Opening balance (not itemised)'),
                 'Opening balance',j.journal_date,NULL,
@@ -232,9 +234,12 @@ def _ageing(db, tenant, end, report_type):
     for row in rows:
         bucket = _ageing_bucket((end - (row["due_date"] or row["document_date"])).days)
         totals[bucket] += row["outstanding"]
-        items.append({"contactName": row["contact_name"], "source": row["source"], "documentNumber": row["document_number"],
-                      "documentDate": row["document_date"], "dueDate": row["due_date"],
-                      "outstanding": row["outstanding"], "bucket": bucket})
+        item = {"contactName": row["contact_name"], "source": row["source"], "documentNumber": row["document_number"],
+                "documentDate": row["document_date"], "dueDate": row["due_date"],
+                "outstanding": row["outstanding"], "bucket": bucket}
+        if ids:
+            item["itemId"] = str(row["item_id"]) if row["item_id"] else None
+        items.append(item)
     return {"type": report_type, "asOf": end, "buckets": list(BUCKETS), "rows": items,
             "totals": {**totals, "total": sum(totals.values(), ZERO)}}
 

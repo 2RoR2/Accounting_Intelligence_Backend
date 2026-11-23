@@ -220,3 +220,85 @@ def test_knt_statements_tie_to_tally(local_knt):
                 assert report['closingBalance'] == report['ageing']['openItems'] == mine, (name, report['ageing'])
                 movement = sum((line['amount'] for line in report['lines']), Decimal('0'))
                 assert report['openingBalance'] + movement == report['closingBalance']
+
+
+def _scanned_bill_due(connect, ids, number, total, amount_due):
+    """An approved scanned bill whose extracted amount due differs from its total (records are written once)."""
+    record = _scanned_bill(connect, ids, number=number, total=total, tax='0')
+    with connect() as db:
+        db.execute("ALTER TABLE standardised_records DISABLE TRIGGER USER")
+        db.execute("UPDATE standardised_records SET amount_due=%s WHERE id=%s", (amount_due, record))
+        db.execute("ALTER TABLE standardised_records ENABLE TRIGGER USER")
+    return record
+
+
+def _matched_payment(connect, ids, record, amount, day='2026-08-25'):
+    """A bank-style settlement matched to a scanned bill but not posted yet (the P0 confirm-then-post flow)."""
+    with connect() as db:
+        settlement = db.execute("""INSERT INTO settlements(tenant_id,settlement_ref,settlement_date,direction,amount,currency,
+                source_type,created_by) VALUES (%s,%s,%s,'money_out',%s,'MYR','manual_record',%s) RETURNING id""",
+                                (ids['tenant'], f'MATCH-{amount}', day, amount, ids['admin']['id'])).fetchone()['id']
+        db.execute("""INSERT INTO settlement_allocations(tenant_id,settlement_id,record_id,amount,created_by)
+            VALUES (%s,%s,%s,%s,%s)""", (ids['tenant'], settlement, record, amount, ids['admin']['id']))
+    return settlement
+
+
+def test_a_matched_payment_counts_only_once_its_journal_is_posted(books):
+    connect, ids = books
+    admin = ids['admin']
+    supplier = str(ids['supplier'])
+    record = _scanned_bill(connect, ids, number='INV-500', total='500.00', tax='0')
+    ok(call('POST', f'/api/erp/scanned/{record}/post', admin, json={}))
+    settlement = _matched_payment(connect, ids, record, '500.00')
+    with connect() as db:
+        document = db.execute("SELECT document_id FROM standardised_records WHERE id=%s", (record,)).fetchone()['document_id']
+
+    pending = ok(_statement(admin, supplier, '2026-08-01'))
+    assert pending['closingBalance'] == '500.00'  # matched, not posted: the ledger still owes RM500
+    assert [l['label'] for l in pending['lines']] == ['Bill']
+    assert Decimal(pending['closingBalance']) == _control_net(connect, ids, '2000', [document, settlement])
+    footer = pending['ageing']
+    assert footer['openItems'] == '0.00' and footer['unpostedPayments'] == '500.00'  # the ageing already took it off
+    assert footer['reconciles'] and footer['balance'] == '500.00'
+
+    with connect() as db:
+        period = db.execute("SELECT id FROM accounting_periods WHERE tenant_id=%s AND period_code='2026-08'",
+                            (ids['tenant'],)).fetchone()['id']
+    ok(call('POST', '/api/ledger/journals', admin, json={
+        'periodId': str(period), 'idempotencyKey': f'settlement:{settlement}', 'sourceType': 'settlement',
+        'sourceId': str(settlement), 'journalDate': '2026-08-25', 'description': 'Supplier payment',
+        'lines': [{'accountId': str(ids['accounts']['2000']), 'debit': '500.00'},
+                  {'accountId': str(ids['accounts']['1010']), 'credit': '500.00'}]}), 201)
+    posted = ok(_statement(admin, supplier, '2026-08-01'))
+    assert posted['closingBalance'] == '0.00'
+    assert [(l['label'], l['debit']) for l in posted['lines']] == [('Bill', '0.00'), ('Payment made', '500.00')]
+    assert _control_net(connect, ids, '2000', [document, settlement]) == Decimal('0.00')
+    assert posted['ageing']['unpostedPayments'] == '0.00' and posted['ageing']['reconciles']
+
+
+def test_a_scanned_charge_is_the_posted_total_not_the_extracted_amount_due(books):
+    connect, ids = books
+    admin = ids['admin']
+    record = _scanned_bill_due(connect, ids, 'INV-1000', '1000.00', '800.00')
+    ok(call('POST', f'/api/erp/scanned/{record}/post', admin, json={}))
+    with connect() as db:
+        document = db.execute("SELECT document_id FROM standardised_records WHERE id=%s", (record,)).fetchone()['document_id']
+    report = ok(_statement(admin, str(ids['supplier']), '2026-08-01'))
+    assert [(l['number'], l['credit']) for l in report['lines']] == [('INV-1000', '1000.00')]
+    assert Decimal(report['closingBalance']) == _control_net(connect, ids, '2000', [document]) == Decimal('1000.00')
+    footer = report['ageing']
+    assert footer['openItems'] == '800.00' and footer['amountDueBelowTotal'] == '200.00'  # the ageing reads amount due
+    assert footer['reconciles'] and footer['balance'] == '1000.00'
+
+
+def test_pdf_file_name_for_a_contact_without_a_latin_name_or_code(books):
+    connect, ids = books
+    with connect() as db:
+        customer = db.execute("INSERT INTO customers(tenant_id,customer_name) VALUES (%s,'陈氏贸易有限公司') RETURNING id",
+                              (ids['tenant'],)).fetchone()['id']
+    response = _statement(ids['admin'], customer, '2026-08-01', format='pdf')
+    assert response.status_code == 200, response.text
+    disposition = response.headers['content-disposition']
+    assert disposition.startswith('inline; filename="statement-contact-2026-08-01-to-')
+    assert "filename*=UTF-8''statement-%E9%99%88" in disposition
+    disposition.encode('latin-1')  # a header must be sendable as-is

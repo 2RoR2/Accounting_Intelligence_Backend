@@ -8,12 +8,15 @@ The statement lists every MYR transaction of the contact once, in date order, wi
 from the same sources as the AR/AP ageing report (``financial._ageing``):
 - typed documents (erp_document_headers) of the contact that are ready; a voided document is left out, as
   its journal is reversed on the same date;
-- approved scanned invoices/bills of the contact, except a scan that a ready typed document already
-  records (``posting.typed_copy_record_ids``), so one obligation is counted once; a scanned credit note
-  counts only when it was posted against the receivable/payable account;
-- payments applied to those scanned documents through a settlement (bank match or manual record); a
-  settlement made by a typed payment or credit note is already that document's line, so it is skipped;
-- opening balances imported for the contact (the opening journal keeps the contact in its line label).
+- approved scanned invoices/bills of the contact once their journal is posted (approved for later posting is not
+  owed in the ledger yet), except a scan that a ready typed document already records
+  (``posting.typed_copy_record_ids``), so one obligation is counted once; a scanned credit note counts only when
+  it was posted against the receivable/payable account;
+- payments applied to those scanned documents through a settlement (bank match or manual record), once a posted
+  settlement journal covers them; a settlement made by a typed payment or credit note is already that document's
+  line, so it is skipped. A scanned document is charged at the total its posting used;
+- opening balances imported for the contact: the opening journal keeps the company pack's contact id in its line
+  label, matched to the contact's code (or the id its contacts import recorded), never to its name.
 
 Opening balance = the movements before the start date. The ageing footer is the ageing report's open items
 of this contact at the end date; payments and credits not allocated to an item are shown beside it so the
@@ -21,13 +24,16 @@ footer reconciles to the closing balance. Nothing is posted and no tax is calcul
 """
 from __future__ import annotations
 
+import json
+import re
 from decimal import Decimal
+from urllib.parse import quote
 
 from fastapi import HTTPException, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 
 from main import connect, require_workspace_user
-from services.routes.accounting.journal_sources import OPENING_JOURNAL
+from services.routes.accounting.journal_sources import OPENING_JOURNAL, document_posted, in_books
 from services.routes.erp.common import money
 from services.routes.erp.posting import DEFAULT_CODES, PURPOSE_TYPES, typed_copy_record_ids
 from services.routes.home.lanes import APPROVED_RECORD, OPEN_ITEM_KINDS
@@ -110,7 +116,7 @@ def _typed(db, tenant, side, contact_id, end):
         description = r["description"] or (f"Ref {r['reference_no']}" if r["reference_no"] else "")
         owed = side.signs[kind] > 0 and kind not in REFUNDS
         events.append(_event(kind, r["document_date"], r["document_number"], description, amount, "typed",
-                             due=r["due_date"] if owed else None, key=("typed", r["document_number"]) if owed else None))
+                             due=r["due_date"] if owed else None, key=("typed", str(r["id"])) if owed else None))
         if kind in ALLOCATING:
             unallocated += r["total_amount"] - r["allocated"]
         elif kind in REFUNDS:
@@ -125,23 +131,24 @@ def _scanned(db, tenant, side, contact, end):
             COALESCE(NULLIF(BTRIM(r.invoice_number),''),NULLIF(BTRIM(r.reference_number),''),d.document_code) AS number,
             COALESCE(r.invoice_date,(d.uploaded_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date) AS day,
             COALESCE(r.amount_due,r.total_amount) AS outstanding,r.total_amount,
+            {document_posted('r')} AS posted,
             EXISTS (SELECT 1 FROM journal_headers j JOIN journal_lines l ON l.journal_id=j.id AND l.tenant_id=j.tenant_id
                 JOIN ledger_accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
                 WHERE j.tenant_id=r.tenant_id AND j.source_type IN ('document','adjustment') AND j.source_id=r.document_id
-                    AND j.status='posted' AND a.account_type=%(account_type)s
+                    AND {in_books('j')} AND a.account_type=%(account_type)s
                     AND a.id IN (SELECT account_id FROM erp_posting_accounts WHERE tenant_id=r.tenant_id AND purpose=%(purpose)s
                                  UNION SELECT id FROM ledger_accounts WHERE tenant_id=r.tenant_id AND code=%(code)s)) AS on_control
         FROM standardised_records r
         JOIN documents d ON d.id=r.document_id AND d.tenant_id=r.tenant_id AND d.excluded_at IS NULL
         WHERE r.tenant_id=%(tenant)s AND {APPROVED_RECORD} AND r.category=%(category)s AND d.kind=ANY(%(kinds)s)
             AND r.currency='MYR'""",
-                      {"tenant": tenant, "category": side.category, "kinds": kinds, "purpose": side.purpose,
+                      {"tenant": tenant, "category": side.category, "kinds": kinds, "purpose": side.purpose, "end": end,
                        "code": DEFAULT_CODES[side.purpose], "account_type": PURPOSE_TYPES[side.purpose]}).fetchall()
     wanted = _normal(contact["name"])
     mine = [r for r in rows if (side.kind == "supplier" and r["vendor_id"] and str(r["vendor_id"]) == contact["id"])
             or ((side.kind == "customer" or not r["vendor_id"]) and wanted and _normal(r["party"]) == wanted)]
     copies = typed_copy_record_ids(db, tenant, [r["id"] for r in mine if r["kind"] != "credit_note"]) if mine else set()
-    events, unallocated, counted = [], ZERO, []
+    events, unallocated, counted, due_gap = [], ZERO, [], ZERO
     for r in mine:
         if r["id"] in copies or r["day"] > end:
             continue
@@ -152,21 +159,37 @@ def _scanned(db, tenant, side, contact, end):
             events.append(_event(label, r["day"], r["number"], "Scanned credit note", -r["total_amount"], "scanned"))
             unallocated += r["total_amount"]
             continue
+        if not r["posted"]:  # approved but not posted yet: not in the receivable/payable ledger
+            continue
         counted.append(r["id"])
         label = "invoice" if side.kind == "customer" else "bill"
-        events.append(_event(label, r["day"], r["number"], "Scanned document", r["outstanding"], "scanned",
-                             due=r["due_date"], key=("scanned", r["number"], _normal(r["party"]))))
-    return events, unallocated, counted
+        # The charge is the total the posting used (plan_for_scanned and the record posting routes). The ageing reads the
+        # extracted amount due, so the footer shows that gap instead of the statement disagreeing with the ledger.
+        events.append(_event(label, r["day"], r["number"], "Scanned document", r["total_amount"], "scanned",
+                             due=r["due_date"], key=("scanned", str(r["id"]))))
+        due_gap += r["total_amount"] - r["outstanding"]
+    return events, unallocated, counted, due_gap
 
 
 def _settled(db, tenant, side, record_ids, end):
-    """Payments applied to the contact's scanned documents through settlements not made by a typed document."""
+    """Payments applied to the contact's scanned documents through settlements not made by a typed document.
+
+    A payment counts once a posted settlement journal dated by the end date covers its allocation (the rule of
+    accounting.routes._payment_allocations): a matched bank line waits for an admin to post it, and until then the
+    ledger still shows the amount owed. Returns (events, the unposted amount the ageing already deducts)."""
+    from services.routes.accounting.routes import BANK_ALLOCATION_SOURCE_PREFIX, BANK_PAYMENT_KEY_PREFIX
     if not record_ids:
-        return []
+        return [], ZERO
     # A bank-matched payment shows the bank line's own reference rather than the internal settlement key.
     rows = db.execute("""SELECT a.amount,COALESCE(NULLIF(BTRIM(t.reference),''),s.settlement_ref) AS settlement_ref,
             s.settlement_date,
-            COALESCE(NULLIF(BTRIM(r.invoice_number),''),NULLIF(BTRIM(r.reference_number),''),r.record_code) AS number
+            COALESCE(NULLIF(BTRIM(r.invoice_number),''),NULLIF(BTRIM(r.reference_number),''),r.record_code) AS number,
+            EXISTS (SELECT 1 FROM journal_headers j
+                WHERE j.tenant_id=a.tenant_id AND j.source_type='settlement' AND j.source_id=a.settlement_id
+                    AND j.status='posted' AND j.journal_date<=%(end)s
+                    AND (NOT starts_with(j.idempotency_key,%(batch_key)s) OR EXISTS (
+                        SELECT 1 FROM journal_lines l WHERE l.tenant_id=j.tenant_id AND l.journal_id=j.id
+                            AND l.source_field=%(allocation_field)s || a.id::text))) AS posted
         FROM settlement_allocations a
         JOIN settlements s ON s.id=a.settlement_id AND s.tenant_id=a.tenant_id
         JOIN standardised_records r ON r.id=a.record_id AND r.tenant_id=a.tenant_id
@@ -176,10 +199,33 @@ def _settled(db, tenant, side, record_ids, end):
                 WHERE x.tenant_id=a.tenant_id AND x.reverses_allocation_id=a.id
                     AND (COALESCE(x.reversed_at,x.created_at) AT TIME ZONE 'Asia/Kuala_Lumpur')::date<=%(end)s)
             AND NOT EXISTS (SELECT 1 FROM erp_document_headers h WHERE h.tenant_id=s.tenant_id AND h.settlement_id=s.id)""",
-                      {"tenant": tenant, "records": record_ids, "end": end}).fetchall()
+                      {"tenant": tenant, "records": record_ids, "end": end, "batch_key": BANK_PAYMENT_KEY_PREFIX,
+                       "allocation_field": BANK_ALLOCATION_SOURCE_PREFIX}).fetchall()
     kind = "payment" if side.kind == "customer" else "purchase-payment"
-    return [_event(kind, r["settlement_date"], r["settlement_ref"], f"Applied to {r['number']}", -r["amount"], "settlement")
-            for r in rows]
+    events = [_event(kind, r["settlement_date"], r["settlement_ref"], f"Applied to {r['number']}", -r["amount"], "settlement")
+              for r in rows if r["posted"]]
+    return events, sum((r["amount"] for r in rows if not r["posted"]), ZERO)
+
+
+def _identifier(value):
+    return " ".join(str(value or "").split()).upper()
+
+
+def _identifiers(db, tenant, contact):
+    """What an opening-balance line may name this contact by: its code, the contact id its company-pack import recorded
+    (kept on supplier contact notes) and its own id. Names are not identifiers: two contacts can share one."""
+    found = {_identifier(contact["code"]), _identifier(contact["id"])}
+    if contact["kind"] == "supplier":
+        for row in db.execute("SELECT notes FROM supplier_contacts WHERE tenant_id=%s AND vendor_id=%s AND notes<>''",
+                              (tenant, contact["id"])).fetchall():
+            try:
+                notes = json.loads(row["notes"])
+            except (TypeError, ValueError):
+                continue
+            if isinstance(notes, dict) and notes.get("source") == "contacts-import":
+                found.add(_identifier(notes.get("contact_id")))
+    found.discard("")
+    return found
 
 
 def _opening(db, tenant, side, contact, end):
@@ -203,50 +249,58 @@ def _opening(db, tenant, side, contact, end):
                       {"tenant": tenant, "end": end, "purpose": side.purpose, "code": DEFAULT_CODES[side.purpose],
                        "account_type": PURPOSE_TYPES[side.purpose], "item_description": f"Opening {side.purpose} %"}
                       ).fetchall()
-    wanted = _normal(contact["name"])
+    wanted = _identifiers(db, tenant, contact)
     events, unallocated = [], ZERO
     for r in rows:
-        if not r["label"] or _normal(r["label"]) != wanted:
+        label = _identifier(r["label"])
+        if not label or label not in wanted:
             continue
         events.append(_event("opening", r["journal_date"], "Opening balance", "Imported opening balance", r["amount"],
-                             "opening", key=("opening", _normal(r["label"]))))
+                             "opening", key=("opening", label)))
         if r["amount"] < 0:  # a credit balance is not an open item in the ageing report
             unallocated -= r["amount"]
     return events, unallocated
 
 
-def _ageing_footer(db, tenant, side, end, events, unallocated, closing):
-    """The ageing report's open items of exactly the transactions on this statement, at the end date."""
+def _ageing_footer(db, tenant, side, end, events, unallocated, closing, unposted=ZERO, due_gap=ZERO):
+    """The ageing report's open items of exactly the transactions on this statement at the end date, and what
+    separates them from the closing balance: payments and credits not allocated to an item, matched payments not
+    posted yet (the ageing already deducts them) and scanned documents whose extracted amount due is below the
+    posted total (the ageing reads the amount due)."""
     keys = {e["_key"] for e in events if e["_key"]}
-    report = financial._ageing(db, tenant, end, side.report)
+    # Matched to this statement's lines by document id (a typed number is unique per document type only) or, for an
+    # opening balance, by its contact label.
+    report = financial._ageing(db, tenant, end, side.report, ids=True)
     totals = dict.fromkeys(financial.BUCKETS, ZERO)
     items = []
     for row in report["rows"]:
         if row["source"] == "typed":
-            key = ("typed", row["documentNumber"])
+            key = ("typed", row["itemId"])
         elif row["source"] == "scanned":
-            key = ("scanned", row["documentNumber"], _normal(row["contactName"]))
+            key = ("scanned", row["itemId"])
         else:
-            key = ("opening", _normal(row["contactName"]))
+            key = ("opening", _identifier(row["contactName"]))
         if key not in keys:
             continue
         totals[row["bucket"]] += row["outstanding"]
         items.append({"number": row["documentNumber"], "date": row["documentDate"], "dueDate": row["dueDate"],
                       "outstanding": row["outstanding"], "bucket": row["bucket"]})
     open_items = sum(totals.values(), ZERO)
-    difference = closing - (open_items - unallocated)
+    balance = open_items - unallocated + unposted + due_gap
+    difference = closing - balance
     return {"asOf": end, "buckets": list(financial.BUCKETS), "totals": totals, "openItems": open_items,
-            "unallocatedCredits": unallocated, "balance": open_items - unallocated, "items": items,
-            "reconciles": difference == 0, "difference": difference}
+            "unallocatedCredits": unallocated, "unpostedPayments": unposted, "amountDueBelowTotal": due_gap,
+            "balance": balance, "items": items, "reconciles": difference == 0, "difference": difference}
 
 
 def statement(db, tenant, contact_id, start, end):
     kind, contact = _contact(db, tenant, contact_id)
     side = SIDES[kind]
     typed, typed_unallocated = _typed(db, tenant, side, contact["id"], end)
-    scanned, scanned_unallocated, records = _scanned(db, tenant, side, contact, end)
+    scanned, scanned_unallocated, records, due_gap = _scanned(db, tenant, side, contact, end)
+    settled, unposted = _settled(db, tenant, side, records, end)
     opening_lines, opening_unallocated = _opening(db, tenant, side, contact, end)
-    events = typed + scanned + _settled(db, tenant, side, records, end) + opening_lines
+    events = typed + scanned + settled + opening_lines
     events.sort(key=lambda e: (e["date"], ORDER[e["type"]], e["number"]))
     opening = sum((e["amount"] for e in events if e["date"] < start), ZERO)
     balance = opening
@@ -268,14 +322,18 @@ def statement(db, tenant, contact_id, start, end):
         "totalCredit": sum((line["credit"] for line in lines), ZERO),
         "closingBalance": balance,
         "balanceLabel": "Amount owed by the customer" if kind == "customer" else "Amount owed to the supplier",
-        "ageing": _ageing_footer(db, tenant, side, end, events, unallocated, balance),
+        "ageing": _ageing_footer(db, tenant, side, end, events, unallocated, balance, unposted, due_gap),
     }
 
 
-def _pdf_name(report):
+def _pdf_disposition(report):
+    """inline; an ASCII filename every client reads, plus an RFC 5987 filename* that keeps a non-Latin name."""
     code = report["contact"]["code"] or report["contact"]["name"]
-    safe = "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in code).strip("-") or "contact"
-    return f"statement-{safe}-{report['fromDate']}-to-{report['toDate']}.pdf"
+    dates = f"{report['fromDate']}-to-{report['toDate']}.pdf"
+    ascii_code = re.sub(r"[^A-Za-z0-9_-]+", "-", code).strip("-") or "contact"
+    full_code = re.sub(r"[\s/\\\"'<>:|?*;,]+", "-", code).strip("-") or "contact"
+    return (f'inline; filename="statement-{ascii_code}-{dates}"; '
+            f"filename*=UTF-8''{quote(f'statement-{full_code}-{dates}', safe='')}")
 
 
 def contact_statement(contact_id: str, request: Request, from_date: str | None = Query(None, alias="from"),
@@ -296,7 +354,7 @@ def contact_statement(contact_id: str, request: Request, from_date: str | None =
         return data
     from services.routes.erp.pdf import render_statement_pdf
     return Response(render_statement_pdf(data, company), media_type="application/pdf",
-                    headers={"Content-Disposition": f'inline; filename="{_pdf_name(report)}"'})
+                    headers={"Content-Disposition": _pdf_disposition(report)})
 
 
 def register(router):

@@ -124,7 +124,7 @@ def test_unknown_default_account_and_unstored_customer_columns_are_warnings():
                         'C1,customer,Some Customer Bhd,customer,,C3000000003,,,,,,4000,MYR')
     rows = contacts.plan_contacts(contacts.parse_contacts(content), {}, frozenset({'4000'}))
     assert rows[0]['status'] == 'new' and 'Default account 9999' in rows[0]['warnings'][0]
-    assert rows[1]['status'] == 'new' and 'Not stored for customers yet: contact_id, category, tin, default_account_code.' in rows[1]['warnings']
+    assert rows[1]['status'] == 'new' and 'Not stored for customers yet: category, tin, default_account_code.' in rows[1]['warnings']
 
 
 # --- chart of accounts ------------------------------------------------------------------------------

@@ -5,7 +5,9 @@ name, registration number (SSM) and address for both kinds of contact. For suppl
 other columns (TIN, SST, e-mail, phone, terms, default account, category, currency, the
 file's contact id) go into one `supplier_contacts` row: e-mail and phone in their columns,
 the rest as JSON in `notes`. Customers have no such table, so those columns are reported
-back as not stored (a schema gap, listed in the pull request).
+back as not stored (a schema gap, listed in the pull request). The file's contact id also
+becomes the contact's code (both kinds) when no other contact uses that code, so imported
+opening balances, which name the contact by that id, reach the contact's statement.
 
 A contact that is already in the company (same name ignoring case and punctuation, or the
 same SSM number, or for suppliers the same TIN) is reported as a duplicate and skipped,
@@ -24,7 +26,7 @@ KIND = "contacts"
 COLUMNS = ["contact_id", "type", "name", "category", "ssm", "tin", "sst", "address", "email", "phone",
            "payment_terms_days", "default_account_code", "currency"]
 REQUIRED = ["type", "name"]
-NOT_STORED_FOR_CUSTOMERS = ["contact_id", "category", "tin", "sst", "email", "phone", "payment_terms_days",
+NOT_STORED_FOR_CUSTOMERS = ["category", "tin", "sst", "email", "phone", "payment_terms_days",
                             "default_account_code", "currency"]
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ./()\-]*$")
@@ -156,24 +158,37 @@ def preview(db, tenant_id, content: bytes) -> dict:
     return body
 
 
+def _free_code(db, tenant_id, table, contact_id):
+    """The file's contact id as the new contact's code, or None when it is blank or another contact has that code."""
+    code = (contact_id or "").strip()
+    if not code or db.execute(f"""SELECT 1 FROM {table} WHERE tenant_id=%s AND contact_code IS NOT NULL
+            AND upper(btrim(contact_code))=upper(%s)""", (tenant_id, code)).fetchone():
+        return None
+    return code
+
+
 def apply(db, user, rows) -> dict:
     """Insert the rows planned as new. The caller has already refused a plan with errors."""
     tenant_id = user["tenant_id"]
     created = {"supplier": 0, "customer": 0}
+    # The contacts page takes the same lock before it saves a code, so two writers cannot give one code twice.
+    db.execute("SELECT pg_advisory_xact_lock(hashtext('contact_code:' || %s::text))", (str(tenant_id),))
     for row in rows:
         if row["status"] != "new":
             continue
         values = row["values"]
+        code = _free_code(db, tenant_id, "vendors" if values["type"] == "supplier" else "customers", values["contact_id"])
         if values["type"] == "supplier":
             # The pack's default account becomes the supplier's default expense account when it is an expense
             # account in this company's chart (scanned bills from the supplier then post there).
             default_account = db.execute("""SELECT id FROM ledger_accounts WHERE tenant_id=%s AND code=%s
                 AND account_type='expense'""", (tenant_id, values["default_account_code"])).fetchone()                 if values["default_account_code"] else None
             vendor = db.execute("""INSERT INTO vendors(tenant_id, vendor_name, registration_number, address,
-                    default_expense_account_id)
-                VALUES (%s,%s,%s,%s,%s) RETURNING id""", (tenant_id, values["name"], values["ssm"] or None,
-                                                         values["address"] or None,
-                                                         default_account["id"] if default_account else None)).fetchone()
+                    default_expense_account_id, contact_code)
+                VALUES (%s,%s,%s,%s,%s,%s) RETURNING id""", (tenant_id, values["name"], values["ssm"] or None,
+                                                            values["address"] or None,
+                                                            default_account["id"] if default_account else None,
+                                                            code)).fetchone()
             details = {key: values[key] for key in ("contact_id", "category", "tin", "sst", "default_account_code", "currency")
                        if values[key]}
             if values["payment_terms_days"]:
@@ -184,7 +199,8 @@ def apply(db, user, rows) -> dict:
                     values["email"] or None, values["phone"] or None,
                     json.dumps({"source": "contacts-import", **details}, sort_keys=True)))
         else:
-            db.execute("""INSERT INTO customers(tenant_id, customer_name, registration_number, address)
-                VALUES (%s,%s,%s,%s)""", (tenant_id, values["name"], values["ssm"] or None, values["address"] or None))
+            db.execute("""INSERT INTO customers(tenant_id, customer_name, registration_number, address, contact_code)
+                VALUES (%s,%s,%s,%s,%s)""", (tenant_id, values["name"], values["ssm"] or None, values["address"] or None,
+                                             code))
         created[values["type"]] += 1
     return {"suppliersCreated": created["supplier"], "customersCreated": created["customer"]}

@@ -707,6 +707,11 @@ class _StatementRenderer(_Renderer):
         if _nonzero(unallocated):
             negated = unallocated[1:] if unallocated.startswith("-") else f"-{unallocated}"
             extra.append(("Payments and credits not allocated to an item", negated))
+        if _nonzero(ageing.get("unpostedPayments")):
+            extra.append(("Matched payments not yet posted (still owed)", _s(ageing.get("unpostedPayments"))))
+        if _nonzero(ageing.get("amountDueBelowTotal")):
+            extra.append(("Scanned documents: total above the amount due shown", _s(ageing.get("amountDueBelowTotal"))))
+        if extra:
             extra.append(("Balance", _s(ageing.get("balance"))))
         if ageing.get("reconciles") is False:
             extra.append(("Difference to the closing balance (review)", _s(ageing.get("difference"))))
