@@ -65,7 +65,22 @@ def main():
             subparser.add_argument("--out", type=Path, default=ROOT / "ai/synthetic/output/packs/knt",
                                    help="directory for the generated KNT pack")
             subparser.add_argument("--prompt-password", action="store_true", help="choose new demo users' password")
+    extend = commands.add_parser("extend-knt", help="add the richer KNT demo data to existing KNT books (dry run by default)")
+    extend.add_argument("--as-user", required=True, help="email of an active KNT company admin the changes are made as")
+    extend.add_argument("--apply", action="store_true", help="write the changes; without it only the plan is printed")
+    extend.add_argument("--fill-blank-contacts", action="store_true",
+                        help="give the five original contacts the header values they lack (never overwrites)")
+    extend.add_argument("--allow-remote", action="store_true",
+                        help="permit a database that is not on this machine (also needs KNT_EXTEND_REMOTE_HOST)")
     args = parser.parse_args()
+    if args.command == "extend-knt":
+        from services.admin import knt_extend
+        try:
+            knt_extend.extend(knt_extend.require_target(args.allow_remote), args.as_user, apply=args.apply,
+                              fill_blank_contacts=args.fill_blank_contacts)
+        except demo_company.SeedError as error:
+            parser.exit(2, f"{error}\n")
+        return
     if args.command == "planm-tidy":
         sys.exit(planm_tidy.run(args))
     if args.command in {"seed-knt", "reset-knt", "tally"}:

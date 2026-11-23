@@ -31,6 +31,30 @@ The tally checks the trial balance, P&L by account, AR and AP open items, and ea
 against the ledger. Each statement keeps one transfer unmatched. The reconciliation shows the resulting
 cumulative adjustment separately from the bank ledger balance.
 
+### Richer demo data (`ai/synthetic/knt_extra.py`)
+
+On top of the original fixture the seed adds, so that dropdowns, auto-fill and "recent items" have real data:
+
+- 30 contacts (17 customers, 13 suppliers) with legal name, short code, address, SSM, TIN, SST number, phone, e-mail,
+  payment terms (days) and default account. The five original contacts keep their codes. TIN, SST number, terms,
+  default account, currency and category live in the contact's `fields`; SSM is its registration number.
+- 41 products and services (SKU, unit, sale and purchase price, default tax-code label, income and expense account),
+  4 tax codes (`SST-10`, `SST-5`, `SV-8`, `SST-0`), 5 payment terms and a "Cash in hand" account.
+- September to November typed history using all of them: 16 more quotations (accepted ones become sales orders,
+  delivery orders and invoices; some are expired or still open), 31 invoices, 3 credit notes, 2 debit notes, 27 typed
+  supplier bills for the stock sold, and 30 payments (13 received, 17 made). Tax amounts are typed per line.
+- The payments go through cash in hand, so the three bank statements and their reconciliations are exactly the
+  original fixture's. `tally` also checks the contacts, products, quotation chains, bills and the cash balance.
+
+`extend-knt` adds this data to a KNT company that already holds the original books (the hosted UAT database) without
+editing anything that is there; it prints the plan by default and writes only with `--apply`. A database that is
+not on this machine also needs `--allow-remote` and `KNT_EXTEND_REMOTE_HOST`. Run `tally` afterwards.
+
+```bash
+python services/admin/manage.py extend-knt --as-user <company admin email>
+python services/admin/manage.py extend-knt --as-user <company admin email> --apply [--fill-blank-contacts]
+```
+
 ## Evaluation and test packs
 
 `ai/synthetic/company_pack.py` generates the demo and test books for three fictional Malaysian SMEs.
