@@ -315,29 +315,34 @@ def bank_payment_state(db, tenant_id, settlement_id):
     return bool(allocations) and not pending, pending
 
 
-def post_allocated_bank_payment(db, user, bank, settlement, journal_date, resolve_bank_account):
+def unposted_bank_allocations(db, tenant_id, settlement_id):
+    return [row for row in _payment_allocations(db, tenant_id, settlement_id) if not row["posted"]] if settlement_id else []
+
+
+# Bank lines (alias t) whose matched records still wait for their payment journal: the same rule as
+# bank_payment_state (an active, unreversed allocation that no posted settlement journal covers).
+UNPOSTED_BANK_PAYMENT = f"""(t.status<>'ignored' AND t.recorded_document_id IS NULL AND EXISTS (
+    SELECT 1 FROM settlements s
+    JOIN settlement_allocations a ON a.settlement_id=s.id AND a.tenant_id=s.tenant_id AND a.status='active'
+    JOIN standardised_records r ON r.id=a.record_id AND r.tenant_id=a.tenant_id
+    WHERE s.tenant_id=t.tenant_id AND s.source_type='bank_import' AND s.source_id=t.id AND s.status='recorded'
+      AND NOT EXISTS (SELECT 1 FROM settlement_allocations undo
+            WHERE undo.tenant_id=a.tenant_id AND undo.reverses_allocation_id=a.id)
+      AND NOT EXISTS (SELECT 1 FROM journal_headers j
+            WHERE j.tenant_id=a.tenant_id AND j.source_type='settlement' AND j.source_id=a.settlement_id
+              AND j.status='posted' AND (NOT starts_with(j.idempotency_key,'{BANK_PAYMENT_KEY_PREFIX}') OR EXISTS (
+                SELECT 1 FROM journal_lines l WHERE l.tenant_id=j.tenant_id AND l.journal_id=j.id
+                    AND l.source_field='{BANK_ALLOCATION_SOURCE_PREFIX}' || a.id::text)))))"""
+
+
+def _bank_payment_plan(db, tenant_id, bank, pending, journal_date, resolve_bank_account):
+    """The payment journal for these unposted allocations, checked but not written: (date, period, plan).
+
+    Each row needs amount, document_id, category and (when posting) id. Raises the same refusals posting does:
+    MYR only, a dated line, an open accounting period, a linked bank ledger account and a control account."""
     from services.routes.erp import posting
 
-    tenant_id = user["tenant_id"]
-    if not settlement or settlement["status"] != "recorded" or bank["status"] == "ignored" or bank["recorded_document_id"]:
-        raise HTTPException(409, "Match this bank line to a record before posting its payment.")
-    if (settlement["amount"] != abs(bank["signed_amount_decimal"] or 0)
-            or settlement["direction"] != bank["direction"] or settlement["currency"] != bank["currency"]):
-        raise HTTPException(409, "The bank transaction and settlement details do not agree.")
-    settlement_id = settlement["id"]
-    # The caller locks the bank line and settlement. Lock posted journals against concurrent reversal.
-    journals = db.execute("""SELECT id FROM journal_headers
-        WHERE tenant_id=%s AND source_type='settlement' AND source_id=%s AND status='posted'
-        ORDER BY posted_at DESC,id DESC FOR UPDATE""", (tenant_id, settlement_id)).fetchall()
-    allocations = _payment_allocations(db, tenant_id, settlement_id)
-    if not allocations:
-        raise HTTPException(409, "Match this bank line to a record before posting its payment.")
-    pending = [row for row in allocations if not row["posted"]]
-    if not pending:
-        journal_id = journals[0]["id"]
-        return {"journalId": str(journal_id), "lines": _payment_journal_lines(db, tenant_id, journal_id),
-                "idempotent": True}
-    if settlement["currency"] != "MYR":
+    if bank["currency"] != "MYR":
         raise HTTPException(409, "Payment posting supports MYR only; foreign-currency conversion is not configured.")
     on = journal_date or bank["posted_date"]
     if not on:
@@ -358,9 +363,53 @@ def post_allocated_bank_payment(db, user, bank, settlement, journal_date, resolv
             raise HTTPException(422, "Money-in payments require receivables and money-out payments require payables.")
         control = posting.scanned_control_account(db, tenant_id, row["document_id"], purpose)
         account = control or posting.default_account(db, tenant_id, purpose)["id"]
-        add_line(account, row["amount"], f"Accounts {purpose} settlement", BANK_ALLOCATION_SOURCE_PREFIX + str(row["id"]))
+        source = BANK_ALLOCATION_SOURCE_PREFIX + str(row["id"]) if row.get("id") else None
+        add_line(account, row["amount"], f"Accounts {purpose} settlement", source)
     if money_out:
         plan.credit(bank_ledger, total, "Bank payment")
+    return on, period, plan
+
+
+def bank_payment_preview(db, tenant_id, bank, pending, journal_date, resolve_bank_account):
+    """What posting this bank payment would write, or why it cannot be posted now. Never writes."""
+    from services.routes.erp.common import money
+
+    try:
+        on, period, plan = _bank_payment_plan(db, tenant_id, bank, pending, journal_date, resolve_bank_account)
+    except HTTPException as error:
+        return {"canPost": False, "blockedReason": str(error.detail), "journalDate": None, "periodCode": None,
+                "lines": []}
+    ids = list({line.account_id for line in plan.lines})
+    names = {str(row["id"]): row for row in db.execute(
+        "SELECT id,code,name FROM ledger_accounts WHERE tenant_id=%s AND id=ANY(%s::uuid[])", (tenant_id, ids)).fetchall()}
+    return {"canPost": True, "blockedReason": None, "journalDate": str(on), "periodCode": period["period_code"],
+            "lines": [{"accountId": line.account_id, "code": names[line.account_id]["code"],
+                       "name": names[line.account_id]["name"], "description": line.description,
+                       "debit": money(line.debit), "credit": money(line.credit)} for line in plan.lines]}
+
+
+def post_allocated_bank_payment(db, user, bank, settlement, journal_date, resolve_bank_account):
+    tenant_id = user["tenant_id"]
+    if not settlement or settlement["status"] != "recorded" or bank["status"] == "ignored" or bank["recorded_document_id"]:
+        raise HTTPException(409, "Match this bank line to a record before posting its payment.")
+    if (settlement["amount"] != abs(bank["signed_amount_decimal"] or 0)
+            or settlement["direction"] != bank["direction"] or settlement["currency"] != bank["currency"]):
+        raise HTTPException(409, "The bank transaction and settlement details do not agree.")
+    settlement_id = settlement["id"]
+    # The caller locks the bank line and settlement. Lock posted journals against concurrent reversal.
+    journals = db.execute("""SELECT id FROM journal_headers
+        WHERE tenant_id=%s AND source_type='settlement' AND source_id=%s AND status='posted'
+        ORDER BY posted_at DESC,id DESC FOR UPDATE""", (tenant_id, settlement_id)).fetchall()
+    allocations = _payment_allocations(db, tenant_id, settlement_id)
+    if not allocations:
+        raise HTTPException(409, "Match this bank line to a record before posting its payment.")
+    pending = [row for row in allocations if not row["posted"]]
+    if not pending:
+        journal_id = journals[0]["id"]
+        return {"journalId": str(journal_id), "lines": _payment_journal_lines(db, tenant_id, journal_id),
+                "idempotent": True}
+    on, period, plan = _bank_payment_plan(db, tenant_id, bank, pending, journal_date, resolve_bank_account)
+    money_out = bank["direction"] == "money_out"
     result = _post_settlement_payment(db, user, JournalInput(
         periodId=str(period["id"]), idempotencyKey=f"{BANK_PAYMENT_KEY_PREFIX}{settlement_id}:{uuid.uuid4()}",
         sourceType="settlement", sourceId=str(settlement_id), journalDate=on,

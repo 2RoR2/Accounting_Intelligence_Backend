@@ -72,6 +72,8 @@ class FakeDb:
             return Result([{"total": self.reconciliation_periods, "done": 0}])
         if "AS total" in sql:
             return Result([{"total": 10, "done": 4}])
+        if "AS payment_lines" in sql:
+            return Result([{"payment_lines": 2}])
         raise AssertionError("Unexpected query: " + sql)
 
 
@@ -136,6 +138,8 @@ def test_tiles_link_to_the_lists_they_count_and_carry_the_top_reasons():
     assert other_day["billsOverdue"]["link"]["query"].endswith("&asOf=2026-12-01")
     assert tiles["journalsToPost"]["link"] == {"page": "records", "query": "posting=to-post"}
     assert tiles["bankToMatch"]["scope"] == "company"
+    assert tiles["paymentsToPost"] == {"available": True, "scope": "company", "count": 2,
+                                       "link": {"page": "reconciliation", "query": "status=to-post"}}
     for tile in tiles.values():  # Every lane the summary links to is accepted by the documents list.
         query = (tile["link"] or {}).get("query") or ""
         if query.startswith("lane="):
@@ -157,7 +161,7 @@ def test_missing_tables_give_null_with_a_reason_never_a_number():
     result = summary(ADMIN, db)
     # The open-item query reads settlement_allocations, so it must not run at all without those tables.
     assert not any("settlement_allocations" in sql for sql, _ in db.queries)
-    for key in ("bankToMatch", "journalsToPost", "billsDueSoon", "billsOverdue", "invoicesOverdue"):
+    for key in ("bankToMatch", "journalsToPost", "paymentsToPost", "billsDueSoon", "billsOverdue", "invoicesOverdue"):
         tile = result["tiles"][key]
         assert tile["available"] is False and tile["reason"] and "count" not in tile
     steps = {step["key"]: step for step in result["monthEnd"]["steps"]}

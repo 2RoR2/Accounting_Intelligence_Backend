@@ -171,6 +171,19 @@ def journals_tile(db, user) -> dict:
     return {'available': True, 'scope': 'company', 'count': row['records'], 'draftJournals': row['drafts'], 'link': link}
 
 
+def bank_payments_tile(db, user) -> dict:
+    """Bank lines matched to bills or invoices whose payment is not in the ledger yet (a local admin posts it)."""
+    from services.routes.accounting.routes import UNPOSTED_BANK_PAYMENT
+
+    link = _link('reconciliation', 'status=to-post')
+    if not _table_exists(db, 'bank_transactions') or not _table_exists(db, 'journal_headers'):
+        return unavailable('Bank statements or the ledger are not set up on this server yet.', link)
+    row = db.execute(f"""SELECT count(*) AS payment_lines FROM bank_transactions t
+        JOIN bank_imports i ON i.id=t.import_id AND i.tenant_id=t.tenant_id
+        WHERE i.status='confirmed' AND t.tenant_id=%s AND {UNPOSTED_BANK_PAYMENT}""", (user['tenant_id'],)).fetchone()
+    return {'available': True, 'scope': 'company', 'count': row['payment_lines'], 'link': link}
+
+
 def current_period(db, user, today: date) -> dict:
     """The open accounting period that contains today, otherwise the calendar month."""
     if _table_exists(db, 'accounting_periods'):
@@ -243,6 +256,7 @@ def home_summary(request: Request, asOf: date | None = None):
             'billsOverdue': payables['overdue'],
             'invoicesOverdue': receivables['overdue'],
             'journalsToPost': journals_tile(db, user),
+            'paymentsToPost': bank_payments_tile(db, user),
         }
         month = month_end(db, user, today)
     return {'asOf': str(today), 'currency': HOME_CURRENCY, 'role': user['role'].upper(), 'tiles': tiles, 'monthEnd': month}
