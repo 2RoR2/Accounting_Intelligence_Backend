@@ -63,26 +63,29 @@ class Seeder:
         rows = self.api.call("local_admin", "GET", "/api/ledger/accounts").json()
         return {row["code"]: row for row in rows}
 
-    def ensure_bank_account(self, ledger, account_number):
+    def ensure_bank_account(self, ledger, account_number, label=None, bank_name="Demo Bank"):
+        """The demo bank account. `label` defaults to the statement-import label, which older packs match by name;
+        a pack whose statements use the account number (KNT) may pass a realistic label and bank name."""
         if "1010" not in ledger:
             raise SeedError("Ledger account 1010 (bank) is missing; run seed-demo-company first.")
         path = "/api/erp/catalog/bank-account"
         entries = self.api.call("local_admin", "GET", path, params={"includeInactive": "true"}).json()
-        name = bank_account_label(account_number)
+        name = label or bank_account_label(account_number)
         by_name = {entry["name"]: entry for entry in entries}
-        existing = by_name.get(name) or by_name.get("Current account")
+        existing = by_name.get(name) or by_name.get(bank_account_label(account_number)) or by_name.get("Current account")
         if existing:
             values = existing.get("data") or {}
-            if existing["name"] != name or values.get("accountNumber") != account_number:
+            if (existing["name"] != name or values.get("accountNumber") != account_number
+                    or (label and values.get("bankName") != bank_name)):
                 self.api.call("local_admin", "PUT", f"{path}/{existing['id']}", json={
                     "name": name, "code": existing["code"], "description": existing.get("description"),
                     "ledgerAccountId": existing["ledgerAccountId"], "active": existing["isActive"],
-                    "data": {**values, "accountNumber": account_number},
+                    "data": {**values, **({"bankName": bank_name} if label else {}), "accountNumber": account_number},
                 })
             return existing["id"]
         return self.api.call("local_admin", "POST", path, json={
             "name": name, "code": "CA-1010", "ledgerAccountId": ledger["1010"]["id"],
-            "data": {"bankName": "Demo Bank", "accountNumber": account_number}}).json()["id"]
+            "data": {"bankName": bank_name, "accountNumber": account_number}}).json()["id"]
 
     def ensure_products(self):
         existing = {p["sku"]: p for p in self.api.call("accountant", "GET", "/api/erp/products",
