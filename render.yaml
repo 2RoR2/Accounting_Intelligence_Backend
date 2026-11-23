@@ -5,11 +5,12 @@ services:
     runtime: python
     # Same region as the Neon database (aws-ap-southeast-1); region cannot change after creation.
     region: singapore
-    # Free first (0.1 CPU, 512 MB, sleeps when idle). Move to starter only if scanned documents
-    # miss 20 s at p95 (docs/DEPLOY_UAT.md section 5). Free has no pre-deploy command, so the
-    # build runs migrate; on starter, move migrate to preDeployCommand.
-    plan: free
-    buildCommand: bash scripts/render_build.sh && python services/admin/manage.py migrate
+    # Starter (0.5 CPU, 512 MB, always on). Hosted UAT on 24 Nov 2026: on Free the first scanned
+    # document was OOM-killed and 0.1 CPU would miss the 20 s p95 (docs/DEPLOY_UAT.md section 5).
+    # Starter keeps 512 MB, so OCR runs with LITE_OCR_REC_BATCH=1 and LITE_OCR_DET_SIDE=736 below.
+    plan: starter
+    buildCommand: bash scripts/render_build.sh
+    preDeployCommand: python services/admin/manage.py migrate
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /api/health
     envVars:
@@ -109,6 +110,12 @@ services:
         value: "10"
       - key: OCR_THREADS
         value: "1"
+      # Lite OCR memory on 512 MB: one text line per recognition batch, detection input capped at 736 px
+      # (Linux test at 512 MB/0.5 CPU: peak 329 MB vs 435 MB before). Raise to 960 on a larger plan.
+      - key: LITE_OCR_REC_BATCH
+        value: "1"
+      - key: LITE_OCR_DET_SIDE
+        value: "736"
       - key: OCR_WARM_ON_START
         value: "false"
       - key: DEFAULT_CURRENCY
