@@ -4030,3 +4030,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_customers_contact_code ON customers(tenant_
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS excluded_at TIMESTAMPTZ;
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS excluded_reason TEXT;
 CREATE INDEX IF NOT EXISTS idx_documents_included ON documents(tenant_id, uploaded_at DESC) WHERE excluded_at IS NULL;
+
+-- A quotation has no approval step (draft -> sent): older ones waiting for approval go back to draft.
+UPDATE erp_document_headers SET status='draft', updated_at=now() WHERE document_type='quotation' AND status='pending_approval';

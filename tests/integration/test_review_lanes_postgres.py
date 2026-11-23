@@ -23,7 +23,7 @@ from tests.extraction.test_multidocument import contract
 from tests.extraction.test_receipt_line_recovery import receipt
 
 SCHEMA = '''
-  CREATE TABLE documents(id uuid PRIMARY KEY,tenant_id uuid,owner_id uuid,assigned_to uuid,kind text,category text,status text,content_revision int,page_count int,document_code text,original_filename text,uploaded_at timestamptz DEFAULT now(),updated_at timestamptz);
+  CREATE TABLE documents(id uuid PRIMARY KEY,tenant_id uuid,owner_id uuid,assigned_to uuid,kind text,category text,status text,content_revision int,page_count int,document_code text,original_filename text,uploaded_at timestamptz DEFAULT now(),updated_at timestamptz,excluded_at timestamptz);
   CREATE TABLE benchmark_demo_tenants(tenant_id uuid,enabled bool);
   CREATE TABLE benchmark_demo_documents(tenant_id uuid,document_id uuid);
   CREATE TABLE raw_extractions(id uuid PRIMARY KEY,document_id uuid,raw_json jsonb,is_current bool,run_number int);

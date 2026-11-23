@@ -37,7 +37,8 @@ STATUSES = {"draft", "pending_approval", "ready", "void", "sent", "accepted", "e
 TRANSITIONS = {"draft": {"pending_approval", "ready", "void"}, "pending_approval": {"draft", "ready", "void"},
                "ready": {"void"}, "void": set()}
 # Plan M: a quotation is sent (its "issue"), then accepted or expired; it never posts. Accepted -> converted to an invoice.
-QUOTE_TRANSITIONS = {"draft": {"sent", "void"}, "sent": {"accepted", "expired", "void"}, "accepted": {"void"},
+QUOTE_TRANSITIONS = {"draft": {"sent", "void"}, "pending_approval": {"draft", "sent", "void"},
+                     "sent": {"accepted", "expired", "void"}, "accepted": {"void"},
                      "expired": {"sent", "void"}, "void": set()}
 # Documents the company prints and sends: edited only as drafts; issuing stores an unchangeable PDF revision.
 PRINTED_TYPES = {"quotation", "invoice", "credit-note", "debit-note", "payment", "purchase-payment", "delivery-order"}
@@ -272,9 +273,14 @@ def _dto(db, row) -> dict:
               "relatedDocumentId": payload.get("relatedDocumentId"), "printed": row["document_type"] in PRINTED_TYPES}
     code = row["contact_code"] if "contact_code" in row else _contact_code(db, row)
     result["contactCode"] = code
+    issued_name = row["issued_file_name"] if "issued_file_name" in row else db.execute(
+        "SELECT file_name FROM erp_document_files WHERE tenant_id=%s AND document_id=%s AND revision=1",
+        (row["tenant_id"], row["id"])).fetchone()
+    if issued_name and not isinstance(issued_name, str):
+        issued_name = issued_name["file_name"]
     # Plan M4: the one display/download name, from the record (S2 lists show this field).
-    result["displayName"] = naming.display_name(row["document_date"], code, naming.type_code(row["document_type"]),
-                                                 row["document_number"], ".pdf")
+    result["displayName"] = issued_name or naming.display_name(row["document_date"], code, naming.type_code(row["document_type"]),
+                                                               row["document_number"], ".pdf")
     if row["document_type"] in posting.OPEN_ITEM_TYPES:
         balance = typed_outstanding(db, row["tenant_id"], row["id"]) if row["status"] == "ready" else Decimal(row["total_amount"])
         result["outstanding"] = money(balance)
@@ -303,7 +309,9 @@ def _contact_code(db, row):
 
 CONTACT_CODE_SQL = """(SELECT NULLIF(upper(btrim(COALESCE(c.contact_code, v.contact_code))),'')
     FROM (SELECT 1) one LEFT JOIN customers c ON c.id=h.customer_id AND c.tenant_id=h.tenant_id
-    LEFT JOIN vendors v ON v.id=h.vendor_id AND v.tenant_id=h.tenant_id) AS contact_code"""
+    LEFT JOIN vendors v ON v.id=h.vendor_id AND v.tenant_id=h.tenant_id) AS contact_code,
+    (SELECT f.file_name FROM erp_document_files f WHERE f.tenant_id=h.tenant_id AND f.document_id=h.id AND f.revision=1)
+        AS issued_file_name"""
 
 
 def _related(db, tenant_id, document_type, related_id, *, lock=False):
@@ -383,23 +391,26 @@ def _print_data(db, row, *, revision=None, issued_at=None) -> dict:
     payload = row["payload"] or {}
     fields = payload.get("fields") or {}
     lines = [{"description": l.get("description") or "", "quantity": str(l.get("quantity") or ""),
-              "unitPrice": money(l.get("unitPrice") or 0), "discount": money(l.get("discount") or 0),
-              "taxCode": l.get("taxCode") or "", "tax": money(l.get("tax") or 0), "amount": money(posting.line_net(l))}
+              "unitPrice": _unit_price(l.get("unitPrice")), "discount": money(l.get("discount") or 0),
+              "taxCode": l.get("taxCode") or "", "tax": money(l.get("tax") or 0), "amount": money(posting.line_net(l) + posting.cents(l.get("discount") or 0))}
              for l in payload.get("lines", [])]
+    # What the payment/credit settles, typed or scanned, from the document's own allocation list (Codex review P2).
     allocations = []
-    for a in db.execute("""SELECT t.document_number,t.document_date,a.amount FROM erp_document_allocations a
-            JOIN erp_document_headers t ON t.id=a.target_document_id AND t.tenant_id=a.tenant_id
-            WHERE a.tenant_id=%s AND a.source_document_id=%s ORDER BY a.created_at""", (row["tenant_id"], row["id"])).fetchall():
-        allocations.append({"number": a["document_number"], "date": str(a["document_date"]), "amount": money(a["amount"])})
-    if not allocations:
-        allocations = [{"number": a.get("targetId", "")[:8], "date": "", "amount": money(a.get("amount") or 0)}
-                       for a in payload.get("allocations", [])]
+    for a in payload.get("allocations", []):
+        if a.get("source") == "scanned":
+            target = db.execute("""SELECT COALESCE(NULLIF(btrim(invoice_number),''),reference_number,record_code) AS number,
+                    invoice_date AS day FROM standardised_records WHERE id=%s AND tenant_id=%s""", (a["targetId"], row["tenant_id"])).fetchone()
+        else:
+            target = db.execute("SELECT document_number AS number,document_date AS day FROM erp_document_headers WHERE id=%s AND tenant_id=%s",
+                                (a["targetId"], row["tenant_id"])).fetchone()
+        allocations.append({"number": target["number"] if target else "", "date": str(target["day"]) if target and target["day"] else "",
+                            "amount": money(a.get("amount") or 0)})
     discount = sum((posting.cents(l.get("discount") or 0) for l in payload.get("lines", [])), Decimal("0"))
     data = {"type": row["document_type"], "number": row["document_number"], "documentDate": str(row["document_date"]),
             "dueDate": str(row["due_date"]) if row["due_date"] else None, "referenceNo": row["reference_no"],
             "paymentTerms": fields.get("paymentTerms"), "currency": row["currency"], "contact": _contact_for_print(db, row),
             "contactLabel": CONTACT_LABELS.get(row["document_type"], "Contact"), "lines": lines,
-            "subtotal": money(row["subtotal"]), "discountTotal": money(discount), "taxAmount": money(row["tax_amount"]),
+            "subtotal": money(Decimal(row["subtotal"]) + discount), "discountTotal": money(discount), "taxAmount": money(row["tax_amount"]),
             "total": money(row["total_amount"]), "allocations": allocations, "notes": row["description"] or fields.get("notes"),
             "terms": fields.get("terms"), "paymentMethod": fields.get("paymentMethod"), "revision": revision,
             "issuedAt": issued_at}
@@ -411,6 +422,14 @@ def _print_data(db, row, *, revision=None, issued_at=None) -> dict:
             data["relatedNumber"] = target["document_number"]
             data["relatedLabel"] = "Original " + target["document_type"].replace("-", " ")
     return data
+
+
+def _unit_price(value) -> str:
+    """Unit prices keep the precision typed (up to 4 dp, at least 2); amounts are always 2 dp."""
+    amount = Decimal(str(value or 0))
+    text = format(amount.quantize(Decimal("0.0001")).normalize(), "f")
+    whole, _, cents = text.partition(".")
+    return f"{whole}.{(cents or '').ljust(2, '0')}"
 
 
 def _file_name(db, row) -> str:
@@ -472,7 +491,9 @@ def _check_duplicate_of_scanned(db, tenant_id, doc):
         return
     category = "accounts_payable" if doc["document_type"] == "bill" else "accounts_receivable"
     party = "vendor_id" if doc["document_type"] == "bill" else None
+    # Plan M B1: an excluded own-sales capture (its journal reversed by planm-tidy) no longer blocks the typed entry.
     rows = db.execute("""SELECT r.record_code,r.vendor_id,r.supplier_name,r.buyer_name FROM standardised_records r
+        JOIN documents d ON d.id=r.document_id AND d.tenant_id=r.tenant_id AND d.excluded_at IS NULL
         WHERE r.tenant_id=%s AND r.is_current AND r.validation_status='passed' AND r.category=%s
             AND lower(btrim(COALESCE(NULLIF(btrim(r.invoice_number),''), r.reference_number)))=lower(btrim(%s))""",
                       (tenant_id, category, number)).fetchall()
@@ -602,6 +623,9 @@ def _check_note(db, user, doc):
         label = " or ".join(t.replace("-", " ") for t in NOTE_TARGETS[kind])
         raise HTTPException(422, f"A {kind.replace('-', ' ')} must reference an issued {label}. Choose it first.")
     if related_id:
+        # Same lock order as a payment: the accounting period first (record_journal), then the invoice/bill.
+        period = posting.open_period(db, user["tenant_id"], doc["document_date"])
+        db.execute("SELECT id FROM accounting_periods WHERE id=%s AND tenant_id=%s FOR UPDATE", (period["id"], user["tenant_id"]))
         related = _related(db, user["tenant_id"], kind, related_id, lock=True)
         if related["status"] != "ready":
             raise HTTPException(409, f"{related['document_number']} is not issued; a note can only correct an issued document.")
@@ -612,6 +636,8 @@ def _check_note(db, user, doc):
     if kind in {"credit-note", "purchase-credit-note"}:
         if not allocations:
             allocations = [{"targetId": str(related["id"]), "source": "typed", "amount": money(total)}]
+        if related_id and any(a.get("source") != "typed" or a["targetId"] != str(related["id"]) for a in allocations):
+            raise HTTPException(422, f"A credit note is applied to the document it corrects ({related['document_number']}) only.")
         allocated = sum((posting.cents(a["amount"]) for a in allocations), Decimal("0"))
         if allocated != total:
             raise HTTPException(422, f"A credit note is applied in full: allocate {money(total)} (now {money(allocated)}).")
@@ -797,6 +823,8 @@ def _create_typed_document(db, user, document_type, data, *, bank_evidence=False
     vendor_id, customer_id, employee_id, contact_name = _contact(db, user["tenant_id"], document_type, data.contactId)
     bank_account_id = _bank_account(db, user["tenant_id"], data.bankAccountId)
     related_id = _check_related_input(db, user, document_type, data.relatedDocumentId)
+    if document_type == "quotation" and data.status == "pending_approval":
+        raise HTTPException(422, "A quotation is a draft until it is sent; it has no approval step.")
     on = data.documentDate or date.today()
     number = data.number.strip() if data.number and data.number.strip() else _next_number(db, user["tenant_id"], document_type, on)
     try:
@@ -1243,7 +1271,9 @@ def preview_document_pdf(document_type: str, document_id: str, request: Request)
             ORDER BY revision DESC LIMIT 1""", (user["tenant_id"], row["id"])).fetchone()
         if stored:
             return _pdf_response(bytes(stored["content"]), stored["file_name"], inline=True)
-        content = _render(db, row, watermark="DRAFT - NOT ISSUED")
+        # Issued before printed copies were kept: say so instead of calling it a draft (nothing is stored).
+        mark = "DRAFT - NOT ISSUED" if row["status"] in {"draft", "pending_approval"} else             ("VOID" if row["status"] == "void" else "RECONSTRUCTED COPY")
+        content = _render(db, row, watermark=mark)
         return _pdf_response(content, _file_name(db, row), inline=True)
 
 

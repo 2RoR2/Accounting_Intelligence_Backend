@@ -23,7 +23,7 @@ def company_identity(db, tenant_id) -> dict:
     if not row:
         return {"name": "", "registrationNumber": "", "tin": ""}
     profile = row.get("profile") or {}
-    return {"name": row["name"] or "", "registrationNumber": row["registration_number"] or "",
+    return {"name": row.get("name") or "", "registrationNumber": row.get("registration_number") or "",
             "tin": profile.get("tin") or "", "sstNumber": profile.get("sstNumber") or "", "profile": profile}
 
 
@@ -48,11 +48,26 @@ def direction(identity: dict, *, seller_name=None, seller_registration=None, sel
     return "unknown"
 
 
+def _reviewed(record) -> dict:
+    """The approved field values kept in the record snapshot (reviewedFields, else the field predictions)."""
+    snapshot = record.get("snapshot") or {}
+    values = dict(snapshot.get("reviewedFields") or {}) if isinstance(snapshot, dict) else {}
+    if isinstance(snapshot, dict):
+        for field in snapshot.get("fieldPredictions") or []:
+            if isinstance(field, dict) and field.get("key") and values.get(field["key"]) in (None, ""):
+                values[field["key"]] = field.get("value")
+    return values
+
+
 def record_direction(db, tenant_id, record, identity=None) -> str:
     identity = identity or company_identity(db, tenant_id)
-    return direction(identity, seller_name=record.get("supplier_name"), seller_registration=record.get("supplier_registration_number"),
-                     seller_tin=record.get("supplier_tin"), buyer_name=record.get("buyer_name"),
-                     buyer_registration=record.get("buyer_registration_number"), buyer_tin=record.get("buyer_tin"))
+    fields = _reviewed(record)
+    pick = lambda *keys: next((fields.get(k) for k in keys if fields.get(k)), None)  # noqa: E731
+    return direction(identity, seller_name=record.get("supplier_name") or pick("supplier"),
+                     seller_registration=pick("supplier_registration_id", "supplier_registration_number"),
+                     seller_tin=pick("supplier_tin", "supplier_tax_id"), buyer_name=record.get("buyer_name") or pick("customer"),
+                     buyer_registration=pick("customer_registration_id", "buyer_registration_number"),
+                     buyer_tin=pick("customer_tax_id", "customer_tin", "buyer_tin"))
 
 
 def direction_warning(value: str) -> str | None:

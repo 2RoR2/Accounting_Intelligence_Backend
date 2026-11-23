@@ -190,7 +190,7 @@ def _ageing(db, tenant, end, report_type):
                                 AND (COALESCE(x.reversed_at,x.created_at) AT TIME ZONE 'Asia/Kuala_Lumpur')::date<=%(end)s)
                 ),0)
             FROM standardised_records r
-            JOIN documents d ON d.id=r.document_id AND d.tenant_id=r.tenant_id
+            JOIN documents d ON d.id=r.document_id AND d.tenant_id=r.tenant_id AND d.excluded_at IS NULL
             WHERE r.tenant_id=%(tenant)s AND {APPROVED_RECORD} AND r.category=%(category)s
                 AND d.kind=ANY(%(kinds)s) AND r.currency='MYR'
             UNION ALL

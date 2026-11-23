@@ -274,28 +274,38 @@ class _ReadableNames:
     def of(self, r) -> dict:
         from services.company_identity import direction, direction_warning
         if not self.book:
-            return {"displayName": r["original_filename"]}
-        category = r["category"]
-        party = r["supplier_name"] if category == "accounts_payable" else r["buyer_name"]
+            return {"displayName": r.get("original_filename")}
+        category = r.get("category")
+        party = r.get("supplier_name") if category == "accounts_payable" else r.get("buyer_name")
         code = self.book.code("supplier" if category == "accounts_payable" else "customer", party)
         known = bool(r.get("detected_identifier") or (r.get("document_date_value") and party))
         name = self.naming.display_name(r.get("document_date_value"), code,
-                                        self.naming.type_code(kind=r["kind"], category=category), r.get("detected_identifier"),
-                                        self.naming.extension_of(r["original_filename"], ".bin")) if known else r["original_filename"]
-        way = direction(self.identity, seller_name=r["supplier_name"], buyer_name=r["buyer_name"])
+                                        self.naming.type_code(kind=r.get("kind"), category=category), r.get("detected_identifier"),
+                                        self.naming.extension_of(r.get("original_filename"), ".bin")) if known else r.get("original_filename")
+        way = direction(self.identity, seller_name=r.get("supplier_name"), buyer_name=r.get("buyer_name"))
         return {"displayName": name, "direction": way, "directionWarning": direction_warning(way)}
 
 
 def get_document_detail(document_id: str, request: Request):
     user = require_workspace_user(request)
     with connect() as db:
+        readable = _readable_detail(db, document_id, user)
         visibility = " AND (owner_id=%s OR assigned_to=%s OR EXISTS (SELECT 1 FROM benchmark_demo_documents bd JOIN benchmark_demo_tenants bt ON bt.tenant_id=bd.tenant_id AND bt.enabled=true WHERE bd.tenant_id=documents.tenant_id AND bd.document_id=documents.id))" if user["role"] == "accountant" else ""
         params = [document_id, tenant_scope(user), tenant_scope(user)]
         if user["role"] == "accountant":
             params.extend([user["id"], user["id"]])
+        # The access check stays the last and only query that decides visibility.
         r = db.execute(f"SELECT * FROM documents WHERE id=%s AND (%s IS NULL OR tenant_id=%s){visibility}", params).fetchone()
-        if r:
-            named = db.execute("""SELECT d.*,
+    if not r:
+        raise HTTPException(404, "Document not found.")
+    return {"id": str(r["id"]), "code": r["document_code"], "displayName": r["original_filename"], **readable, "name": r["original_filename"], "tenantId": str(r["tenant_id"]), "ownerId": str(r["owner_id"]), "assignedTo": str(r["assigned_to"]) if r["assigned_to"] else None, **read_kind(r), "category": r["category"].upper(), "status": r["status"].upper(), "mimeType": r["mime_type"], "fileSize": r["file_size_bytes"], "contentRevision": r["content_revision"], "createdAt": str(r["uploaded_at"]), "updatedAt": str(r["updated_at"])}
+
+
+def _readable_detail(db, document_id, user) -> dict:
+    """Plan M4/M2 fields for one document of the user's company: display name and direction. Display-only: on any
+    lookup problem the caller keeps the stored file name."""
+    try:
+        named = db.execute("""SELECT d.*,
                     COALESCE(sr.supplier_name,(SELECT COALESCE(current_value,normalized_value) FROM field_predictions
                         WHERE document_id=d.id AND field_key='supplier' ORDER BY created_at DESC LIMIT 1)) AS supplier_name,
                     COALESCE(sr.buyer_name,(SELECT COALESCE(current_value,normalized_value) FROM field_predictions
@@ -307,11 +317,16 @@ def get_document_detail(document_id: str, request: Request):
                     COALESCE(sr.invoice_date::text,(SELECT COALESCE(current_value,normalized_value) FROM field_predictions
                         WHERE document_id=d.id AND field_key='date' ORDER BY created_at DESC LIMIT 1)) AS document_date_value
                 FROM documents d LEFT JOIN LATERAL (SELECT * FROM standardised_records WHERE document_id=d.id
-                    ORDER BY revision_number DESC LIMIT 1) sr ON true WHERE d.id=%s""", (r["id"],)).fetchone()
-            readable = _ReadableNames(db, {"tenant_id": r["tenant_id"]}).of(named)
-    if not r:
-        raise HTTPException(404, "Document not found.")
-    return {"id": str(r["id"]), "code": r["document_code"], **readable, "name": r["original_filename"], "tenantId": str(r["tenant_id"]), "ownerId": str(r["owner_id"]), "assignedTo": str(r["assigned_to"]) if r["assigned_to"] else None, **read_kind(r), "category": r["category"].upper(), "status": r["status"].upper(), "mimeType": r["mime_type"], "fileSize": r["file_size_bytes"], "contentRevision": r["content_revision"], "createdAt": str(r["uploaded_at"]), "updatedAt": str(r["updated_at"])}
+                    ORDER BY revision_number DESC LIMIT 1) sr ON true
+                WHERE d.id=%s AND (%s::uuid IS NULL OR d.tenant_id=%s::uuid)""",
+                           (document_id, tenant_scope(user), tenant_scope(user))).fetchone()
+        if not named or not named.get("tenant_id"):
+            return {}
+        return _ReadableNames(db, {"tenant_id": named["tenant_id"]}).of(named)
+    except Exception:  # noqa: BLE001 - a display name must never break the detail page
+        import logging
+        logging.getLogger(__name__).warning("Could not build the display name for document %s", document_id, exc_info=True)
+        return {}
 
 def get_document_file(document_id: str, request: Request):
     """Return an authorised private source file for preview/download."""

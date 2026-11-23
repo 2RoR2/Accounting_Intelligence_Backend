@@ -816,7 +816,7 @@ def get_profit_and_loss_dashboard(request: Request, fromDate: date, toDate: date
                 SELECT r.id,r.category,r.currency,r.due_date,
                     GREATEST(COALESCE(r.amount_due,r.total_amount)-COALESCE(allocated.amount,0),0) AS balance
                 FROM standardised_records r
-                JOIN documents d ON d.id=r.document_id AND d.tenant_id=r.tenant_id
+                JOIN documents d ON d.id=r.document_id AND d.tenant_id=r.tenant_id AND d.excluded_at IS NULL
                 LEFT JOIN allocated ON allocated.record_id=r.id
                 WHERE r.tenant_id=%s AND r.is_current AND r.validation_status='passed'
                     -- Open items only (as on Today): receipts are already paid, notes adjust another document.

@@ -241,7 +241,7 @@ def test_typed_documents_never_reach_extraction_review_or_benchmark(company):
         assert db.execute("SELECT count(*) AS n FROM erp_document_files WHERE tenant_id=%s", (ids['tenant'],)).fetchone()['n'] == 3
 
 
-def _captured(connect, ids, *, seller, buyer, category='accounts_payable', kind='invoice', number='SUP-1'):
+def _captured(connect, ids, *, seller, buyer, category='accounts_payable', kind='invoice', number='SUP-1', vendor=None, snapshot=None):
     with connect() as db:
         document = db.execute("""INSERT INTO documents(tenant_id,owner_id,original_filename,kind,category,storage_path,mime_type,
                 file_size_bytes,file_hash_sha256,status)
@@ -251,10 +251,10 @@ def _captured(connect, ids, *, seller, buyer, category='accounts_payable', kind=
             VALUES (%s,%s,%s,'submitted',1) RETURNING id""", (document, ids['tenant'], ids['admin']['id'])).fetchone()['id']
         db.execute("""INSERT INTO review_decisions(submission_id,document_id,tenant_id,reviewed_by,decision,approved_content_revision)
             VALUES (%s,%s,%s,%s,'approved',1)""", (submission, document, ids['tenant'], ids['admin']['id']))
-        return db.execute("""INSERT INTO standardised_records(document_id,tenant_id,category,supplier_name,buyer_name,invoice_number,
-                invoice_date,due_date,currency,total_amount,tax_amount,snapshot)
-            VALUES (%s,%s,%s,%s,%s,%s,'2026-08-07','2026-09-06','MYR',106,6,%s) RETURNING id""",
-                          (document, ids['tenant'], category, seller, buyer, number, Jsonb({}))).fetchone()['id']
+        return db.execute("""INSERT INTO standardised_records(document_id,tenant_id,category,vendor_id,supplier_name,buyer_name,
+                invoice_number,invoice_date,due_date,currency,total_amount,tax_amount,snapshot)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,'2026-08-07','2026-09-06','MYR',106,6,%s) RETURNING id""",
+                          (document, ids['tenant'], category, vendor, seller, buyer, number, Jsonb(snapshot or {}))).fetchone()['id']
 
 
 def test_direction_own_sales_document_never_posts_and_purchases_do(company):
@@ -350,3 +350,38 @@ def test_planm_tidy_excludes_own_sales_captures_reverses_them_and_names_purchase
     with connect() as db:
         again = planm_tidy.tidy(db, ids['tenant'], apply=True)
     assert again['own_sales_documents'] == 0 and again['renamed'] == 0 and again['contact_codes'] == 0
+
+
+def test_codex_review_fixes_note_target_quotation_approval_and_printing(company):
+    """Codex review of S1: a credit note settles only what it names; quotations have no approval step; the printed copy
+    shows gross subtotal, discount and the typed unit-price precision; a voucher names the scanned bills it pays;
+    direction also uses the reviewed TIN."""
+    connect, ids = company
+    admin = ids['admin']
+    me = set_profile(connect, ids)
+    a = ok(call('POST', '/api/erp/documents/invoice', admin, json={**invoice_body(ids), 'status': 'ready'}), 201)
+    b = ok(call('POST', '/api/erp/documents/invoice', admin, json={**invoice_body(ids, referenceNo='B'), 'status': 'ready'}), 201)
+    crossed = ok(call('POST', '/api/erp/documents/credit-note', admin, json={
+        'contactId': str(ids['customer']), 'documentDate': '2026-08-15', 'relatedDocumentId': a['id'],
+        'lines': [{'description': 'x', 'unitPrice': '10'}], 'allocations': [{'targetId': b['id'], 'amount': '10.00'}]}), 201)
+    refused = issue('credit-note', crossed, admin)
+    assert refused.status_code == 422 and a['number'] in refused.json()['detail']
+
+    assert call('POST', '/api/erp/documents/quotation', admin, json={**invoice_body(ids), 'status': 'pending_approval'}).status_code == 422
+
+    priced = ok(call('POST', '/api/erp/documents/invoice', admin, json=invoice_body(ids, lines=[
+        {'description': 'Screws', 'quantity': '1000', 'unitPrice': '0.0125', 'taxCode': 'SV-8', 'tax': '1.00'},
+        {'description': 'Cable', 'quantity': '1', 'unitPrice': '100.00', 'discount': '10.00'}])), 201)
+    text = pdf_text(call('GET', f"/api/erp/documents/invoice/{priced['id']}/preview.pdf", admin).content)
+    assert '0.0125' in text and '112.50' in text and '10.00' in text and '103.50' in text  # gross 112.50 - 10 + 1 tax
+
+    bill = _captured(connect, ids, seller='Syarikat Bekalan Jaya', buyer=me, number='SBJ-555', vendor=ids['supplier'])
+    paid = ok(call('POST', '/api/erp/documents/purchase-payment', admin, json={
+        'contactId': str(ids['supplier']), 'documentDate': '2026-08-28', 'amount': '106.00', 'bankAccountId': str(ids['bank']),
+        'allocations': [{'targetId': str(bill), 'source': 'scanned', 'amount': '106.00'}], 'status': 'ready'}), 201)
+    assert 'SBJ-555' in pdf_text(call('GET', f"/api/erp/documents/purchase-payment/{paid['id']}/files/1", admin).content)
+
+    sneaky = _captured(connect, ids, seller='Different Trading Name', buyer='Kedai Runcit Maju', number='T-1',
+                       snapshot={'reviewedFields': {'supplier_tin': 'C99999999990'}})
+    refused = call('POST', f'/api/erp/scanned/{sneaky}/post', admin, json={})
+    assert refused.status_code == 409 and 'your own sales document' in refused.json()['detail']

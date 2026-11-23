@@ -117,7 +117,7 @@ def open_item_tiles(db, user, category: str, today: date) -> dict:
             COALESCE(sum({OUTSTANDING}) FILTER (WHERE {late_sql} AND r.currency=%s), 0) AS late_amount,
             count(*) FILTER (WHERE {late_sql} AND r.currency<>%s) AS late_other,
             count(*) FILTER (WHERE r.due_date IS NULL) AS no_due_date
-        FROM standardised_records r JOIN documents d ON d.id=r.document_id AND d.tenant_id=r.tenant_id
+        FROM standardised_records r JOIN documents d ON d.id=r.document_id AND d.tenant_id=r.tenant_id AND d.excluded_at IS NULL
         WHERE r.tenant_id=%s AND {base}""",
                      [*soon_params, *soon_params, HOME_CURRENCY, *soon_params, HOME_CURRENCY,
                       *late_params, *late_params, HOME_CURRENCY, *late_params, HOME_CURRENCY,

@@ -128,9 +128,10 @@ class CodeBook:
         for kind, table, column in (("supplier", "vendors", "vendor_name"), ("customer", "customers", "customer_name")):
             book = {}
             for r in db.execute(f"SELECT {column} AS name, contact_code FROM {table} WHERE tenant_id=%s", (tenant_id,)).fetchall():
-                key = normalize_vendor_name(r["name"] or "")
+                name = r.get("name") if hasattr(r, "get") else None
+                key = normalize_vendor_name(name or "")
                 if key:
-                    book.setdefault(key, []).append((r["contact_code"] or "").strip().upper() or suggest_contact_code(r["name"]))
+                    book.setdefault(key, []).append((r.get("contact_code") or "").strip().upper() or suggest_contact_code(name))
             self._codes[kind] = book
 
     def code(self, kind: str, name: str | None) -> str | None:

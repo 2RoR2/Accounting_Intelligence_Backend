@@ -57,7 +57,7 @@ def tidy(db, tenant_id, *, apply: bool) -> dict:
             report["own_sales_documents"] += 1
             journals = db.execute("""SELECT j.id,p.status AS period_status FROM journal_headers j
                 JOIN accounting_periods p ON p.id=j.period_id AND p.tenant_id=j.tenant_id
-                WHERE j.tenant_id=%s AND j.source_type='document' AND j.source_id=%s AND j.status='posted'""",
+                WHERE j.tenant_id=%s AND j.source_type IN ('document','adjustment') AND j.source_id=%s AND j.status='posted'""",
                                   (tenant_id, d["id"])).fetchall()
             if any(j["period_status"] != "open" for j in journals) or (journals and not admin):
                 report["skipped_closed_period"] += 1
