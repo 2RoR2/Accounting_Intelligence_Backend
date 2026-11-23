@@ -1,6 +1,7 @@
 from __future__ import annotations
 from decimal import Decimal
 from services.routes.accounting.routes import (
+    bank_payment_preview,
     bank_payment_state,
     get_or_create_bank_settlement,
     mark_bank_line_matched,
@@ -8,6 +9,7 @@ from services.routes.accounting.routes import (
     record_settlement_allocation,
     require_no_posted_settlement_journal,
     settlement_allocated,
+    unposted_bank_allocations,
 )
 from main import *
 from main import _lock_upload_identity, _processing_error, _lock_workspace_document, _require_current_extraction, _authorised_document, _bank_row_values, _bank_transaction_dto, _uuid_or_422, _account_dto, _cost_centre_dto
@@ -30,6 +32,12 @@ class BankExpenseInput(BaseModel):
 
 
 class BankPaymentInput(BaseModel):
+    journalDate: date | None = None
+
+
+class BankMatchDecisionInput(ReconciliationDecisionInput):
+    # Confirm and post in one step (local admins only): the match and its payment journal commit together.
+    postPayment: bool = False
     journalDate: date | None = None
 
 
@@ -367,6 +375,8 @@ def _bank_transaction_response(db, row, records_by_tenant, user):
         "allocatedAmount": money(allocated),
         "remainingAmount": money(max(amount - allocated, Decimal(0))),
         "paymentPosted": payment_posted,
+        # Matched records whose payment journal is not posted yet, whoever is looking (accountants wait for an admin).
+        "paymentPending": bool(can_post) and row["status"] != "ignored" and row["recorded_id"] is None,
         "canPostPayment": can_post and user["role"] == "local_admin" and row["status"] != "ignored"
                           and row["recorded_id"] is None,
         "recordedDocumentId": str(row['recorded_id']) if row['recorded_id'] else None,
@@ -842,7 +852,15 @@ def list_reconciliation_suggestions(request: Request):
                     reason=None if unique else "MULTIPLE_MATCH_CANDIDATES")
     return {"suggestions": list(grouped.values()), "humanConfirmationRequired": True}
 
-def decide_reconciliation(data: ReconciliationDecisionInput, request: Request):
+def _post_matched_payment(db, user, bank_transaction_id, journal_date):
+    """Post the payment for a just-confirmed match with the existing posting rules (period lock, accounts, once)."""
+    bank = _lock_statement_line(db, user["tenant_id"], bank_transaction_id)
+    settlement = _existing_bank_settlement(db, bank, lock=True)
+    return post_allocated_bank_payment(db, user, bank, settlement, journal_date,
+                                       lambda: _statement_catalog_account(db, bank))
+
+
+def decide_reconciliation(data: BankMatchDecisionInput, request: Request):
     user = require_workspace_user(request, {"local_admin", "accountant"})
     if not user.get("tenant_id"):
         raise HTTPException(403, "A company workspace is required.")
@@ -852,6 +870,10 @@ def decide_reconciliation(data: ReconciliationDecisionInput, request: Request):
         raise HTTPException(422, "Invalid candidate id.")
     if data.decision != "confirmed" and not data.reason:
         raise HTTPException(422, "A reason is required when rejecting or reversing a match.")
+    if data.postPayment and data.decision != "confirmed":
+        raise HTTPException(422, "Only a confirmed match can post its payment.")
+    if data.postPayment and user["role"] != "local_admin":
+        raise HTTPException(403, "Only a local admin can post payments to the ledger. Confirm the match only.")
     with connect() as db:
         candidate = db.execute("""SELECT b.id bank_transaction_id,c.record_id,b.direction,b.posted_date,b.signed_amount_decimal,b.currency,
                    b.status AS bank_status,r.category
@@ -861,6 +883,21 @@ def decide_reconciliation(data: ReconciliationDecisionInput, request: Request):
             WHERE c.id=%s AND c.tenant_id=%s FOR UPDATE OF b""", (candidate_id, user["tenant_id"])).fetchone()
         if not candidate:
             raise HTTPException(404, "Reconciliation candidate not found.")
+        if data.postPayment:
+            # Read after the bank-line lock: a concurrent confirm may have committed while this request waited.
+            current = db.execute("SELECT status FROM reconciliation_candidates WHERE id=%s AND tenant_id=%s",
+                                 (candidate_id, user["tenant_id"])).fetchone()
+            if current["status"] == "confirmed":
+                # A retry or double click: the match stands, so post (or return) its payment exactly once.
+                try:
+                    payment = _post_matched_payment(db, user, candidate["bank_transaction_id"], data.journalDate)
+                except RaiseException as error:
+                    raise HTTPException(409, error.diag.message_primary) from error
+                settlement = _existing_bank_settlement(db, {"id": candidate["bank_transaction_id"],
+                                                            "tenant_id": user["tenant_id"]})
+                return {"id": None, "candidateId": str(candidate_id), "decision": "confirmed", "createdAt": None,
+                        "settlementId": str(settlement["id"]) if settlement else None,
+                        "alreadyConfirmed": True, "payment": payment}
         if data.decision == "confirmed" and not direction_matches(candidate['category'], candidate['direction']):
             raise HTTPException(422, "Money-in transactions must match receivables; money-out transactions must match payables.")
         if data.decision == "confirmed" and candidate["bank_status"] in {"imported", "proposed"}:
@@ -911,12 +948,59 @@ def decide_reconciliation(data: ReconciliationDecisionInput, request: Request):
                     db.execute("""INSERT INTO settlement_allocations
                         (tenant_id,settlement_id,record_id,amount,status,created_by,reversed_at,reversal_reason,reverses_allocation_id)
                         VALUES (%s,%s,%s,%s,'reversed',%s,now(),%s,%s)""", (user["tenant_id"], settlement["id"], candidate["record_id"], allocation["amount"], user["id"], data.reason, allocation["id"]))
-    return {"id": str(row["id"]), "candidateId": str(row["candidate_id"]),
-            "decision": row["decision"], "createdAt": str(row["confirmed_at"]), "settlementId": settlement_id}
+        payment = None
+        if data.postPayment:
+            # Same transaction as the match: a refusal (closed period, missing account) leaves nothing confirmed.
+            try:
+                payment = _post_matched_payment(db, user, candidate["bank_transaction_id"], data.journalDate)
+            except RaiseException as error:
+                raise HTTPException(409, error.diag.message_primary) from error
+    result = {"id": str(row["id"]), "candidateId": str(row["candidate_id"]),
+              "decision": row["decision"], "createdAt": str(row["confirmed_at"]), "settlementId": settlement_id}
+    if data.postPayment:
+        result.update(alreadyConfirmed=False, payment=payment)
+    return result
 
-def decide_reconciliation_candidate(candidate_id: str, data: ReconciliationDecisionInput, request: Request):
+def decide_reconciliation_candidate(candidate_id: str, data: BankMatchDecisionInput, request: Request):
     data = data.model_copy(update={"candidateId": candidate_id})
     return decide_reconciliation(data, request)
+
+
+def preview_bank_payment(transaction_id: str, request: Request, candidateId: str | None = None,
+                         journalDate: date | None = None):
+    """The payment journal a local admin would post for this bank line, without writing anything.
+
+    With candidateId (a proposed full match), it previews "Confirm and post payment"; without it, the line's
+    matched records that are not posted yet. canPost=false carries the refusal posting would give (closed period)."""
+    user = require_workspace_user(request, {"local_admin", "accountant"})
+    tenant_id = user["tenant_id"]
+    transaction_id = _uuid_or_422(transaction_id, "transaction id")
+    with connect() as db:
+        bank = db.execute("""SELECT t.*,i.source_bank_account_ref FROM bank_transactions t
+            JOIN bank_imports i ON i.id=t.import_id AND i.tenant_id=t.tenant_id
+            WHERE t.id=%s AND t.tenant_id=%s AND i.status='confirmed'""", (transaction_id, tenant_id)).fetchone()
+        if not bank:
+            raise HTTPException(404, "Bank transaction not found.")
+        if candidateId:
+            candidate = db.execute("""SELECT c.status,r.document_id,r.category FROM reconciliation_candidates c
+                JOIN standardised_records r ON r.id=c.record_id AND r.tenant_id=c.tenant_id
+                WHERE c.id=%s AND c.tenant_id=%s AND c.bank_transaction_id=%s""",
+                (_uuid_or_422(candidateId, "candidate id"), tenant_id, transaction_id)).fetchone()
+            if not candidate:
+                raise HTTPException(404, "Reconciliation candidate not found.")
+            pending = [{"id": None, "amount": abs(bank["signed_amount_decimal"] or Decimal(0)),
+                        "document_id": candidate["document_id"], "category": candidate["category"]}]
+        else:
+            settlement = _existing_bank_settlement(db, bank)
+            pending = unposted_bank_allocations(db, tenant_id, settlement["id"] if settlement else None)
+        if not pending or bank["status"] == "ignored" or bank["recorded_document_id"]:
+            return {"canPost": False, "blockedReason": "Nothing on this bank line is waiting to be posted.",
+                    "journalDate": None, "periodCode": None, "lines": []}
+        preview = bank_payment_preview(db, tenant_id, bank, pending, journalDate,
+                                       lambda: _statement_catalog_account(db, bank))
+    if preview["canPost"] and user["role"] != "local_admin":
+        preview.update(canPost=False, blockedReason="Only a local admin can post payments to the ledger.")
+    return preview
 
 def get_bank_transaction(transaction_id: str, request: Request):
     user = require_workspace_user(request, {"super_admin", "local_admin", "accountant"})
@@ -1022,6 +1106,7 @@ def register(router, handlers):
     router.add_api_route('/api/bank/transactions/{transaction_id}/coding', code_bank_transaction, methods=['POST'], status_code=201)
     router.add_api_route('/api/bank/transactions/{transaction_id}/record-expense', record_bank_expense, methods=['POST'], status_code=201)
     router.add_api_route('/api/bank/transactions/{transaction_id}/post-payment', post_bank_payment, methods=['POST'], status_code=201)
+    router.add_api_route('/api/bank/transactions/{transaction_id}/payment-preview', preview_bank_payment, methods=['GET'])
     router.add_api_route('/api/bank-transactions/{transaction_id}/coding', code_bank_transaction, methods=['POST'], status_code=201)
     router.add_api_route('/api/bank/transactions/{transaction_id}/coding', clear_bank_transaction_coding, methods=['DELETE'])
     router.add_api_route('/api/bank-transactions/{transaction_id}/coding', clear_bank_transaction_coding, methods=['DELETE'])

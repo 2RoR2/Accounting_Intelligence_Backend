@@ -3,6 +3,8 @@ services:
   - type: web
     name: accounting-intelligence-api
     runtime: python
+    # Same region as the Neon database (aws-ap-southeast-1); region cannot change after creation.
+    region: singapore
     # Free first (0.1 CPU, 512 MB, sleeps when idle). Move to starter only if scanned documents
     # miss 20 s at p95 (docs/DEPLOY_UAT.md section 5). Free has no pre-deploy command, so the
     # build runs migrate; on starter, move migrate to preDeployCommand.
@@ -152,13 +154,13 @@ services:
 
       # Optional text AI. Per-provider overrides use AI_<PROVIDER>_<SETTING>.
       - key: AI_EXTRACTION
-        value: "off"
+        value: "text"
       - key: AI_PROVIDERS
-        value: "gemini"
+        value: "custom"
       - key: AI_MODEL
-        value: ""
+        value: "openai/gpt-oss-120b"
       - key: AI_BASE_URL
-        value: ""
+        value: "https://api.groq.com/openai/v1"
       - key: AI_API_KEY
         sync: false
       - key: AI_EXTRA_BODY
@@ -266,7 +268,7 @@ services:
       - key: BREVO_FROM_EMAIL
         sync: false
       - key: BREVO_FROM_NAME
-        value: "Accounting Intelligence UAT"
+        value: "Accounting Intelligence SAIC"
       - key: EMAIL_FROM
         value: ""
       - key: SMTP_HOST
@@ -284,7 +286,7 @@ services:
       - key: DOCUMENT_STORAGE_PATH
         value: "storage"
       - key: S3_BUCKET
-        sync: false
+        value: "accounting-intelligence"
       - key: S3_ENDPOINT_URL
         sync: false
       - key: S3_TLS_VERIFY
@@ -294,7 +296,7 @@ services:
       - key: S3_READ_TIMEOUT_SECONDS
         value: "60"
       - key: AWS_REGION
-        value: "us-east-1"
+        value: "ap-southeast-1"
       - key: AWS_ENDPOINT_URL
         sync: false
       - key: AWS_ENDPOINT_URL_S3

@@ -4043,3 +4043,57 @@ CREATE INDEX IF NOT EXISTS idx_documents_included ON documents(tenant_id, upload
 
 -- A quotation has no approval step (draft -> sent): older ones waiting for approval go back to draft.
 UPDATE erp_document_headers SET status='draft', updated_at=now() WHERE document_type='quotation' AND status='pending_approval';
+
+-- Plan P1: proof attached to typed records (payments, refunds, money in/out, bank transfers, manual journals).
+-- Idempotent; the same text is appended to the consolidated schema file.
+--
+-- * A file lives in the private document storage (storage_path: s3:// uri or a local path); a link is an https:// address.
+-- * media_type is decided from the file's own bytes at upload. Removing is a soft delete (deleted_at): the row and the
+--   stored object stay for audit; every upload and removal also writes an audit_logs row.
+CREATE TABLE IF NOT EXISTS record_attachments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    target_type TEXT NOT NULL CHECK (target_type IN ('erp_document')),
+    target_id UUID NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('file','link')),
+    storage_path TEXT,
+    url TEXT,
+    original_name TEXT NOT NULL CHECK (btrim(original_name) <> ''),
+    media_type TEXT,
+    size_bytes INTEGER,
+    uploaded_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    deleted_at TIMESTAMPTZ,
+    deleted_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    FOREIGN KEY (target_id, tenant_id) REFERENCES erp_document_headers(id, tenant_id) ON DELETE CASCADE,
+    CHECK ((kind = 'file' AND storage_path IS NOT NULL AND url IS NULL
+            AND media_type IS NOT NULL AND media_type IN ('application/pdf','image/png','image/jpeg','image/webp')
+            AND size_bytes IS NOT NULL AND size_bytes BETWEEN 1 AND 10485760)
+        OR (kind = 'link' AND url IS NOT NULL AND url ~ '^https://' AND length(url) <= 2000 AND storage_path IS NULL
+            AND media_type IS NULL AND size_bytes IS NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_record_attachments_target ON record_attachments(tenant_id, target_type, target_id, created_at)
+    WHERE deleted_at IS NULL;
+
+-- Consolidated migration: 20261202_p1_product_defaults.sql
+-- P1 line defaults: a product remembers a default tax-code label, and the tax-code list becomes an editable catalog.
+-- Idempotent; the same text is appended to the consolidated schema file.
+-- The default income/expense accounts a product offers already exist (erp_products.income_account_id/expense_account_id).
+-- Tax is never calculated: a tax code is a label printed on the line, the tax amount is typed.
+
+ALTER TABLE erp_products ADD COLUMN IF NOT EXISTS default_tax_code TEXT;
+
+DO $$
+DECLARE
+    old_check TEXT;
+BEGIN
+    SELECT conname INTO old_check FROM pg_constraint
+    WHERE conrelid = 'erp_catalog_entries'::regclass AND contype = 'c'
+      AND pg_get_constraintdef(oid) LIKE '%''payment-term''%' AND pg_get_constraintdef(oid) NOT LIKE '%''tax-code''%';
+    IF old_check IS NOT NULL THEN
+        EXECUTE format('ALTER TABLE erp_catalog_entries DROP CONSTRAINT %I', old_check);
+        ALTER TABLE erp_catalog_entries ADD CONSTRAINT erp_catalog_entries_kind_check CHECK (kind IN (
+            'product-group','category','coupon','content-page','price-level','payment-term','payment-method','currency',
+            'asset-type','location','number-format','form-design','bank-account','fixed-asset','store-setting','tax-code'));
+    END IF;
+END $$;

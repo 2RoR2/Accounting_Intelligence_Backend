@@ -17,7 +17,7 @@ REQUIRED_COLUMNS = {
     "vendors": {"is_active": "bool", "fields": "jsonb", "default_expense_account_id": "uuid"},
     "customers": {"is_active": "bool", "fields": "jsonb"},
     "erp_employees": {"tenant_id": "uuid", "legal_name": "text"},
-    "erp_products": {"tenant_id": "uuid", "income_account_id": "uuid"},
+    "erp_products": {"tenant_id": "uuid", "income_account_id": "uuid", "default_tax_code": "text"},
     "erp_catalog_entries": {"tenant_id": "uuid", "kind": "text", "ledger_account_id": "uuid"},
     "erp_posting_accounts": {"tenant_id": "uuid", "account_id": "uuid"},
     "erp_number_counters": {"tenant_id": "uuid", "next_value": "int4"},
