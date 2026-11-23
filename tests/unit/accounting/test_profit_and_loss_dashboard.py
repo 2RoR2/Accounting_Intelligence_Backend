@@ -66,13 +66,17 @@ class ProfitAndLossDashboardTests(unittest.TestCase):
         self.assertIn("posted", database.calls[0][0])
         self.assertIn("idempotency_key", database.calls[0][0])
         self.assertIn("workspace_settings", database.calls[1][0])
-        aging_sql, aging_params = database.calls[2]
+        # Codex H2: scanned copies of typed invoices/bills are looked up first and left out of the ageing.
+        self.assertIn("erp_document_headers", database.calls[2][0])
+        aging_sql, aging_params = next(call for call in database.calls if "settlement_allocations" in call[0])
         self.assertIn("is_current", aging_sql)
         self.assertIn("d.kind = ANY", aging_sql)
         self.assertEqual(aging_params[2:4], (["invoice", "bill"], ["invoice"]))
+        self.assertIn("NOT (r.id = ANY(", aging_sql)
+        self.assertEqual(aging_params[4], [])  # no typed copies in this fake company
         self.assertIn("erp_document_headers", aging_sql)  # Plan L4: typed invoices and bills
-        self.assertEqual(aging_params[4], "tenant")
-        self.assertEqual(aging_params[5:], (date(2026, 1, 31),) * 4)
+        self.assertEqual(aging_params[5], "tenant")
+        self.assertEqual(aging_params[6:], (date(2026, 1, 31),) * 4)
         self.assertTrue(any(getattr(route, "path", None) == "/api/ledger/profit-and-loss" for route in api.app.routes))
 
     def test_cash_basis_uses_allocations_and_only_unallocated_coded_bank_amounts(self):

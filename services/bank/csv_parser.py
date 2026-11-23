@@ -143,6 +143,9 @@ def parse_bank_csv(content, mapping, date_format, tenant_id, account_ref, defaul
             else:
                 debit = _decimal(_cell(source, mapping, "debit"))
                 credit = _decimal(_cell(source, mapping, "credit"))
+                # Many banks fill the unused column with 0.00: a zero there is an empty side, not a second amount.
+                debit = None if debit == 0 else debit
+                credit = None if credit == 0 else credit
         except ValueError:
             debit = credit = None
             errors.append("INVALID_AMOUNT")

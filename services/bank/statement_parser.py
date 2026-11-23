@@ -114,10 +114,13 @@ def _pdf_text(content: bytes) -> str:
                             text_page.close()
                     finally:
                         page.close()
-            text = "\n".join(pages)
-            if text.strip():
-                return text
-            return _pdf_ocr_text(document)
+            missing = [index for index, page_text in enumerate(pages) if not page_text.strip()]
+            if len(missing) == len(pages):
+                return _pdf_ocr_text(document)
+            # A text page does not mean every page has text: OCR each page without a text layer.
+            for index, lines in _ocr_pages(document, missing).items():
+                pages[index] = "\n".join(lines)
+            return "\n".join(pages)
         finally:
             with PDFIUM_LOCK:
                 document.close()
@@ -133,15 +136,24 @@ def _pdf_text(content: bytes) -> str:
 
 def _pdf_ocr_text(document) -> str:
     """Read scanned PDF pages when the document has no selectable text."""
+    with PDFIUM_LOCK:
+        count = len(document)
+    lines = [line for page in _ocr_pages(document, range(min(count, 50))).values() for line in page]
+    if not lines:
+        raise ValueError("The PDF has no readable transaction rows. Use a bank statement with selectable text.")
+    return "\n".join(lines)
+
+
+def _ocr_pages(document, page_numbers) -> dict[int, list[str]]:
+    """OCR the given pages (at most 50) and return their text lines by page index."""
     try:
         from rapidocr import RapidOCR
     except ImportError as exc:  # pragma: no cover - requirements installs this
-        raise ValueError("This PDF has no selectable text and OCR is unavailable.") from exc
+        raise ValueError("This PDF has pages without selectable text and OCR is unavailable.") from exc
     engine = RapidOCR()
-    lines = []
-    with PDFIUM_LOCK:
-        count = len(document)
-    for page_number in range(min(count, 50)):
+    by_page: dict[int, list[str]] = {}
+    for page_number in list(page_numbers)[:50]:
+        lines = by_page.setdefault(page_number, [])
         # Render and copy under the lock, then OCR without it.
         with PDFIUM_LOCK:
             page = document[page_number]
@@ -173,9 +185,7 @@ def _pdf_ocr_text(document) -> str:
             lines.extend(" ".join(item[3] for item in group) for group in grouped)
         finally:
             image.close()
-    if not lines:
-        raise ValueError("The PDF has no readable transaction rows. Use a bank statement with selectable text.")
-    return "\n".join(lines)
+    return by_page
 
 
 def _money_value(match: re.Match) -> str:
