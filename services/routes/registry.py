@@ -17,6 +17,8 @@ from .demo.routes import register as register_demo
 from .effort.routes import register as register_effort
 from .imports.routes import register as register_imports
 from .home.routes import register as register_home
+from .search.routes import register as register_search
+from .trace.routes import register as register_trace
 
 def register_component_routes(router, handlers):
     register_accounting(router, handlers)
@@ -38,3 +40,5 @@ def register_component_routes(router, handlers):
     register_effort(router, handlers)
     register_imports(router, handlers)
     register_home(router, handlers)
+    register_search(router, handlers)
+    register_trace(router, handlers)
