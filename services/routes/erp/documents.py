@@ -346,6 +346,14 @@ def _detail(db, row) -> dict:
     """Detail DTO: the list DTO plus the duplicate warning and the stored printed copies."""
     result = _dto(db, row)
     result["possibleDuplicates"] = _possible_duplicates(db, row)
+    for allocation in result["allocations"]:  # the number a person recognises, typed or scanned
+        if allocation.get("source") == "scanned":
+            target = db.execute("""SELECT COALESCE(NULLIF(btrim(invoice_number),''),reference_number,record_code) AS number
+                FROM standardised_records WHERE id=%s AND tenant_id=%s""", (allocation["targetId"], row["tenant_id"])).fetchone()
+        else:
+            target = db.execute("SELECT document_number AS number FROM erp_document_headers WHERE id=%s AND tenant_id=%s",
+                                (allocation["targetId"], row["tenant_id"])).fetchone()
+        allocation["targetNumber"] = target["number"] if target else None
     result["files"] = _file_list(db, row["tenant_id"], row["id"])
     related = (row["payload"] or {}).get("relatedDocumentId")
     if related:
