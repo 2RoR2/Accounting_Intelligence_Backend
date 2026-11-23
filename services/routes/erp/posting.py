@@ -448,6 +448,19 @@ def typed_copy_of_scanned(db, tenant_id, record):
     return next((r for r in rows if _same_party(r["contact_name"], record.get("buyer_name"))), None)
 
 
+def typed_copy_record_ids(db, tenant_id, record_ids=None) -> set:
+    """Approved scanned invoices/bills (optionally only `record_ids`) that a ready typed one already records.
+    Open-item reports skip them, as posting refuses them, so one obligation is counted once (Codex H2)."""
+    records = db.execute("""SELECT r.*,d.kind FROM standardised_records r
+        JOIN documents d ON d.id=r.document_id AND d.tenant_id=r.tenant_id
+        WHERE r.tenant_id=%s AND r.is_current AND r.validation_status='passed' AND d.kind IN ('invoice','bill')
+            AND (%s::uuid[] IS NULL OR r.id=ANY(%s::uuid[]))
+            AND EXISTS (SELECT 1 FROM erp_document_headers h WHERE h.tenant_id=r.tenant_id AND h.status='ready'
+                AND h.document_type IN ('invoice','bill'))""",
+                         (tenant_id, record_ids, record_ids)).fetchall()
+    return {record["id"] for record in records if typed_copy_of_scanned(db, tenant_id, record)}
+
+
 def refuse_if_typed_copy(db, tenant_id, record):
     copy = typed_copy_of_scanned(db, tenant_id, record)
     if copy:

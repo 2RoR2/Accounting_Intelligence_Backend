@@ -31,7 +31,7 @@ class Result:
 
 class FakeDb:
     def __init__(self):
-        self.calls = []
+        self.calls, self.stored_filters = [], {}
         self.record = RECORD
     def __enter__(self): return self
     def __exit__(self, *_): return False
@@ -41,7 +41,7 @@ class FakeDb:
             return Result([{"id": "33333333-3333-4333-8333-333333333333", "resource": params[2], "format": params[4],
                             "status": "completed", "row_count": params[5], "created_at": "2026-11-02"}])
         if "FROM export_history" in sql:
-            return Result([{"id": params[0], "resource": "records", "status": "completed"}])
+            return Result([{"id": params[0], "resource": "records", "status": "completed", "filters": self.stored_filters}])
         if "COALESCE(sr.invoice_number,sr.reference_number)" in sql:
             return Result([XLSX_RECORD])
         if "FROM standardised_records" in sql:
@@ -67,6 +67,24 @@ class ExportTests(unittest.TestCase):
         insert = next(params for sql, params in self.db.calls if sql.startswith("INSERT INTO export_history"))
         self.assertIsInstance(insert[3], Jsonb)
         self.assertEqual(insert[3].obj, {"status": "x"})
+
+    def test_records_export_keeps_to_the_records_the_page_shows(self):
+        """Codex H2: the records page sends the ids its filters show; create and download both use them."""
+        wanted = "44444444-4444-4444-8444-444444444444"
+        response = self.client.post("/api/exports", json={"resource": "records", "filters": {"recordIds": [wanted]}, "format": "csv"})
+        self.assertEqual(response.status_code, 201, response.text)
+        select = next((sql, params) for sql, params in self.db.calls if "FROM standardised_records" in sql)
+        self.assertIn("id = ANY(", select[0])
+        self.assertEqual(select[1], (TENANT, [wanted]))
+
+        self.db.calls.clear()
+        self.db.stored_filters = {"recordIds": [wanted]}
+        self.assertEqual(self.client.get("/api/exports/33333333-3333-4333-8333-333333333333/download").status_code, 200)
+        select = next((sql, params) for sql, params in self.db.calls if "FROM standardised_records" in sql)
+        self.assertEqual(select[1], (TENANT, [wanted]))
+
+        refused = self.client.post("/api/exports", json={"resource": "records", "filters": {"recordIds": ["not-a-uuid"]}, "format": "csv"})
+        self.assertEqual(refused.status_code, 422, refused.text)
 
     def test_csv_contains_values_not_column_names(self):
         response = self.client.get("/api/exports/33333333-3333-4333-8333-333333333333/download")

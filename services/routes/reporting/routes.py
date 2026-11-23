@@ -49,11 +49,26 @@ def get_backup(backup_id: str, request: Request):
     if not row: raise HTTPException(404, "Backup run not found.")
     return {"id": str(row["id"]), "backupType": row["backup_type"], "status": row["status"], "requestedAt": str(row["created_at"]), "startedAt": str(row["started_at"]) if row["started_at"] else None, "finishedAt": str(row["completed_at"]) if row["completed_at"] else None, "error": row["error_message"]}
 
-def _export_rows(db, tenant_id, resource):
+def _record_ids(filters):
+    """The records the page's search and filters showed (Codex H2), or None for every current record."""
+    ids = (filters or {}).get("recordIds")
+    if ids is None:
+        return None
+    try:
+        return [str(uuid.UUID(str(value))) for value in ids][:10000]
+    except (TypeError, ValueError):
+        raise HTTPException(422, "recordIds must be a list of record ids.")
+
+
+def _export_rows(db, tenant_id, resource, filters=None):
     """Return (headers, value rows). connect() yields dict rows, so select values by column."""
     if resource == "records":
         headers = ["record_code", "category", "supplier_name", "buyer_name", "invoice_number", "reference_number", "currency", "total_amount", "validation_status"]
-        rows = db.execute("SELECT record_code,category,supplier_name,buyer_name,invoice_number,reference_number,currency,total_amount,validation_status FROM standardised_records WHERE tenant_id=%s AND is_current ORDER BY created_at DESC", (tenant_id,)).fetchall()
+        ids = _record_ids(filters)
+        only = " AND id = ANY(%s::uuid[])" if ids is not None else ""
+        rows = db.execute("SELECT record_code,category,supplier_name,buyer_name,invoice_number,reference_number,currency,total_amount,validation_status "
+                          f"FROM standardised_records WHERE tenant_id=%s AND is_current{only} ORDER BY created_at DESC",
+                          (tenant_id, ids) if ids is not None else (tenant_id,)).fetchall()
     elif resource == "documents":
         headers = ["document_code", "kind", "original_filename", "status"]
         rows = db.execute("SELECT document_code,kind,original_filename,status FROM documents WHERE tenant_id=%s ORDER BY uploaded_at DESC", (tenant_id,)).fetchall()
@@ -67,7 +82,7 @@ def _export_rows(db, tenant_id, resource):
 def create_export(data: ExportInput, request: Request):
     user = require_workspace_user(request)
     with connect() as db:
-        _, values = _export_rows(db, user["tenant_id"], data.resource)
+        _, values = _export_rows(db, user["tenant_id"], data.resource, data.filters)
         row = db.execute("INSERT INTO export_history(tenant_id,requested_by,resource,filters,format,row_count,status,completed_at) VALUES (%s,%s,%s,%s,%s,%s,'completed',now()) RETURNING *", (user["tenant_id"], user["id"], data.resource, Jsonb(data.filters), data.format, len(values))).fetchone()
     return {"id": str(row["id"]), "resource": row["resource"], "format": row["format"], "status": row["status"], "rowCount": row["row_count"], "createdAt": str(row["created_at"])}
 
@@ -94,7 +109,7 @@ def download_export(export_id: str, request: Request):
         export = db.execute("SELECT * FROM export_history WHERE id=%s AND tenant_id=%s AND status='completed'", (export_id, user["tenant_id"])).fetchone()
         if not export:
             raise HTTPException(404, "Export not found.")
-        headers, values = _export_rows(db, user["tenant_id"], export["resource"])
+        headers, values = _export_rows(db, user["tenant_id"], export["resource"], export["filters"])
     import csv
     output = io.StringIO()
     writer = csv.writer(output)
