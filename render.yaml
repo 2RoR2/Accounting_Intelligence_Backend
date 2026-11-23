@@ -3,6 +3,8 @@ services:
   - type: web
     name: accounting-intelligence-api
     runtime: python
+    # Same region as the Neon database (aws-ap-southeast-1); region cannot change after creation.
+    region: singapore
     # Free first (0.1 CPU, 512 MB, sleeps when idle). Move to starter only if scanned documents
     # miss 20 s at p95 (docs/DEPLOY_UAT.md section 5). Free has no pre-deploy command, so the
     # build runs migrate; on starter, move migrate to preDeployCommand.
