@@ -190,7 +190,8 @@ def test_invoice_posts_balanced_once_and_void_reverses(company):
     assert report['totals'][0]['income'] == '0.00'
     assert not any(a['category'] == 'accounts_receivable' for a in report['aging'])
     history = ok(call('GET', f"/api/erp/documents/invoice/{draft['id']}/history", admin))
-    assert [e['toStatus'] for e in history['events']] == ['draft', 'pending_approval', 'ready', 'void']
+    assert [e['toStatus'] for e in history['events'] if e['eventType'] != 'printed'] == ['draft', 'pending_approval', 'ready', 'void']
+    assert [e['eventType'] for e in history['events']].count('printed') == 2  # issued copy, then the VOID copy
 
 
 def test_closed_period_refuses_posting_and_no_period_refuses(company):
@@ -219,7 +220,7 @@ def test_quotation_to_invoice_to_payment(company):
     connect, ids = company
     admin = ids['admin']
     quote = ok(call('POST', '/api/erp/documents/quotation', admin, json={**invoice_body(ids), 'status': 'ready'}), 201)
-    assert quote['status'] == 'ready' and not quote['posted'] and not quote['posts']  # record only
+    assert quote['status'] == 'sent' and not quote['posted'] and not quote['posts']  # Plan M: issuing a quotation sends it; never posts
     invoice = ok(call('POST', f"/api/erp/documents/quotation/{quote['id']}/transfer", admin, json={'targetType': 'invoice'}), 201)
     assert invoice['type'] == 'invoice' and invoice['status'] == 'draft' and invoice['referenceNo'] == quote['number']
     assert [l['description'] for l in invoice['lines']] == ['Simen 50kg', 'Delivery'] and invoice['amount'] == quote['amount']

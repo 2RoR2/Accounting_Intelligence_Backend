@@ -28,16 +28,22 @@ DEFAULT_CODES = {"receivable": "1100", "revenue": "4000", "tax_output": "2030", 
 PURPOSE_TYPES = {"receivable": "asset", "revenue": "income", "tax_output": "liability", "payable": "liability",
                  "expense": "expense", "tax_input": "asset", "bank": "asset"}
 
-SALES_TYPES = {"quotation", "sales-order", "delivery-order", "invoice", "credit-note", "payment", "refund",
+SALES_TYPES = {"quotation", "sales-order", "delivery-order", "invoice", "credit-note", "debit-note", "payment", "refund",
                "store-order", "minipos-order"}
-PURCHASE_TYPES = {"purchase-order", "goods-received", "bill", "purchase-credit-note", "purchase-payment", "purchase-refund"}
+PURCHASE_TYPES = {"purchase-order", "goods-received", "bill", "purchase-credit-note", "purchase-debit-note", "purchase-payment",
+                  "purchase-refund"}
 # Types that post a journal when they become ready. Everything else is record-only and says so.
-POSTING_TYPES = {"invoice", "credit-note", "payment", "refund", "bill", "purchase-credit-note", "purchase-payment",
-                 "purchase-refund", "money-in", "money-out", "bank-transfer", "journal-entry"}
-ALLOCATING_TYPES = {"payment": "invoice", "credit-note": "invoice", "purchase-payment": "bill", "purchase-credit-note": "bill"}
+POSTING_TYPES = {"invoice", "credit-note", "debit-note", "payment", "refund", "bill", "purchase-credit-note",
+                 "purchase-debit-note", "purchase-payment", "purchase-refund", "money-in", "money-out", "bank-transfer",
+                 "journal-entry"}
+# Open items: what a customer or supplier owes / is owed until payments and credit notes settle it.
+OPEN_ITEM_TYPES = {"invoice", "debit-note", "bill", "purchase-debit-note"}
+# Payment / credit note -> the open items it can settle (Plan M: a debit note is settled like an invoice).
+ALLOCATING_TYPES = {"payment": ("invoice", "debit-note"), "credit-note": ("invoice", "debit-note"),
+                    "purchase-payment": ("bill", "purchase-debit-note"), "purchase-credit-note": ("bill", "purchase-debit-note")}
 BANK_TYPES = {"payment", "refund", "purchase-payment", "purchase-refund", "money-in", "money-out", "bank-transfer"}
-CONTACT_REQUIRED = {"invoice", "credit-note", "payment", "refund", "bill", "purchase-credit-note", "purchase-payment",
-                    "purchase-refund"}
+CONTACT_REQUIRED = {"invoice", "credit-note", "debit-note", "payment", "refund", "bill", "purchase-credit-note",
+                    "purchase-debit-note", "purchase-payment", "purchase-refund"}
 
 
 def cents(value) -> Decimal:
@@ -203,8 +209,8 @@ def plan_for_document(db, tenant_id, doc) -> Plan:
     lines = payload.get("lines", [])
     total = cents(doc["total_amount"])
     plan = Plan()
-    if kind in {"invoice", "credit-note"}:
-        sign = 1 if kind == "invoice" else -1
+    if kind in {"invoice", "debit-note", "credit-note"}:
+        sign = -1 if kind == "credit-note" else 1
         for account, amount in control_split(db, tenant_id, doc, "receivable"):
             plan.debit(account, sign * amount, "Accounts receivable", "total")
         for line in lines:
@@ -212,8 +218,8 @@ def plan_for_document(db, tenant_id, doc) -> Plan:
         tax = sum((cents(l.get("tax", 0)) for l in lines), Decimal("0"))
         if tax:
             plan.credit(default_account(db, tenant_id, "tax_output")["id"], sign * tax, "SST output tax", "tax")
-    elif kind in {"bill", "purchase-credit-note"}:
-        sign = 1 if kind == "bill" else -1
+    elif kind in {"bill", "purchase-debit-note", "purchase-credit-note"}:
+        sign = -1 if kind == "purchase-credit-note" else 1
         for line in lines:
             plan.debit(_line_account(db, tenant_id, line, "expense"), sign * line_net(line), line.get("description") or "Purchases", "line")
         tax = sum((cents(l.get("tax", 0)) for l in lines), Decimal("0"))
@@ -365,6 +371,8 @@ def _supplier_expense_account(db, tenant_id, record):
 
 def plan_for_scanned(db, tenant_id, record, account_id=None) -> Plan:
     """An approved scanned invoice/bill/credit note as a one-line document: net to revenue/expense, tax to SST."""
+    from services.company_identity import refuse_own_sales_document
+    refuse_own_sales_document(db, tenant_id, record)
     total = cents(record["total_amount"])
     if total <= 0:
         raise HTTPException(422, "The approved document must have a positive total amount.")

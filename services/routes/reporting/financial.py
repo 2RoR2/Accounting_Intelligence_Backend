@@ -27,8 +27,9 @@ from services.routes.home.lanes import APPROVED_RECORD, OPEN_ITEM_KINDS
 ZERO = Decimal("0.00")
 BUCKETS = ("current", "1-30", "31-60", "61-90", "90+")
 AGEING_TYPES = {
-    "receivables": ("invoice", "accounts_receivable", "receivable"),
-    "payables": ("bill", "accounts_payable", "payable"),
+    # Plan M: debit notes are open items like the invoice/bill they add to.
+    "receivables": (("invoice", "debit-note"), "accounts_receivable", "receivable"),
+    "payables": (("bill", "purchase-debit-note"), "accounts_payable", "payable"),
 }
 TAX_NOTE = "Recorded tax only - not a tax return"
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -172,7 +173,7 @@ def _ageing(db, tenant, end, report_type):
                         AND (a.reversed_at IS NULL OR (a.reversed_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date>%(end)s)
                 ),0) AS outstanding
             FROM erp_document_headers h
-            WHERE h.tenant_id=%(tenant)s AND h.document_type=%(type)s AND h.currency='MYR'
+            WHERE h.tenant_id=%(tenant)s AND h.document_type=ANY(%(type)s) AND h.currency='MYR'
                 AND (h.status='ready' OR (h.status='void' AND (h.voided_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date>%(end)s))
             UNION ALL
             SELECT 'scanned',
@@ -189,7 +190,7 @@ def _ageing(db, tenant, end, report_type):
                                 AND (COALESCE(x.reversed_at,x.created_at) AT TIME ZONE 'Asia/Kuala_Lumpur')::date<=%(end)s)
                 ),0)
             FROM standardised_records r
-            JOIN documents d ON d.id=r.document_id AND d.tenant_id=r.tenant_id
+            JOIN documents d ON d.id=r.document_id AND d.tenant_id=r.tenant_id AND d.excluded_at IS NULL
             WHERE r.tenant_id=%(tenant)s AND {APPROVED_RECORD} AND r.category=%(category)s
                 AND d.kind=ANY(%(kinds)s) AND r.currency='MYR'
             UNION ALL
@@ -210,7 +211,7 @@ def _ageing(db, tenant, end, report_type):
         )
         SELECT * FROM open_items WHERE document_date<=%(end)s AND outstanding>0
         ORDER BY COALESCE(due_date,document_date),document_date,document_number,source,contact_name""",
-        {"tenant": tenant, "end": end, "type": document_type, "category": category,
+        {"tenant": tenant, "end": end, "type": list(document_type), "category": category,
          "purpose": purpose, "code": DEFAULT_CODES[purpose], "account_type": PURPOSE_TYPES[purpose],
          "item_description": f"Opening {purpose} %",
          "kinds": list(OPEN_ITEM_KINDS[category])}).fetchall()

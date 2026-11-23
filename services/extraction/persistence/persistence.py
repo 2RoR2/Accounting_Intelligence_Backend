@@ -38,24 +38,48 @@ def _usable_document_identifier(fields: list[dict[str, Any]], kind: str) -> str 
     return None
 
 
+def _field_value(fields: list[dict[str, Any]], *keys: str) -> str | None:
+    for key in keys:
+        for field in fields:
+            if field.get("field_key") == key:
+                value = field.get("current_value") or field.get("normalized_value")
+                if value is not None and str(value).strip():
+                    return str(value).strip()
+    return None
+
+
+def standard_filename(db, document, fields: list[dict[str, Any]], identifier: str | None) -> str:
+    """Plan M4: {YYYY-MM-DD}_{CONTACT}_{TYPE}_{NUMBER}.{ext} from the extracted record, not the upload name."""
+    from services import naming
+
+    category = document.get("category") or "accounts_payable"
+    party = _field_value(fields, "supplier", "supplier_name", "vendor_name") if category == "accounts_payable" \
+        else _field_value(fields, "customer", "buyer_name", "customer_name")
+    kind_of_contact = "supplier" if category == "accounts_payable" else "customer"
+    code = naming.code_for_party_name(db, document["tenant_id"], kind_of_contact, party) if party else None
+    return naming.display_name(_field_value(fields, "date", "invoice_date", "document_date"), code,
+                               naming.type_code(kind=document.get("kind"), category=category), identifier,
+                               naming.extension_of(document.get("original_filename"), ".bin"))
+
+
 def _rename_after_extraction(db, document, mapped_fields) -> None:
-    """Give an invoice a searchable name only when extraction found a real identifier."""
+    """Give a captured document the M4 name once extraction found its number (or at least its date and party)."""
     identifier = _usable_document_identifier(mapped_fields, document["kind"])
-    if not identifier:
+    if not identifier and not (_field_value(mapped_fields, "date") and _field_value(mapped_fields, "supplier", "customer")):
         return
     source = str(document.get('storage_path') or '')
     if not source or (not source.startswith('s3://') and not Path(source).is_file()):
         return
-    from database.object_storage.object_store import document_key, relocate, safe_component
+    from database.object_storage.object_store import document_key, relocate
 
-    suffix = Path(document["original_filename"]).suffix.lower() or ".bin"
-    filename = f"{safe_component(identifier, 'document')}{suffix}"
+    filename = standard_filename(db, document, mapped_fields, identifier)
     collision = db.execute(
         "SELECT 1 FROM documents WHERE tenant_id=%s AND original_filename=%s AND id<>%s LIMIT 1",
         (document["tenant_id"], filename, document["id"]),
     ).fetchone()
     if collision:
-        filename = f"{safe_component(identifier, 'document')}__{document['document_code']}{suffix}"
+        stem, suffix = Path(filename).stem, Path(filename).suffix
+        filename = f"{stem}__{document['document_code']}{suffix}"
     owner = db.execute("SELECT name FROM users WHERE id=%s AND tenant_id=%s", (document["owner_id"], document["tenant_id"])).fetchone()
     accountant_name = owner["name"] if owner else "accountant"
     new_key = document_key(document["tenant_id"], document["owner_id"], accountant_name, document["id"], filename)
