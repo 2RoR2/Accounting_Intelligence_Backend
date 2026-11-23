@@ -1,6 +1,7 @@
 from __future__ import annotations
 from main import *
 from main import _lock_upload_identity, _processing_error, _lock_workspace_document, _require_current_extraction, _authorised_document, _bank_row_values, _bank_transaction_dto, _uuid_or_422, _account_dto, _cost_centre_dto
+from security.authentication import revoke_user_sessions
 
 def update_profile(data: ProfileInput, request: Request):
     user = require_workspace_user(request)
@@ -277,7 +278,7 @@ def reset_password(data: NewPassword, request: Request, response: Response):
             raise HTTPException(400, "Reset authorization is invalid or expired. Request a new code.")
         db.execute("UPDATE users SET password_hash=%s,must_change_password=false WHERE id=%s",
                    (hash_password(data.password), row["user_id"]))
-        db.execute("DELETE FROM web_sessions WHERE user_id=%s", (row["user_id"],))
+        revoke_user_sessions(db, row["user_id"])
         db.execute("DELETE FROM password_challenges WHERE email=%s", (row["email"],))
     response.delete_cookie(RESET, path="/api/auth")
     clear_auth_cookies(response)
@@ -293,8 +294,7 @@ def change_password(data: NewPassword, request: Request):
         db.execute("UPDATE users SET password_hash=%s,must_change_password=false WHERE id=%s",
                    (hash_password(data.password), user["id"]))
         claims = decode_access_token(request.cookies.get(ACCESS, ""))
-        db.execute("DELETE FROM web_sessions WHERE user_id=%s AND session_id<>%s",
-                   (user["id"], claims["jti"]))
+        revoke_user_sessions(db, user["id"], keep_session_id=claims["jti"])
         db.execute("DELETE FROM password_challenges WHERE user_id=%s", (user["id"],))
         user["must_change_password"] = False
     return public_user(user)

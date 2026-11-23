@@ -3,6 +3,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from io import BytesIO
 import json
 from pathlib import Path
 import tempfile
@@ -573,7 +574,9 @@ class AttemptProtocolTests(unittest.TestCase):
     def upload(self,user=None):
         # Direct route invocation: synthetic authenticated user, no HTTP multipart
         # dependency or lifespan. SQL, signature check and private file write run.
-        async def read(): return b'%PDF-synthetic protocol test'
+        content = BytesIO(b'%PDF-synthetic protocol test')
+        async def read(size=-1):
+            return content.read(size)
         file=SimpleNamespace(filename='synthetic.pdf',content_type='application/pdf',read=read)
         original=self.database.execute
         def defaults(sql,params=()):
