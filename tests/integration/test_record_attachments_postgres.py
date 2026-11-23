@@ -27,10 +27,18 @@ from services.routes.erp import attachments
 pytestmark = pytest.mark.runtime_defaults
 ROOT = Path(__file__).resolve().parents[2]
 HEADERS = {'X-Requested-With': 'AccountingIntelligence', 'Origin': 'http://localhost:3000'}
-PNG = b'\x89PNG\r\n\x1a\n' + b'\x00' * 64
-JPEG = b'\xff\xd8\xff\xe0' + b'\x00' * 64
-PDF = b'%PDF-1.7\n' + b'\x00' * 64
-WEBP = b'RIFF\x24\x00\x00\x00WEBPVP8 ' + b'\x00' * 64
+def _image(image_format):
+    """A real, complete 4x4 image: uploads are refused unless the whole file decodes."""
+    from io import BytesIO
+
+    from PIL import Image
+    out = BytesIO()
+    Image.new('RGB', (4, 4), (200, 30, 30)).save(out, image_format)
+    return out.getvalue()
+
+
+PNG, JPEG, WEBP = _image('PNG'), _image('JPEG'), _image('WEBP')
+PDF = b'%PDF-1.7\n1 0 obj\n<< /Type /Catalog >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n'
 ATTACHABLE = ('payment', 'purchase-payment', 'refund', 'purchase-refund', 'money-in', 'money-out', 'bank-transfer', 'journal-entry')
 
 
@@ -362,3 +370,62 @@ def test_names_cannot_escape_the_private_storage(company, tmp_path):
         path = Path(db.execute("SELECT storage_path FROM record_attachments WHERE target_id=%s", (record,)).fetchone()['storage_path'])
     assert path.is_relative_to((tmp_path / 'storage').resolve()) and path.is_file()
     assert not (tmp_path / 'escape.png').exists()
+
+
+def test_a_truncated_file_is_refused(company):
+    """Codex P2: a recognised header is not a whole file. A cut-off upload never reaches storage or the list."""
+    _, ids = company
+    accountant, record = ids['accountant'], ids['records']['payment']
+    for data, name, declared in ((b'%PDF-1.7', 'slip.pdf', 'application/pdf'),
+                                 (PDF.replace(b'%%EOF', b''), 'slip.pdf', 'application/pdf'),
+                                 (PNG[:len(PNG) // 2], 'slip.png', 'image/png'),
+                                 (JPEG[:len(JPEG) // 2], 'slip.jpg', 'image/jpeg'),
+                                 (WEBP[:len(WEBP) // 2], 'slip.webp', 'image/webp')):
+        response = upload(accountant, 'payment', record, data, name, declared)
+        assert response.status_code == 422 and 'incomplete' in response.json()['detail'], name
+    assert listing(accountant, 'payment', record) == []
+    assert upload(accountant, 'payment', record, PDF, 'slip.pdf', 'application/pdf').status_code == 201
+
+
+def test_deleting_a_draft_keeps_its_attachment_rows_for_audit(company):
+    """Codex P1: deleting a draft soft-deletes its attachments instead of erasing them (and the removed ones)."""
+    connect, ids = company
+    accountant = ids['accountant']
+    with connect() as db:
+        draft = str(db.execute("""INSERT INTO erp_document_headers(tenant_id,document_type,document_number)
+            VALUES (%s,'payment','PM-DRAFT') RETURNING id""", (ids['tenant'],)).fetchone()['id'])
+    kept = ok(upload(accountant, 'payment', draft, PNG, 'receipt.png'), 201)['id']
+    removed = ok(upload(accountant, 'payment', draft, PDF, 'old.pdf', 'application/pdf'), 201)['id']
+    ok(call('DELETE', f'/api/erp/attachments/{removed}', accountant))
+    with connect() as db:  # the statement delete_document runs for a draft
+        db.execute("DELETE FROM erp_document_headers WHERE id=%s AND tenant_id=%s", (draft, ids['tenant']))
+    with connect() as db:
+        rows = {str(r['id']): r for r in db.execute("""SELECT id,deleted_at,deleted_by,storage_path,original_name
+            FROM record_attachments WHERE target_id=%s""", (draft,)).fetchall()}
+    assert set(rows) == {kept, removed}
+    assert all(row['deleted_at'] and row['storage_path'] for row in rows.values())
+    assert rows[removed]['deleted_by'] == accountant['id']  # the earlier removal keeps who removed it
+    assert call('GET', f'/api/erp/attachments/{kept}/file', accountant).status_code == 404
+
+
+def test_the_keep_migration_replaces_the_cascading_key_and_still_checks_the_record(company):
+    """20261205 on a database that 20261201 created: the cascading key goes, the company check stays, twice over."""
+    connect, ids = company
+    migration = (ROOT / 'database/migrations/20261205_p1_attachments_keep.sql').read_text(encoding='utf-8')
+    assert migration.strip() in (ROOT / 'database/PostgreSQL Database schema.sql').read_text(encoding='utf-8-sig')
+    with connect() as db:
+        db.execute("""ALTER TABLE record_attachments ADD CONSTRAINT record_attachments_target_id_tenant_id_fkey
+            FOREIGN KEY (target_id, tenant_id) REFERENCES erp_document_headers(id, tenant_id) ON DELETE CASCADE NOT VALID""")
+        db.execute(migration)
+        db.execute(migration)
+        assert db.execute("""SELECT count(*) AS n FROM pg_constraint WHERE conrelid='record_attachments'::regclass
+            AND contype='f' AND confrelid='erp_document_headers'::regclass""").fetchone()['n'] == 0
+    with pytest.raises(psycopg.errors.ForeignKeyViolation):
+        with connect() as db:  # another company's record
+            db.execute("""INSERT INTO record_attachments(tenant_id,target_type,target_id,kind,url,original_name)
+                VALUES (%s,'erp_document',%s,'link','https://example.test/x','x')""", (ids['tenant'], ids['foreign']))
+
+
+def ok(response, status=200):
+    assert response.status_code == status, response.text
+    return response.json()

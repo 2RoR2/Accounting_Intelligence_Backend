@@ -77,7 +77,7 @@ def search(request: Request, q: str = "", limit: int = DEFAULT_LIMIT):
             add(r["document_type"], r["document_type"].replace("-", " ").capitalize(),
                 _item("erp", r["id"], r["document_type"], r["document_number"], r["contact_name"], r["status"],
                       r["document_date"], r["total_amount"], r["currency"]))
-        # Approved scanned records (the current revision).
+        # Approved scanned records (the current revision). An exact number match comes first, before the limit.
         for r in db.execute("""SELECT r.id,r.record_code,r.invoice_number,r.supplier_name,r.buyer_name,r.category,r.invoice_date,
                     r.total_amount,r.currency,d.kind
                 FROM standardised_records r JOIN documents d ON d.id=r.document_id AND d.tenant_id=r.tenant_id
@@ -85,8 +85,10 @@ def search(request: Request, q: str = "", limit: int = DEFAULT_LIMIT):
                     OR r.invoice_number ILIKE %(like)s ESCAPE '\\' OR r.reference_number ILIKE %(like)s ESCAPE '\\'
                     OR r.supplier_name ILIKE %(like)s ESCAPE '\\' OR r.buyer_name ILIKE %(like)s ESCAPE '\\'
                     OR (%(amount)s::numeric IS NOT NULL AND r.total_amount=%(amount)s::numeric))
-                ORDER BY r.invoice_date DESC NULLS LAST, r.created_at DESC LIMIT %(limit)s""",
-                            {"tenant": tenant, "like": like, "amount": amount, "limit": limit}).fetchall():
+                ORDER BY (upper(COALESCE(r.invoice_number,''))=upper(%(text)s) OR upper(COALESCE(r.record_code,''))=upper(%(text)s)
+                          OR upper(COALESCE(r.reference_number,''))=upper(%(text)s)) DESC,
+                    r.invoice_date DESC NULLS LAST, r.created_at DESC LIMIT %(limit)s""",
+                            {"text": text, "tenant": tenant, "like": like, "amount": amount, "limit": limit}).fetchall():
             add("record", "Scanned records", _item(
                 "record", r["id"], r["kind"], r["invoice_number"] or r["record_code"],
                 r["buyer_name"] if r["category"] == "accounts_receivable" else r["supplier_name"], "approved",

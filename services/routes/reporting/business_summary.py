@@ -41,9 +41,11 @@ OTHER_SUPPLIER = "Other costs (no supplier named)"
 NOT_ITEMISED = "Not itemised by product"
 # Cost of sales is read from the account's report section, which the chart import keeps.
 COST_OF_SALES_SECTION = "cost of"
-# Cash and bank accounts: linked to a bank-account catalog entry, the bank posting account,
-# or an asset account whose name starts with Bank or Cash.
-CASH_NAME_PATTERN = r"^(bank|cash)\M"
+# Cash and bank accounts. The ledger has no cash/bank account type (asset, liability, equity, income, expense only), so
+# an asset account counts when it is linked to a bank-account catalog entry, is the bank posting account, sits in a
+# cash or bank report section, or names a bank or cash account anywhere in its name ("Maybank Current Account",
+# "Petty cash", "CIMB savings account"); not only when the name starts with Bank or Cash.
+CASH_NAME_PATTERN = r"(bank|cash|current account|current a/c|savings account|savings a/c|fixed deposit)"
 
 
 def _month_bounds(month: str | None, today: Date):
@@ -85,7 +87,7 @@ def _cash_accounts(db, tenant):
         LEFT JOIN catalog c ON c.ledger_account_id=a.id
         WHERE a.tenant_id=%(tenant)s AND a.account_type='asset'
             AND (c.ledger_account_id IS NOT NULL OR a.id=(SELECT id FROM bank_posting)
-                OR a.name ~* %(pattern)s)
+                OR a.name ~* %(pattern)s OR COALESCE(a.report_section,'') ~* %(pattern)s)
         ORDER BY a.code""", {"tenant": tenant, "bank_code": financial.DEFAULT_CODES["bank"],
                              "pattern": CASH_NAME_PATTERN}).fetchall()
 

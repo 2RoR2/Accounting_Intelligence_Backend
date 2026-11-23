@@ -28,3 +28,22 @@ JOURNAL_CURRENCY_JOINS = f"""
     LEFT JOIN erp_document_headers typed ON typed.tenant_id=j.tenant_id
         AND {JOURNAL_SOURCE_TYPE}='erp_document' AND typed.id={JOURNAL_SOURCE_ID}
 """
+
+
+def in_books(j, end="%(end)s"):
+    """SQL: journal `j` is in the books at the cutoff `end`: dated by then and not reversed by a journal dated by then
+    (the general ledger reads a reversed journal and its reversal as two entries, each on its own date)."""
+    return (f"({j}.status IN ('posted','reversed') AND {j}.journal_date<={end}"
+            f" AND NOT EXISTS (SELECT 1 FROM journal_headers {j}_undo WHERE {j}_undo.tenant_id={j}.tenant_id"
+            f" AND {j}_undo.reversed_journal_id={j}.id AND {j}_undo.status='posted' AND {j}_undo.journal_date<={end}))")
+
+
+def document_posted(r, account_type="%(account_type)s", end="%(end)s"):
+    """SQL: the scanned record `r` (its uploaded document) has a journal in the books by `end` with a line on an account
+    of `account_type` (asset for an invoice's receivable, liability for a bill's payable)."""
+    return (f"""EXISTS (SELECT 1 FROM journal_headers doc_journal
+            JOIN journal_lines doc_line ON doc_line.journal_id=doc_journal.id AND doc_line.tenant_id=doc_journal.tenant_id
+            JOIN ledger_accounts doc_account ON doc_account.id=doc_line.account_id AND doc_account.tenant_id=doc_line.tenant_id
+            WHERE doc_journal.tenant_id={r}.tenant_id AND doc_journal.source_type IN ('document','adjustment')
+                AND doc_journal.source_id={r}.document_id AND {in_books('doc_journal', end)}
+                AND doc_account.account_type={account_type})""")

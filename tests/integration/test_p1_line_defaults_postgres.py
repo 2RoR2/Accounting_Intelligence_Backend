@@ -61,6 +61,25 @@ def test_bill_converted_from_a_purchase_order_uses_the_suppliers_terms(company):
     assert convert(ids['admin'], 'purchase-order', order, 'bill')['dueDate'] == str(date.today() + timedelta(days=30))
 
 
+
+def test_bill_converted_for_a_supplier_imported_from_csv_uses_the_imported_terms(company):
+    """Codex P2: the contacts CSV import keeps a supplier's terms in its supplier contact notes, not in fields."""
+    import json
+
+    connect, ids = company
+    with connect() as db:
+        db.execute("""INSERT INTO supplier_contacts(tenant_id,vendor_id,contact_name,role,notes)
+            VALUES (%s,%s,'Syarikat Bekalan Jaya','accounts',%s)""",
+                   (ids['tenant'], ids['supplier'], json.dumps({'source': 'contacts-import', 'payment_terms_days': 30})))
+    order = ok(call('POST', '/api/erp/documents/purchase-order', ids['admin'],
+                    json={**invoice_body(ids, contactId=str(ids['supplier'])), 'status': 'ready'}), 201)
+    assert convert(ids['admin'], 'purchase-order', order, 'bill')['dueDate'] == str(date.today() + timedelta(days=30))
+    # Terms set on the contact page win over the imported ones.
+    set_terms(connect, 'vendors', ids['supplier'], 7)
+    order = ok(call('POST', '/api/erp/documents/purchase-order', ids['admin'],
+                    json={**invoice_body(ids, contactId=str(ids['supplier'])), 'status': 'ready'}), 201)
+    assert convert(ids['admin'], 'purchase-order', order, 'bill')['dueDate'] == str(date.today() + timedelta(days=7))
+
 def test_a_debit_note_still_follows_the_due_date_of_its_invoice(company):
     connect, ids = company
     admin = ids['admin']

@@ -25,6 +25,7 @@ from .common import audit, erp_user, parse_uuid
 
 MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
 MAX_ATTACHMENTS_PER_RECORD = 20
+MAX_DECODE_PIXELS = 40_000_000  # about 160 MB decoded as RGBA: the most one upload check may use
 MAX_LINK_LENGTH = 2000
 MAX_NAME_LENGTH = 200
 TARGET_TYPE = "erp_document"
@@ -52,6 +53,31 @@ def sniff_media_type(head: bytes) -> str | None:
     if head.startswith(b"RIFF") and head[8:12] == b"WEBP" and head[12:16] in (b"VP8 ", b"VP8L", b"VP8X"):
         return "image/webp"
     return None
+
+
+def is_complete(data: bytes, media_type: str) -> bool:
+    """Whether the whole file arrived: a PDF ends with its %%EOF marker (in the last 1 KB, where readers look for it)
+    and an image decodes to its last pixel. A recognised header alone (a cut-off upload) is not enough.
+
+    A JPEG is decoded at a reduced scale (the whole stream is still read); any other image larger than
+    MAX_DECODE_PIXELS is refused rather than decoded, so a small file cannot claim a huge canvas and exhaust memory."""
+    if media_type == "application/pdf":
+        return b"%%EOF" in data[-1024:]
+    from io import BytesIO
+
+    from PIL import Image, ImageFile
+    if ImageFile.LOAD_TRUNCATED_IMAGES:  # a process-wide switch that would make a cut-off image look whole
+        return False
+    try:
+        with Image.open(BytesIO(data)) as image:
+            if image.format == "JPEG":
+                image.draft("RGB", (1024, 1024))
+            if image.width * image.height > MAX_DECODE_PIXELS:
+                return False
+            image.load()
+    except (OSError, SyntaxError, ValueError, Image.DecompressionBombError):
+        return False
+    return True
 
 
 def clean_name(value: str | None, fallback: str) -> str:
@@ -174,6 +200,8 @@ async def add_file(document_type: str, document_id: str, request: Request, file:
     media_type = sniff_media_type(data[:16])
     if media_type is None:
         raise HTTPException(422, "Unsupported file type. Attach a PDF, PNG, JPEG or WebP file, or paste a link.")
+    if not is_complete(data, media_type):
+        raise HTTPException(422, "This file is incomplete or damaged and cannot be opened. Attach the full file again.")
     name = clean_name(file.filename, "attachment")
     attachment_id = uuid.uuid4()
     stored, s3_uri, local_file = _store(user, doc["id"], attachment_id, name, data, media_type)

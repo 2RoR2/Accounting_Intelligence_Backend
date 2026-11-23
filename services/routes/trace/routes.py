@@ -51,9 +51,10 @@ EDGE_TEXT = {
 ARR = "%s::uuid[]"
 
 
-def _edge(src, dst, rel, amount=None, status=None):
-    """(src_kind, src_id, dst_kind, dst_id, rel, amount, status)."""
-    return (src[0], str(src[1]), dst[0], str(dst[1]), rel, amount, status)
+def _edge(src, dst, rel, amount=None, status=None, key=None):
+    """(src_kind, src_id, dst_kind, dst_id, rel, amount, status, key). `key` tells apart two links of the same kind
+    between the same two records, such as two allocations from one bank line to one bill."""
+    return (src[0], str(src[1]), dst[0], str(dst[1]), rel, amount, status, str(key) if key else None)
 
 
 def _ids(values):
@@ -85,10 +86,10 @@ def _neighbours(db, user, kind, ids):
                 WHERE tenant_id=%s AND link_type='transfer' AND (source_document_id=ANY({ARR}) OR target_document_id=ANY({ARR}))""",
                             (tenant, ids, ids)).fetchall():
             edges.append(_edge(("erp", r["s"]), ("erp", r["t"]), "transfer"))
-        for r in db.execute(f"""SELECT source_document_id s,target_document_id t,amount,status FROM erp_document_allocations
+        for r in db.execute(f"""SELECT id,source_document_id s,target_document_id t,amount,status FROM erp_document_allocations
                 WHERE tenant_id=%s AND (source_document_id=ANY({ARR}) OR target_document_id=ANY({ARR}))""",
                             (tenant, ids, ids)).fetchall():
-            edges.append(_edge(("erp", r["s"]), ("erp", r["t"]), "allocation", r["amount"], r["status"]))
+            edges.append(_edge(("erp", r["s"]), ("erp", r["t"]), "allocation", r["amount"], r["status"], r["id"]))
         for r in db.execute(f"""SELECT id,journal_id,settlement_id FROM erp_document_headers
                 WHERE tenant_id=%s AND id=ANY({ARR})""", (tenant, ids)).fetchall():
             if r["journal_id"]:
@@ -107,11 +108,11 @@ def _neighbours(db, user, kind, ids):
                              (tenant, ids)).fetchall()
         for r in records:
             edges.append(_edge(("upload", r["document_id"]), ("record", r["id"]), "upload"))
-        for r in db.execute(f"""SELECT a.settlement_id,a.record_id,a.amount,{_undone()} AS undone
+        for r in db.execute(f"""SELECT a.id,a.settlement_id,a.record_id,a.amount,{_undone()} AS undone
                 FROM settlement_allocations a WHERE a.tenant_id=%s AND a.status='active' AND a.record_id=ANY({ARR})""",
                             (tenant, ids)).fetchall():
             edges.append(_edge(("settlement", r["settlement_id"]), ("record", r["record_id"]), "allocation",
-                               r["amount"], "reversed" if r["undone"] else "active"))
+                               r["amount"], "reversed" if r["undone"] else "active", r["id"]))
         for r in db.execute(f"""SELECT bank_transaction_id,record_id FROM reconciliation_candidates
                 WHERE tenant_id=%s AND status='confirmed' AND record_id=ANY({ARR})""", (tenant, ids)).fetchall():
             edges.append(_edge(("bank", r["bank_transaction_id"]), ("record", r["record_id"]), "match"))
@@ -135,11 +136,11 @@ def _neighbours(db, user, kind, ids):
                 AND source_id=ANY({ARR})""", (tenant, ids)).fetchall():
             edges.append(_edge(("bank", r["source_id"]), ("settlement", r["id"]), "bank"))
     elif kind == "settlement":
-        for r in db.execute(f"""SELECT a.settlement_id,a.record_id,a.amount,{_undone()} AS undone
+        for r in db.execute(f"""SELECT a.id,a.settlement_id,a.record_id,a.amount,{_undone()} AS undone
                 FROM settlement_allocations a WHERE a.tenant_id=%s AND a.status='active' AND a.settlement_id=ANY({ARR})""",
                             (tenant, ids)).fetchall():
             edges.append(_edge(("settlement", r["settlement_id"]), ("record", r["record_id"]), "allocation",
-                               r["amount"], "reversed" if r["undone"] else "active"))
+                               r["amount"], "reversed" if r["undone"] else "active", r["id"]))
         for r in db.execute(f"""SELECT id,settlement_id FROM erp_document_headers
                 WHERE tenant_id=%s AND settlement_id=ANY({ARR})""", (tenant, ids)).fetchall():
             edges.append(_edge(("erp", r["id"]), ("settlement", r["settlement_id"]), "settlement"))
@@ -252,7 +253,7 @@ def _walk(db, user, start):
         nodes |= new
         for e in found:
             if (e[0], e[1]) in nodes and (e[2], e[3]) in nodes:
-                edges[e[:5]] = e
+                edges[e[:5] + e[7:]] = e
         frontier = new
     return nodes, list(edges.values()), truncated
 
