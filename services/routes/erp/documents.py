@@ -13,7 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -26,7 +26,7 @@ from services import naming
 
 from . import posting
 from .common import DOCUMENT_TYPES, audit, erp_user, money, parse_uuid
-from .contacts import find_contact
+from .contacts import find_contact, payment_term_days
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +60,27 @@ TRANSFERS = {"quotation": {"sales-order", "delivery-order", "invoice"}, "sales-o
              "bill": {"purchase-credit-note", "purchase-debit-note", "purchase-payment"},
              "purchase-debit-note": {"purchase-credit-note", "purchase-payment"}}
 MONEY_ONLY = {"payment", "refund", "purchase-payment", "purchase-refund", "bank-transfer"}
+# Open items carry a due date (the frontend's hasOutstanding).
+OUTSTANDING_TYPES = {"invoice", "bill", "debit-note", "purchase-debit-note"}
+
+
+def due_date_from_terms(document_date: date, days: int | None) -> date | None:
+    """Document date plus the contact's payment terms; None when the contact has no terms."""
+    return document_date + timedelta(days=days) if days is not None else None
+
+
+def _converted_due_date(db, tenant_id, source, target_type, document_date) -> date | None:
+    """The due date a transferred document starts with. An open item made from something that has no payment due date
+    of its own (a quotation, order or delivery order; a quotation's date is its validity) is due on the contact's terms
+    (none set: no due date). Anything else keeps the source's due date, as before."""
+    if target_type not in OUTSTANDING_TYPES or source["document_type"] in OUTSTANDING_TYPES:
+        return source["due_date"]
+    contact = None
+    if source["customer_id"]:
+        contact = db.execute("SELECT fields FROM customers WHERE id=%s AND tenant_id=%s", (source["customer_id"], tenant_id)).fetchone()
+    elif source["vendor_id"]:
+        contact = db.execute("SELECT fields FROM vendors WHERE id=%s AND tenant_id=%s", (source["vendor_id"], tenant_id)).fetchone()
+    return due_date_from_terms(document_date, payment_term_days(contact))
 
 
 class LineInput(BaseModel):
@@ -1017,12 +1038,16 @@ def _copy(db, user, source, target_type, link_type):
     payload.pop("duplicateFrom", None)
     payload[f"{link_type}From"] = str(source["id"])
     subtotal, tax, total = _totals(target_type, payload.get("lines", []), amount)
+    document_date = date.today()
+    due_date = source["due_date"]
+    if link_type == "transfer":
+        due_date = _converted_due_date(db, user["tenant_id"], source, target_type, document_date)
     row = db.execute("""INSERT INTO erp_document_headers(tenant_id,document_type,document_number,status,vendor_id,customer_id,
             employee_id,contact_name,document_date,due_date,currency,reference_no,description,subtotal,tax_amount,total_amount,
             payload,bank_account_id,created_by,updated_by)
         VALUES (%s,%s,%s,'draft',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *""",
                      (user["tenant_id"], target_type, _next_number(db, user["tenant_id"], target_type), vendor_id, customer_id,
-                      source["employee_id"], source["contact_name"], date.today(), source["due_date"], source["currency"],
+                      source["employee_id"], source["contact_name"], document_date, due_date, source["currency"],
                       source["document_number"] if link_type == "transfer" else source["reference_no"], source["description"],
                       subtotal, tax, total, Jsonb(payload), source["bank_account_id"], user["id"], user["id"])).fetchone()
     db.execute("""INSERT INTO erp_document_links(tenant_id,source_document_id,target_document_id,link_type,created_by)

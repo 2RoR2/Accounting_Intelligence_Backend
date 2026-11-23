@@ -57,9 +57,20 @@ def _clean(value):
     return value or None
 
 
+def payment_term_days(row) -> int | None:
+    """The payment terms a customer or supplier is on, in days (fields.paymentTermDays), or None when none are set.
+    Documents use it to suggest a due date; it is never applied silently to an existing document."""
+    value = ((row or {}).get("fields") or {}).get("paymentTermDays")
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 365:
+        return None
+    return value
+
+
 def _values(data: ContactInput):
     if len(json.dumps(data.fields, default=str)) > 16384:
         raise HTTPException(422, "Contact fields are too large.")
+    if data.fields.get("paymentTermDays") is not None and payment_term_days({"fields": data.fields}) is None:
+        raise HTTPException(422, "Payment terms must be a whole number of days from 0 to 365.")
     email = _clean(data.email)
     if email and ("@" not in email or " " in email):
         raise HTTPException(422, "Enter a valid email address.")
