@@ -1,49 +1,63 @@
-# One web service: the API is also the extraction worker (QUEUE_BACKEND=inline),
-# PostgreSQL is the only queue, OCR runs on this CPU. No Redis, no RQ worker,
-# no supervisor service. AI is off unless AI_EXTRACTION=text is set here.
+# The API also runs the inline extraction worker. PostgreSQL is the queue.
 services:
   - type: web
     name: accounting-intelligence-api
     runtime: python
-    buildCommand: bash scripts/render_build.sh
+    # Free first (0.1 CPU, 512 MB, sleeps when idle). Move to starter only if scanned documents
+    # miss 20 s at p95 (docs/DEPLOY_UAT.md section 5). Free has no pre-deploy command, so the
+    # build runs migrate; on starter, move migrate to preDeployCommand.
+    plan: free
+    buildCommand: bash scripts/render_build.sh && python services/admin/manage.py migrate
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /api/health
     envVars:
+      # Database and authentication
       - key: DATABASE_URL
         sync: false
-      - key: FRONTEND_ORIGINS
+      - key: DB_POOL_SIZE
+        value: "0"
+      - key: AUTH_SECRET
         sync: false
+      # Legacy name reserved for deployment compatibility. The app reads AUTH_SECRET.
+      - key: JWT_SECRET
+        sync: false
+      - key: APP_ENV
+        value: "production"
       - key: COOKIE_SECURE
         value: "true"
       - key: COOKIE_SAMESITE
-        value: none
-      # Signs sessions and encrypts TOTP secrets (read by security/authentication.py).
-      - key: AUTH_SECRET
+        value: "none"
+      - key: FRONTEND_ORIGINS
         sync: false
+      - key: FRONTEND_ORIGIN
+        sync: false
+      - key: APP_PUBLIC_URL
+        value: ""
+      - key: FRONTEND_URL
+        value: ""
+      - key: ENABLE_DEMO_ACCOUNTS
+        value: "false"
+      - key: UAT_TEST_EMAILS
+        value: ""
+      - key: UAT_TEST_PASSWORD
+        sync: false
+      # Leave libpq connection overrides unset. DATABASE_URL selects the UAT database.
+      - key: PGHOST
+        sync: false
+      - key: PGHOSTADDR
+        sync: false
+      - key: PGSERVICE
+        sync: false
+
+      # Python and process limits
       - key: PYTHON_VERSION
         value: "3.12.11"
-      # Slim runtime
-      - key: QUEUE_BACKEND
-        value: inline
-      - key: EXTRACTION_ENGINE
-        value: lite
-      - key: INLINE_WORKERS
+      - key: PYTHON_DOTENV_DISABLED
         value: "1"
       - key: WEB_CONCURRENCY
         value: "1"
-      - key: LITE_OCR_MAX_SIDE
-        value: "1024"
-      - key: OCR_THREADS
-        value: "1"
-      # Optional hosted text model. Leave AI_EXTRACTION unset/off to keep every
-      # document on this server; set it to "text" to send masked OCR text only.
-      - key: AI_EXTRACTION
-        sync: false
-      - key: AI_PROVIDERS
-        value: gemini
-      - key: GEMINI_API_KEY
-        sync: false
-      # Memory limits for a small host
+      - key: LOG_LEVEL
+        value: "INFO"
       - key: OMP_NUM_THREADS
         value: "1"
       - key: OPENBLAS_NUM_THREADS
@@ -52,14 +66,250 @@ services:
         value: "1"
       - key: MALLOC_ARENA_MAX
         value: "2"
+
+      # Inline queue and optional replay filters
+      - key: QUEUE_BACKEND
+        value: "inline"
+      - key: INLINE_WORKERS
+        value: "1"
+      - key: INLINE_SUPERVISOR
+        value: "true"
+      - key: INLINE_RECOVER_ON_START
+        value: "true"
+      - key: INLINE_STALE_LEASE_SECONDS
+        value: "90"
+      - key: QUEUE_DISPATCH_BATCH
+        value: "50"
+      - key: QUEUE_SUPERVISOR_INTERVAL_SECONDS
+        value: "5"
+      - key: QUEUE_TENANT_ID
+        value: ""
+      - key: QUEUE_OWNER_ID
+        value: ""
+      - key: QUEUE_MIN_UPLOADED_AT
+        value: ""
+      - key: QUEUE_REPLAY_DOCUMENT_IDS
+        value: ""
+      # Used only by the optional legacy RQ queue. Leave unset on UAT.
+      - key: REDIS_URL
+        sync: false
+      - key: RQ_WORKER_NAME
+        value: ""
+      - key: WORKER_WARM_MODELS
+        value: "false"
+
+      # Lite extraction and optional legacy OCR settings
+      - key: EXTRACTION_ENGINE
+        value: "lite"
+      - key: LITE_OCR_MAX_SIDE
+        value: "1024"
+      - key: LITE_MAX_PAGES
+        value: "10"
+      - key: OCR_THREADS
+        value: "1"
+      - key: OCR_WARM_ON_START
+        value: "false"
+      - key: DEFAULT_CURRENCY
+        value: ""
+      - key: DATE_ORDER
+        value: "DMY"
+      - key: RAPIDOCR_MODELS_DIR
+        value: ""
+      - key: RAPIDOCR_DET_MODEL
+        value: "PP-OCRv6_det_small.onnx"
+      - key: RAPIDOCR_CLS_MODEL
+        value: "ch_ppocr_mobile_v2.0_cls_mobile.onnx"
+      - key: RAPIDOCR_REC_MODEL
+        value: "PP-OCRv6_rec_small.onnx"
+      - key: RAPIDOCR_DET_LIMIT_TYPE
+        value: "min"
+      - key: RAPIDOCR_DET_LIMIT_SIDE_LEN
+        value: "736"
+      - key: OCR_LANGUAGE
+        value: "en"
+      - key: ENABLE_IMAGE_OCR
+        value: "false"
+      - key: IMAGE_OCR_PYTHON
+        value: ""
+      - key: IMAGE_OCR_MODELS_DIR
+        value: ""
+      - key: IMAGE_OCR_MAX_BYTES
+        value: "20971520"
+      - key: IMAGE_OCR_MAX_PIXELS
+        value: "10000000"
+      - key: IMAGE_OCR_MAX_DIMENSION
+        value: "8192"
+      - key: IMAGE_OCR_TIMEOUT_SECONDS
+        value: "60"
+      - key: ENABLE_EXTRACTION_GRAPH
+        value: "false"
+      - key: DOCLING_MODELS_DIR
+        value: ""
+      - key: DOCLING_NATIVE_UTILITY_FAST_PATH
+        value: "true"
+      - key: DOCLING_TABLE_STRUCTURE
+        value: "false"
+
+      # Optional text AI. Per-provider overrides use AI_<PROVIDER>_<SETTING>.
+      - key: AI_EXTRACTION
+        value: "off"
+      - key: AI_PROVIDERS
+        value: "gemini"
+      - key: AI_MODEL
+        value: ""
+      - key: AI_BASE_URL
+        value: ""
+      - key: AI_API_KEY
+        sync: false
+      - key: AI_EXTRA_BODY
+        value: ""
+      - key: AI_PREFILL
+        value: "verified"
+      - key: AI_TIMEOUT_SECONDS
+        value: "30"
+      - key: AI_MAX_RETRIES
+        value: "2"
+      - key: AI_MAX_CONCURRENCY
+        value: "2"
+      - key: AI_RESPONSE_FORMAT
+        value: "json_object"
+      - key: AI_GEMINI_MODEL
+        value: ""
+      - key: AI_GEMINI_BASE_URL
+        value: ""
+      - key: AI_GEMINI_API_KEY
+        sync: false
+      - key: AI_GEMINI_EXTRA_BODY
+        value: ""
+      - key: AI_QWEN_MODEL
+        value: ""
+      - key: AI_QWEN_BASE_URL
+        value: ""
+      - key: AI_QWEN_API_KEY
+        sync: false
+      - key: AI_QWEN_EXTRA_BODY
+        value: ""
+      - key: AI_OPENROUTER_MODEL
+        value: ""
+      - key: AI_OPENROUTER_BASE_URL
+        value: ""
+      - key: AI_OPENROUTER_API_KEY
+        sync: false
+      - key: AI_OPENROUTER_EXTRA_BODY
+        value: ""
+      - key: AI_OLLAMA_MODEL
+        value: ""
+      - key: AI_OLLAMA_BASE_URL
+        value: ""
+      - key: AI_OLLAMA_API_KEY
+        sync: false
+      - key: AI_OLLAMA_EXTRA_BODY
+        value: ""
+      - key: AI_CUSTOM_MODEL
+        value: ""
+      - key: AI_CUSTOM_BASE_URL
+        value: ""
+      - key: AI_CUSTOM_API_KEY
+        sync: false
+      - key: AI_CUSTOM_EXTRA_BODY
+        value: ""
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: DASHSCOPE_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+
+      # Legacy Qwen recovery and second opinions stay disabled
+      - key: QWEN_PROVIDER
+        value: "disabled"
+      - key: QWEN_RECOVERY_MODE
+        value: "off"
+      - key: ENABLE_QWEN_RECOVERY
+        value: "false"
+      - key: QWEN_SECOND_OPINION_MODE
+        value: "off"
+      - key: QWEN_RECOVERY_DEADLINE_SECONDS
+        value: "20"
+      - key: QWEN_CLOUD_ENABLED
+        value: "false"
+      - key: QWEN_CLOUD_ALLOW_DOCUMENT_UPLOAD
+        value: "false"
+      - key: QWEN_CLOUD_BASE_URL
+        value: ""
+      - key: QWEN_CLOUD_MODEL
+        value: ""
+      - key: QWEN_CLOUD_API_KEY
+        sync: false
+      - key: QWEN_CLOUD_TIMEOUT_SECONDS
+        value: "60"
+      - key: QWEN_CLOUD_MAX_RETRIES
+        value: "0"
+      - key: QWEN_CLOUD_ENABLE_THINKING
+        value: "false"
+      - key: QWEN_CLOUD_RESPONSE_FORMAT
+        value: "json_object"
+      - key: OLLAMA_HOST
+        value: "http://127.0.0.1:11434"
+      - key: OLLAMA_MODEL
+        value: "qwen2.5vl:7b"
+      - key: OLLAMA_TIMEOUT_SECONDS
+        value: "120"
+
+      # Email delivery
+      - key: EMAIL_PROVIDER
+        value: "brevo"
+      - key: BREVO_API_KEY
+        sync: false
+      - key: BREVO_FROM_EMAIL
+        sync: false
+      - key: BREVO_FROM_NAME
+        value: "Accounting Intelligence UAT"
+      - key: EMAIL_FROM
+        value: ""
+      - key: SMTP_HOST
+        value: "smtp.gmail.com"
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM
+        value: ""
+
       # Object storage
+      - key: DOCUMENT_STORAGE_PATH
+        value: "storage"
       - key: S3_BUCKET
         sync: false
       - key: S3_ENDPOINT_URL
         sync: false
+      - key: S3_TLS_VERIFY
+        value: "true"
+      - key: S3_CONNECT_TIMEOUT_SECONDS
+        value: "15"
+      - key: S3_READ_TIMEOUT_SECONDS
+        value: "60"
+      - key: AWS_REGION
+        value: "us-east-1"
+      - key: AWS_ENDPOINT_URL
+        sync: false
       - key: AWS_ENDPOINT_URL_S3
+        sync: false
+      - key: AWS_CA_BUNDLE
         sync: false
       - key: AWS_ACCESS_KEY_ID
         sync: false
       - key: AWS_SECRET_ACCESS_KEY
         sync: false
+      - key: AWS_SESSION_TOKEN
+        sync: false
+
+      # UAT feature flags
+      - key: ENABLE_SHARE_LINKS
+        value: "false"
+      - key: ENABLE_MYINVOIS_PREP
+        value: "false"

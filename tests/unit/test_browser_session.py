@@ -18,7 +18,9 @@ def no_db():
 @pytest.mark.parametrize("environ", [
     {**LOCAL, "APP_ENV": "production"},
     {**LOCAL, "DATABASE_URL": "postgresql://u:p@db.example.com/db"},
+    {**LOCAL, "DATABASE_URL": "postgresql://u:p@localhost,db.example.com/db"},
     {**LOCAL, "DATABASE_URL": "postgresql://u:p@localhost/db?hostaddr=203.0.113.10"},
+    {**LOCAL, "PGHOSTADDR": "203.0.113.10"},
     {**LOCAL, "S3_BUCKET": "shared"},
 ])
 def test_refuses_outside_local_development(tmp_path, environ):
