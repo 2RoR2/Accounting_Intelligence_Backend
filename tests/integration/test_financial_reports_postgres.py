@@ -5,6 +5,7 @@ import json
 import os
 from contextlib import contextmanager
 from datetime import date
+from decimal import Decimal
 from io import BytesIO, StringIO
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -532,7 +533,13 @@ def test_business_summary_endpoint_matches_the_reports_it_reuses(workspace):
     assert bank["total"] == sheet_bank
     for key, kind in (("receivables", "receivables"), ("payables", "payables")):
         ageing = _report(accountant, "ageing", {**AS_OF, "type": kind})
-        assert month["position"][key]["total"] == ageing["totals"]["total"] != "0.00"
+        owed = month["position"][key]
+        assert owed["openItems"] == ageing["totals"]["total"] != "0.00"
+        # What is owed is the control account's balance; the open items differ only by unallocated payments.
+        control = next((row["amount"] for section in balance["sections"] for row in section["accounts"]
+                        if row["code"] == ("1100" if key == "receivables" else "2000")), "0.00")  # no row: nothing posted
+        assert owed["total"] == control
+        assert Decimal(owed["unallocated"]) == Decimal(owed["openItems"]) - Decimal(owed["total"])
     # Customers and suppliers come from the documents behind the journals.
     assert body["salesByCustomer"] == body["topCustomers"] == [
         {"name": "Typed Buyer", "amount": "200.00", "entries": 1, "named": True}]
@@ -549,6 +556,26 @@ def test_business_summary_endpoint_matches_the_reports_it_reuses(workspace):
     early = accountant.get(SUMMARY, params={"date": "2026-08-05", "month": "2026-08"}).json()
     assert (early["month"]["toDate"], early["month"]["sales"], early["month"]["expenses"]) == ("2026-08-05", "200.00", "0.00")
     assert (early["today"]["sales"], early["today"]["cashIn"]) == ("200.00", "212.00")
+
+
+def test_owed_figures_follow_the_control_account_and_show_unallocated_payments(report_db):
+    db, ids = report_db
+    tenant, end = ids["tenant"], date(2026, 8, 31)
+    # 75 is still open on the customer's invoice, and a 40 receipt on account is posted but not allocated to it.
+    _record(db, ids, "2026-08-12", "Invoice on credit", ("1100", "debit", "75"), ("4000", "credit", "75"))
+    _record(db, ids, "2026-08-22", "Receipt on account", ("1010", "debit", "40"), ("1100", "credit", "40"))
+    # The same on the supplier side: a 20 payment on account that no bill has been allocated.
+    _record(db, ids, "2026-08-23", "Supplier payment on account", ("2000", "debit", "20"), ("1010", "credit", "20"))
+    owed = business_summary.build_summary(db, tenant, start=date(2026, 8, 1), end=end)["month"]["position"]
+    balance = financial._balance_sheet(db, tenant, end)
+    ledger = {row["code"]: row["amount"] for section in balance["sections"] for row in section["accounts"]}
+    open_items = {kind: financial._ageing(db, tenant, end, kind)["totals"]["total"]
+                  for kind in ("receivables", "payables")}
+    assert (ledger["1100"], open_items["receivables"]) == (35, 75)
+    assert (owed["receivables"]["total"], owed["receivables"]["openItems"], owed["receivables"]["unallocated"]) == (35, 75, 40)
+    assert owed["payables"]["total"] == ledger["2000"]
+    assert owed["payables"]["openItems"] == open_items["payables"]
+    assert owed["payables"]["unallocated"] == open_items["payables"] - ledger["2000"] > 0
 
 
 def test_business_summary_is_tenant_scoped_and_validates_input(workspace):
