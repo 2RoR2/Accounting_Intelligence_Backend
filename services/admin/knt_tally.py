@@ -131,7 +131,7 @@ def tally(db):
                   for q in quotes), len(expected_quotes) // 2)
     typed = db.execute("""SELECT document_number, payload->'fields'->>'fixtureNumber' AS fixture, document_date,
         subtotal,tax_amount,total_amount,document_type,status,journal_id FROM erp_document_headers
-        WHERE tenant_id=%s AND document_type IN ('invoice','credit-note')""", (tenant,)).fetchall()
+        WHERE tenant_id=%s AND document_type IN ('invoice','credit-note','debit-note')""", (tenant,)).fetchall()
     require_equal("Typed Sales documents", len(typed), len(sales))
     by_number = {row["fixture"]: row for row in typed}
     for doc in sales:

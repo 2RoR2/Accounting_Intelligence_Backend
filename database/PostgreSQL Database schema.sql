@@ -3991,14 +3991,24 @@ CREATE TABLE IF NOT EXISTS erp_document_files (
     created_by UUID REFERENCES users(id) ON DELETE SET NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (tenant_id, document_id, revision),
-    FOREIGN KEY (document_id, tenant_id) REFERENCES erp_document_headers(id, tenant_id) ON DELETE RESTRICT
+    -- Issued documents are never deleted (the API deletes drafts only); a local reset that removes a company's
+    -- documents takes their copies with them.
+    FOREIGN KEY (document_id, tenant_id) REFERENCES erp_document_headers(id, tenant_id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_erp_document_files_document ON erp_document_files(tenant_id, document_id, revision DESC);
 
 CREATE OR REPLACE FUNCTION erp_document_files_append_only() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+    -- Only the cascade from deleting the document itself may remove a copy (its header is already gone then).
+    IF TG_OP = 'DELETE' AND NOT EXISTS (SELECT 1 FROM erp_document_headers h
+            WHERE h.id = OLD.document_id AND h.tenant_id = OLD.tenant_id) THEN
+        RETURN OLD;
+    END IF;
     RAISE EXCEPTION 'Issued document copies are unchangeable; render a new revision instead.';
 END $$;
+ALTER TABLE erp_document_files DROP CONSTRAINT IF EXISTS erp_document_files_document_id_tenant_id_fkey;
+ALTER TABLE erp_document_files ADD CONSTRAINT erp_document_files_document_id_tenant_id_fkey
+    FOREIGN KEY (document_id, tenant_id) REFERENCES erp_document_headers(id, tenant_id) ON DELETE CASCADE;
 DROP TRIGGER IF EXISTS trg_erp_document_files_append_only ON erp_document_files;
 CREATE TRIGGER trg_erp_document_files_append_only BEFORE UPDATE OR DELETE ON erp_document_files
     FOR EACH ROW EXECUTE FUNCTION erp_document_files_append_only();

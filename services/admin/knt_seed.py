@@ -125,10 +125,8 @@ def typed_sales(api, documents, contacts, accounts):
             if kind == "credit-note":
                 params["allocations"] = [{"targetId": target["id"], "source": "typed", "amount": money(doc.total)}]
             else:
-                # The ERP has no native typed debit note. An invoice-form debit
-                # adjustment posts and ages in AR while retaining its note identity.
-                kind = "invoice"
-                fields.update(documentSubtype="debit_note", originalInvoiceId=target["id"])
+                # Plan M1: a real sales debit note that references the invoice it adds to.
+                params["relatedDocumentId"] = target["id"]
                 params["description"] = f"Debit note for {target['number']} - {doc.description}"
         actual[doc.number] = admin_call(api, "POST", f"{ERP}/{kind}",
                                         {**params, "number": doc.number, "status": "ready"})
