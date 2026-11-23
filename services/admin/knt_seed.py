@@ -23,6 +23,10 @@ ERP = "/api/erp/documents"
 PERIODS = "/api/bank/reconciliation/periods"
 
 
+# Statements match the catalog entry by account number, so the display name can read like a real account.
+KNT_BANK_LABEL = "Public Bank Current Account ••" + COMPANY["bank_account_number"][-4:]
+
+
 def require_local():
     # Load normal local configuration before checking it. No connection is made on import.
     import os
@@ -325,7 +329,8 @@ def seed(connect, folder, password=None):
             # Reuse the existing bank catalogue setup and ledger account lookup.
             setup = Seeder(api, "trading", MONTHS, None)
             accounts = setup.accounts()
-            bank_account = setup.ensure_bank_account(accounts, COMPANY["bank_account_number"])
+            bank_account = setup.ensure_bank_account(accounts, COMPANY["bank_account_number"],
+                                                         label=KNT_BANK_LABEL, bank_name="Public Bank Berhad")
             periods = {p["periodCode"]: p["id"] for p in api.call("local_admin", "GET", "/api/ledger/periods").json()}
             contacts = {}
             for code, (kind, name, account, address) in CONTACTS.items():
