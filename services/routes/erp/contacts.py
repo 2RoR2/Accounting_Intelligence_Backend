@@ -15,6 +15,7 @@ from the list and from new documents; matching still sees it, so earlier documen
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from main import *  # noqa: F401,F403  (Request, HTTPException, connect)
@@ -151,6 +152,7 @@ def create_contact(data: ContactInput, request: Request):
     values = _values(data)
     with connect() as db:
         _duplicate_name(db, user["tenant_id"], data.kind, name)
+        values["contact_code"] = _contact_code(db, user["tenant_id"], data.kind, name, values["contact_code"])
         columns = [column, *DETAIL_COLUMNS, "fields"]
         params = [name, *(values[c] for c in DETAIL_COLUMNS), Jsonb(data.fields)]
         account = _requested_expense_account(db, user["tenant_id"], data)
@@ -164,6 +166,27 @@ def create_contact(data: ContactInput, request: Request):
             RETURNING *""", (user["tenant_id"], *params)).fetchone()
         audit(db, user, f"contact.{data.kind}_created", table, {"id": str(row["id"]), "name": name, "source": "contacts"})
     return _dto(data.kind, row, account)
+
+
+def _contact_code(db, tenant_id, kind, name, wanted, *, exclude_id=None):
+    """Plan M4: the short code in document names. Unique per company (per list); typed codes are upper-cased and
+    checked, an empty one is suggested from the name. Employees keep whatever they had."""
+    if kind not in {"supplier", "customer"}:
+        return wanted
+    from services.naming import suggest_contact_code
+    table = TABLES[kind][0]
+    db.execute("SELECT pg_advisory_xact_lock(hashtext('contact_code:' || %s::text))", (str(tenant_id),))
+    taken = {r["code"] for r in db.execute(f"""SELECT upper(btrim(contact_code)) AS code FROM {table}
+        WHERE tenant_id=%s AND contact_code IS NOT NULL AND (%s::uuid IS NULL OR id<>%s::uuid)""",
+                                             (tenant_id, exclude_id, exclude_id)).fetchall()}
+    if not wanted or not str(wanted).strip():
+        return suggest_contact_code(name, taken)
+    code = re.sub(r"\s+", "", str(wanted)).upper()
+    if not re.fullmatch(r"[A-Z0-9-]{1,12}", code):
+        raise HTTPException(422, "A contact code is 1-12 letters, digits or dashes.")
+    if code in taken:
+        raise HTTPException(409, f"Another {kind} already uses the code {code}.")
+    return code
 
 
 def get_contact(contact_id: str, request: Request):
@@ -189,6 +212,8 @@ def update_contact(contact_id: str, data: ContactInput, request: Request):
         table, column = TABLES[kind]
         if name != row[column]:
             _duplicate_name(db, user["tenant_id"], kind, name, exclude_id=row["id"])
+        values["contact_code"] = _contact_code(db, user["tenant_id"], kind, name, values["contact_code"] or row.get("contact_code"),
+                                               exclude_id=row["id"])
         columns = [column, *DETAIL_COLUMNS, "fields"]
         params = [name, *(values[c] for c in DETAIL_COLUMNS), Jsonb(data.fields)]
         account = _requested_expense_account(db, user["tenant_id"], data)

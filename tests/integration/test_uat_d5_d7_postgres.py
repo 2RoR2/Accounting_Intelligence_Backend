@@ -732,6 +732,11 @@ def test_post_allocated_bank_payment(company, direction, category, control_code)
         purpose = "payable" if is_out else "receivable"
         db.execute("INSERT INTO erp_posting_accounts(tenant_id,purpose,account_id) VALUES (%s,%s,%s)",
                    (tenant, purpose, special))
+    if category == "accounts_receivable":
+        # Plan M2: a captured document never posts as a sale; sales are typed under Sales.
+        refused = request("POST", f"{SCANNED}/{posted_record}/post", json={})
+        assert refused.status_code == 409 and "purchases only" in refused.json()["detail"]
+        return
     ok(request("POST", f"{SCANNED}/{posted_record}/post", json={}))
     with connect() as db:
         db.execute("DELETE FROM erp_posting_accounts WHERE tenant_id=%s AND purpose=%s", (tenant, purpose))

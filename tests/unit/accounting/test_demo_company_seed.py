@@ -64,9 +64,9 @@ def test_seed_command_refuses_a_remote_database_before_connecting(capsys):
 
 def test_credentials_are_printed_before_a_later_step_fails(packs, capsys):
     from unittest.mock import MagicMock
-    args = argparse.Namespace(pack='trading', month=None, pack_root=str(packs['trading'].parent), prompt_password=False,
+    args = argparse.Namespace(pack='fnb', month=None, pack_root=str(packs['fnb'].parent), prompt_password=False,
                               reset_passwords=False, timeout_minutes=1, report=None)
-    passwords = [('accountant', 'accountant@trading.demo.test', 'Generated-Secret-1a!')]
+    passwords = [('accountant', 'accountant@fnb.demo.test', 'Generated-Secret-1a!')]
     with patch.dict('os.environ', LOCAL, clear=True), \
          patch('database.connection.connect', return_value=MagicMock()), \
          patch.object(main, 'check_schema_compatibility'), patch.object(main, 'apply_compatibility_migrations'), \
@@ -76,6 +76,12 @@ def test_credentials_are_printed_before_a_later_step_fails(packs, capsys):
     out = capsys.readouterr()
     assert 'Generated-Secret-1a!' in out.out and 'sessions failed' in out.err
     assert out.out.count('Generated-Secret-1a!') == 1
+
+
+def test_legacy_knt_pack_cannot_load_as_generic_demo(packs):
+    with patch.dict('os.environ', LOCAL, clear=True):
+        with pytest.raises(demo_company.SeedError, match='seed-knt or reset-knt'):
+            demo_company.seed('trading', pack_root=packs['trading'].parent)
 
 
 def test_upload_kind_follows_the_pack_manifest():

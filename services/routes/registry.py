@@ -6,6 +6,7 @@ from .erp.routes import register as register_erp
 from .queue.routes import register as register_queue
 from .reporting.routes import register as register_reporting
 from .reporting.financial import register as register_financial_reporting
+from .reporting.evaluation import register as register_evaluation
 from .review.routes import register as register_review
 from .security.routes import register as register_security
 from .validation.routes import register as register_validation
@@ -24,6 +25,7 @@ def register_component_routes(router, handlers):
     register_queue(router, handlers)
     register_reporting(router, handlers)
     register_financial_reporting(router)
+    register_evaluation(router)
     register_review(router, handlers)
     register_security(router, handlers)
     register_validation(router, handlers)

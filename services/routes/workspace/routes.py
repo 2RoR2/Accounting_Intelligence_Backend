@@ -4,14 +4,31 @@ from main import _lock_upload_identity, _processing_error, _lock_workspace_docum
 from psycopg.errors import UniqueViolation
 
 
+ProfileText = Annotated[str, StringConstraints(strip_whitespace=True, max_length=200)]
+# Plan M: the identity printed on every issued document and used to tell sales from purchases (M2).
+PROFILE_KEYS = ("tin", "sstNumber", "address", "phone", "email", "bankName", "bankAccountName", "bankAccountNumber",
+                "paymentTerms", "documentTerms")
+
+
 class CompanyProfileInput(BaseModel):
-    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)] | None = None
+    registrationNumber: Annotated[str, StringConstraints(strip_whitespace=True, max_length=60)] | None = None
+    tin: ProfileText | None = None
+    sstNumber: ProfileText | None = None
+    address: Annotated[str, StringConstraints(strip_whitespace=True, max_length=600)] | None = None
+    phone: ProfileText | None = None
+    email: ProfileText | None = None
+    bankName: ProfileText | None = None
+    bankAccountName: ProfileText | None = None
+    bankAccountNumber: ProfileText | None = None
+    paymentTerms: ProfileText | None = None
+    documentTerms: Annotated[str, StringConstraints(strip_whitespace=True, max_length=2000)] | None = None
 
 
 def company_profile(request: Request):
     user = require_workspace_user(request, {"local_admin"})
     with connect() as db:
-        company = db.execute("""SELECT tenant_code,name,registration_number,admin_email
+        company = db.execute("""SELECT tenant_code,name,registration_number,admin_email,profile
             FROM tenants WHERE id=%s""", (user["tenant_id"],)).fetchone()
         if not company:
             raise HTTPException(404, "Company profile not found.")
@@ -21,27 +38,46 @@ def company_profile(request: Request):
             UNION ALL SELECT BTRIM(currency) FROM bank_transactions WHERE tenant_id=%s AND status<>'ignored'
             ) used WHERE currency ~ '^[A-Z]{3}$' ORDER BY currency""",
             (user["tenant_id"], user["tenant_id"])).fetchall()
+    profile = company.get("profile") or {}
     return {"companyCode": company["tenant_code"], "name": company["name"],
             "registrationNumber": company["registration_number"], "adminEmail": company["admin_email"],
-            "reportingCurrency": "MYR", "observedCurrencies": [row["currency"] for row in currencies]}
+            "reportingCurrency": "MYR", "observedCurrencies": [row["currency"] for row in currencies],
+            **{key: profile.get(key) for key in PROFILE_KEYS}}
 
 
 def update_company_profile(data: CompanyProfileInput, request: Request):
     user = require_workspace_user(request, {"local_admin"})
+    changes = data.model_dump(exclude_unset=True)
     try:
         with connect() as db:
-            company = db.execute("SELECT name FROM tenants WHERE id=%s FOR UPDATE", (user["tenant_id"],)).fetchone()
+            company = db.execute("SELECT name,registration_number,profile FROM tenants WHERE id=%s FOR UPDATE",
+                                 (user["tenant_id"],)).fetchone()
             if not company:
                 raise HTTPException(404, "Company profile not found.")
-            if company["name"] != data.name:
+            changed = []
+            if changes.get("name") and company["name"] != data.name:
                 db.execute("UPDATE tenants SET name=%s WHERE id=%s", (data.name, user["tenant_id"]))
+                changed.append("name")
+            if "registrationNumber" in changes and data.registrationNumber and data.registrationNumber != company["registration_number"]:
+                db.execute("UPDATE tenants SET registration_number=%s WHERE id=%s", (data.registrationNumber, user["tenant_id"]))
+                changed.append("registrationNumber")
+            profile = dict(company["profile"] or {})
+            for key in PROFILE_KEYS:
+                if key in changes and profile.get(key) != (changes[key] or None):
+                    profile[key] = changes[key] or None
+                    changed.append(key)
+            if any(key in PROFILE_KEYS for key in changed):
+                from psycopg.types.json import Jsonb
+                db.execute("UPDATE tenants SET profile=%s WHERE id=%s", (Jsonb(profile), user["tenant_id"]))
+            if changed:
                 db.execute("""INSERT INTO audit_logs(tenant_id,user_id,user_name,role,action,resource,details)
                     VALUES (%s,%s,%s,%s,'company.profile_updated',%s,%s)""",
                     (user["tenant_id"], user["id"], user["name"], user["role"], str(user["tenant_id"]),
-                     "Company name updated."))
+                     "Company profile updated: " + ", ".join(changed)))
+            name = data.name if changes.get("name") else company["name"]
     except UniqueViolation:
-        raise HTTPException(409, "A company with that name already exists.") from None
-    return {"name": data.name}
+        raise HTTPException(409, "A company with that name or registration number already exists.") from None
+    return {"name": name, **{key: profile.get(key) for key in PROFILE_KEYS}}
 
 def workspace_navigation(request: Request):
     """Return the enabled navigation modules persisted for the signed-in role."""
