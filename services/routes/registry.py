@@ -9,6 +9,7 @@ from .reporting.financial import register as register_financial_reporting
 from .reporting.business_summary import register as register_business_summary
 from .reporting.statement import register as register_statement
 from .reporting.evaluation import register as register_evaluation
+from .reporting.workload import register as register_workload
 from .review.routes import register as register_review
 from .security.routes import register as register_security
 from .validation.routes import register as register_validation
@@ -32,6 +33,7 @@ def register_component_routes(router, handlers):
     register_business_summary(router)
     register_statement(router)
     register_evaluation(router)
+    register_workload(router)
     register_review(router, handlers)
     register_security(router, handlers)
     register_validation(router, handlers)
