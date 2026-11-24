@@ -56,7 +56,7 @@ def exception_cause(code, field=None, message=''):
         return 'MODEL_DISAGREEMENT'
     if field == 'category' or code == 'PROFILE-001':
         return 'POLICY_REQUIREMENT'
-    if code in {'EX-003', 'EX-004', 'EX-005', 'EX-006'} or code.startswith('BR-CO') or code.endswith(('-LINE_MATH', '-SUBTOTAL', '-TOTAL', '-DATES', '-SIGN')):
+    if code in {'EX-003', 'EX-004', 'EX-005', 'EX-006', 'AMOUNT-PLAUSIBLE'} or code.startswith('BR-CO') or code.endswith(('-LINE_MATH', '-SUBTOTAL', '-TOTAL', '-DATES', '-SIGN')):
         return 'ARITHMETIC_FAILURE'
     if code == 'EX-007':
         return 'POSSIBLE_DUPLICATE'

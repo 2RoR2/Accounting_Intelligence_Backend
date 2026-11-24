@@ -285,10 +285,13 @@ def _bank_transaction_anomaly(db, row, bank_account_ref):
 
 
 BANK_TRANSACTION_READ = """SELECT t.*,i.source_bank_account_ref,s.id AS settlement_id,COALESCE(allocation.allocated,0) AS allocated,
-        h.id AS recorded_id,h.document_number AS recorded_number,h.document_type AS recorded_type
+        h.id AS recorded_id,h.document_number AS recorded_number,h.document_type AS recorded_type,
+        (manual.id IS NOT NULL) AS recorded_by_match
     FROM bank_transactions t JOIN bank_imports i ON i.id=t.import_id AND i.tenant_id=t.tenant_id
+    LEFT JOIN bank_document_matches manual ON manual.tenant_id=t.tenant_id AND manual.bank_transaction_id=t.id
+        AND manual.unmatched_at IS NULL AND manual.document_id=t.recorded_document_id
     LEFT JOIN erp_document_headers h ON h.id=t.recorded_document_id AND h.tenant_id=t.tenant_id
-        AND h.status<>'void' AND h.document_type IN ('money-in','money-out')
+        AND h.status<>'void' AND (h.document_type IN ('money-in','money-out') OR manual.id IS NOT NULL)
     LEFT JOIN settlements s ON s.tenant_id=t.tenant_id AND s.source_type='bank_import'
         AND s.source_id=t.id AND s.status='recorded'
     LEFT JOIN LATERAL (
@@ -381,7 +384,9 @@ def _bank_transaction_response(db, row, records_by_tenant, user):
                           and row["recorded_id"] is None,
         "recordedDocumentId": str(row['recorded_id']) if row['recorded_id'] else None,
         "recordedDocumentNumber": row['recorded_number'],
-        "recordedDocumentType": row['recorded_type']})
+        "recordedDocumentType": row['recorded_type'],
+        # True for a payment matched by hand (it can be unmatched); false for a money document recorded from the line.
+        "recordedByMatch": bool(row.get('recorded_by_match'))})
     if row['status'] in {"imported", "needs_review", "proposed"} and 0 < allocated < amount:
         result.update(status="partially_matched", matchStatus="partially_matched")
     return result
@@ -738,8 +743,13 @@ def record_bank_expense(transaction_id: str, data: BankExpenseInput, request: Re
         catalog_id = (_statement_catalog_account(db, bank, data.bankAccountId)
                       if data.bankAccountId is not None else None)
         if bank["recorded_document_id"]:
-            document = db.execute("""SELECT id,document_number,journal_id FROM erp_document_headers
+            document = db.execute("""SELECT id,document_number,journal_id,document_type FROM erp_document_headers
                 WHERE id=%s AND tenant_id=%s""", (bank["recorded_document_id"], tenant_id)).fetchone()
+            # The idempotent replay is only for a money document recorded from this line, never a matched voucher.
+            if not document or document["document_type"] not in {"money-in", "money-out"}:
+                number = document["document_number"] if document else "a document"
+                raise HTTPException(409, f"This bank line is matched to {number}. Unmatch it first to record it as an "
+                                         "expense or income.")
         else:
             _require_unmatched_bank_line(bank)
             settlement = _existing_bank_settlement(db, bank, lock=True)
@@ -1115,6 +1125,162 @@ def clear_bank_transaction_coding(transaction_id: str, request: Request):
     return code_bank_transaction(transaction_id, BankCodingInput(decision="cleared", reason="Coding cleared by reviewer"), request)
 """Bank API route registrations."""
 
+# A bank line can be the bank's copy of a money document that was already recorded and posted (a payment voucher,
+# a payment received, money in/out, a transfer). Matching links the two; nothing is allocated or posted again
+# (bug f, 24 Nov demo: a bill settled by a PV could not be reconciled with its bank line).
+RECORDED_TYPES = {
+    "money_in": ("payment", "money-in", "purchase-refund", "bank-transfer"),
+    "money_out": ("purchase-payment", "money-out", "refund", "bank-transfer"),
+}
+
+
+class MatchDocumentInput(BaseModel):
+    documentId: str = Field(min_length=1, max_length=64)
+
+
+def _line_account(db, bank):
+    """The company bank account (catalog id) of the line's statement, or None when it cannot be told."""
+    try:
+        return str(_statement_catalog_account(db, bank))
+    except HTTPException:
+        return None
+
+
+def _recorded_document_problem(db, bank, doc, line_account):
+    """Why this money document cannot be the bank line's record, or None."""
+    amount = abs(Decimal(bank["signed_amount_decimal"]))
+    if doc["status"] != "ready":
+        return "Only an issued (posted) money document can be matched."
+    if doc["document_type"] not in RECORDED_TYPES.get(bank["direction"], ()):
+        return "Money in must match a receipt or money-in document; money out a payment voucher or money-out document."
+    if doc["currency"] != bank["currency"]:
+        return "The document and the bank line are in different currencies."
+    if Decimal(doc["total_amount"]) != amount:
+        return f"The document amount {doc['total_amount']} differs from the bank line amount {amount}."
+    if doc["document_type"] == "bank-transfer":
+        target = ((doc.get("payload") or {}).get("fields") or {}).get("toBankAccountId")
+        source = str(doc["bank_account_id"]) if doc["bank_account_id"] else None
+        account = (str(target) if target else None) if bank["direction"] == "money_in" else source
+    else:
+        account = str(doc["bank_account_id"]) if doc["bank_account_id"] else None
+    # Both sides must name a bank account, and the same one (review of #52): a cash voucher or a voucher without a bank
+    # account must never be taken as the bank's copy of a statement line.
+    if not line_account:
+        return "The bank account of this statement line is not known. Link the statement to a bank account first."
+    if not account:
+        return ("This document names no bank account (it may have been paid in cash), so it cannot be this bank line's "
+                "copy.")
+    if account != line_account:
+        return "The document was paid through another bank account."
+    linked = db.execute("""SELECT id FROM bank_transactions WHERE tenant_id=%s AND recorded_document_id=%s AND id<>%s LIMIT 1""",
+                        (bank["tenant_id"], doc["id"], bank["id"])).fetchone()
+    if linked:
+        return "This document is already matched to another bank line."
+    return None
+
+
+def search_recorded_documents(transaction_id: str, request: Request, q: str = ""):
+    """Issued money documents this bank line could be the bank's copy of: same amount and nearest date first."""
+    user = require_workspace_user(request, {"local_admin", "accountant"})
+    transaction_id = _uuid_or_422(transaction_id, "transaction id")
+    with connect() as db:
+        bank = db.execute("""SELECT t.*,i.source_bank_account_ref FROM bank_transactions t
+            JOIN bank_imports i ON i.id=t.import_id AND i.tenant_id=t.tenant_id
+            WHERE t.id=%s AND t.tenant_id=%s""", (transaction_id, user["tenant_id"])).fetchone()
+        if not bank:
+            raise HTTPException(404, "Bank transaction not found.")
+        if not bank["direction"] or bank["signed_amount_decimal"] is None or not bank["posted_date"]:
+            return []
+        term = f"%{q.strip()}%"
+        rows = db.execute("""SELECT h.id,h.tenant_id,h.document_type,h.document_number,h.document_date,h.contact_name,
+                h.currency,h.total_amount,h.status,h.bank_account_id,h.payload,h.reference_no
+            FROM erp_document_headers h
+            WHERE h.tenant_id=%s AND h.status='ready' AND h.document_type = ANY(%s) AND h.currency=%s
+              AND (%s='' OR h.document_number ILIKE %s OR COALESCE(h.contact_name,'') ILIKE %s
+                   OR COALESCE(h.reference_no,'') ILIKE %s)
+              AND NOT EXISTS (SELECT 1 FROM bank_transactions b WHERE b.tenant_id=h.tenant_id AND b.recorded_document_id=h.id)
+            ORDER BY (h.total_amount = %s) DESC, abs(h.document_date - %s::date), h.document_date DESC LIMIT 30""",
+            (user["tenant_id"], list(RECORDED_TYPES[bank["direction"]]), bank["currency"], q.strip(), term, term, term,
+             abs(bank["signed_amount_decimal"]), bank["posted_date"])).fetchall()
+        line_account = _line_account(db, bank)
+        return [{"documentId": str(r["id"]), "documentType": r["document_type"], "number": r["document_number"],
+                 "documentDate": str(r["document_date"]), "contactName": r["contact_name"], "currency": r["currency"],
+                 "amount": money(r["total_amount"]), "reference": r["reference_no"],
+                 "problem": _recorded_document_problem(db, bank, r, line_account)} for r in rows]
+
+
+def match_recorded_document(transaction_id: str, data: MatchDocumentInput, request: Request):
+    """Close a bank line as the bank's copy of an issued money document. Posts nothing; the document already did."""
+    user = require_workspace_user(request, {"local_admin", "accountant"})
+    tenant_id = user["tenant_id"]
+    transaction_id = _uuid_or_422(transaction_id, "transaction id")
+    document_id = _uuid_or_422(data.documentId, "document id")
+    with connect() as db:
+        bank = _lock_statement_line(db, tenant_id, transaction_id)
+        _require_unmatched_bank_line(bank)
+        if bank["recorded_document_id"]:
+            raise HTTPException(409, "This bank line is already linked to a money document.")
+        if db.execute("SELECT 1 FROM current_bank_coding WHERE tenant_id=%s AND bank_transaction_id=%s",
+                      (tenant_id, transaction_id)).fetchone():
+            raise HTTPException(409, "Clear the bank line's coding before matching it to a document.")
+        settlement = _existing_bank_settlement(db, bank, lock=True)
+        if settlement and settlement_allocated(db, tenant_id, settlement["id"]):
+            raise HTTPException(409, "This bank line already has records matched to it. Undo those matches first.")
+        doc = db.execute("SELECT * FROM erp_document_headers WHERE tenant_id=%s AND id=%s FOR UPDATE",
+                         (tenant_id, document_id)).fetchone()
+        if not doc:
+            raise HTTPException(404, "Document not found.")
+        problem = _recorded_document_problem(db, bank, doc, _line_account(db, bank))
+        if problem:
+            raise HTTPException(409, problem)
+        mark_bank_line_matched(db, bank, document_id=doc["id"])
+        # How the link was made: a manual match can be undone with a reason; a line recorded as a money document cannot.
+        db.execute("""INSERT INTO bank_document_matches(tenant_id,bank_transaction_id,document_id,matched_by)
+            VALUES (%s,%s,%s,%s)""", (tenant_id, transaction_id, doc["id"], user["id"]))
+        _bank_audit(db, user, "bank.match_recorded_document", transaction_id,
+                    {"documentId": str(doc["id"]), "documentType": doc["document_type"], "number": doc["document_number"],
+                     "amount": money(doc["total_amount"])})
+    return {"status": "matched", "transactionId": str(transaction_id), "documentId": str(doc["id"]),
+            "documentType": doc["document_type"], "number": doc["document_number"]}
+
+
+class UnmatchDocumentInput(BaseModel):
+    reason: str = Field(min_length=5, max_length=1000)
+
+
+def unmatch_recorded_document(transaction_id: str, data: UnmatchDocumentInput, request: Request):
+    """Undo a manual match (review of #52: with two RM 500 vouchers a wrong pick must be fixable). Nothing was posted by
+    the match, so nothing is reversed: the line returns to imported and the document is free to match again. A line
+    whose money document was created from it has no match row and stays fixed."""
+    user = require_workspace_user(request, {"local_admin", "accountant"})
+    tenant_id = user["tenant_id"]
+    transaction_id = _uuid_or_422(transaction_id, "transaction id")
+    reason = data.reason.strip()
+    if len(reason) < 5:
+        raise HTTPException(422, "Say why the match is wrong (at least 5 characters).")
+    try:
+        with connect() as db:
+            bank = _lock_statement_line(db, tenant_id, transaction_id)
+            match = db.execute("""SELECT * FROM bank_document_matches WHERE tenant_id=%s AND bank_transaction_id=%s
+                AND unmatched_at IS NULL FOR UPDATE""", (tenant_id, transaction_id)).fetchone()
+            if not match or str(match["document_id"]) != str(bank["recorded_document_id"]):
+                raise HTTPException(409, "Only a line matched by hand to an existing payment can be unmatched. A line "
+                                         "recorded as a money document is undone by voiding that document.")
+            db.execute("""UPDATE bank_transactions SET status='imported',recorded_document_id=NULL
+                WHERE id=%s AND tenant_id=%s""", (transaction_id, tenant_id))
+            db.execute("""UPDATE bank_document_matches SET unmatched_at=now(),unmatched_by=%s,unmatch_reason=%s
+                WHERE id=%s""", (user["id"], reason, match["id"]))
+            number = db.execute("SELECT document_number FROM erp_document_headers WHERE id=%s AND tenant_id=%s",
+                                (match["document_id"], tenant_id)).fetchone()
+            _bank_audit(db, user, "bank.unmatch_recorded_document", transaction_id,
+                        {"documentId": str(match["document_id"]), "number": number and number["document_number"],
+                         "reason": reason})
+    except RaiseException as error:
+        # The period lock (a completed reconciliation period) or the bank guard refused it: say which.
+        raise HTTPException(409, error.diag.message_primary or "This bank line cannot be unmatched.") from error
+    return {"status": "imported", "transactionId": str(transaction_id), "documentId": str(match["document_id"])}
+
+
 def register(router, handlers):
     router.add_api_route('/api/bank/transactions', list_bank_transactions, methods=['GET'])
     router.add_api_route('/api/bank/imports', list_bank_imports, methods=['GET'])
@@ -1124,6 +1290,9 @@ def register(router, handlers):
     router.add_api_route('/api/bank/reconciliation/candidates', create_reconciliation_candidate, methods=['POST'], status_code=201)
     router.add_api_route('/api/bank/transactions/{transaction_id}/match-search', search_bank_match_records, methods=['GET'])
     router.add_api_route('/api/bank/transactions/{transaction_id}/match-many', match_bank_transaction_many, methods=['POST'], status_code=201)
+    router.add_api_route('/api/bank/transactions/{transaction_id}/recorded-documents', search_recorded_documents, methods=['GET'])
+    router.add_api_route('/api/bank/transactions/{transaction_id}/match-document', match_recorded_document, methods=['POST'])
+    router.add_api_route('/api/bank/transactions/{transaction_id}/unmatch-document', unmatch_recorded_document, methods=['POST'])
     router.add_api_route('/api/bank/reconciliation/suggestions', list_reconciliation_suggestions, methods=['GET'])
     router.add_api_route('/api/bank/reconciliation/decisions', decide_reconciliation, methods=['POST'], status_code=201)
     router.add_api_route('/api/bank/reconciliation/candidates/{candidate_id}/decision', decide_reconciliation_candidate, methods=['POST'], status_code=201)

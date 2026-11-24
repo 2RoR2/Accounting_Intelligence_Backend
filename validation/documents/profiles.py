@@ -28,6 +28,37 @@ PROFILES = {
 def _money(value):
     return Decimal(str(value)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
+
+# Printed amounts that reduce a document's total. When any is present, a subtotal above the total can be genuine.
+_REDUCTIONS = ('discount', 'allowances', 'prepaid', 'rounding', 'amount_paid')
+AMOUNT_PLAUSIBLE = 'AMOUNT-PLAUSIBLE'
+
+
+def plausibility_errors(values, issue, kind=None):
+    """Compare printed amounts with each other; nothing is calculated (no tax rate is applied or assumed).
+
+    A reading can find every amount on the page and still put them in the wrong fields, for example a printed
+    tax of 206.00 with a total of 20.60. Each value is "read from the document", so only a comparison between
+    them shows the mistake. Both fields are flagged so the reviewer checks them side by side.
+    """
+    def amount(key):
+        try:
+            return _money(values[key]) if values.get(key) not in (None, '') else None
+        except (ArithmeticError, ValueError, TypeError):
+            return None
+    tax, total, subtotal = amount('tax'), amount('total'), amount('subtotal')
+    if tax is not None and total is not None and total > 0 and tax > total:
+        message = (f'The printed tax ({tax}) is larger than the printed total ({total}). Tax is part of the total, '
+                   'so one of them was probably read wrong or the two were swapped. Check both on the document.')
+        issue(AMOUNT_PLAUSIBLE, 'tax', message)
+        issue(AMOUNT_PLAUSIBLE, 'total', message)
+    if (subtotal is not None and total is not None and total > 0 and subtotal > total + Decimal('0.05')
+            and not any(amount(key) for key in _REDUCTIONS)):
+        message = (f'The pre-tax amount ({subtotal}) is larger than the total ({total}) and no discount, allowance or '
+                   'prepayment was read. Check whether the amounts were read in the right fields.')
+        issue(AMOUNT_PLAUSIBLE, 'subtotal', message)
+        issue(AMOUNT_PLAUSIBLE, 'total', message)
+
 def validate_profile(kind, values, items, *, supporting=None):
     values = values or {}
     supporting = supporting or {}
@@ -70,6 +101,7 @@ def validate_profile(kind, values, items, *, supporting=None):
             issue('NOTE-LINK', 'invoice', 'Credit/debit note must link to an original invoice.', 'high')
     if kind == 'receipt' and values.get('refund_indicator') in (True, 'true', 'TRUE', 'refund'):
         check('RCP-007', 'Refund treatment required; ordinary expense treatment is blocked.', available=False, required=True)
+    plausibility_errors(values, issue, kind)
     if values.get('amount_paid') is not None and values.get('outstanding_amount') is not None and values.get('total') is not None:
         expected = _money(values['total']) - _money(values['amount_paid'])
         if abs(expected - _money(values['outstanding_amount'])) > Decimal('0.01'):

@@ -315,7 +315,9 @@ class FieldCorrectionTests(unittest.TestCase):
         self.db.connection.execute('DELETE FROM field_predictions WHERE id=?', ('current-a-invoice',))
         self.db.connection.commit()
         before = self.db.snapshot()
-        self.assertEqual(self.correct().status_code, 404)
+        # A missing field a reviewer may add (invoice, due, terms...) is created with the correction now (24 Nov
+        # demo fix, tested in tests/integration/test_audit_fixes_postgres.py); any other missing field stays a 404.
+        self.assertEqual(self.correct(field='late_fee', value='1.00').status_code, 404)
         self.unchanged(before)
 
     def test_text_value_is_parameterized(self):
