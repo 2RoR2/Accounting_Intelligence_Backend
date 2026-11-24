@@ -51,6 +51,9 @@ def workspace():
               CREATE TABLE users(id uuid,tenant_id uuid,role text);
               CREATE TABLE notifications(tenant_id uuid,user_id uuid,type text,title text,message text,resource text);
               CREATE TABLE standardised_records(id uuid DEFAULT gen_random_uuid(),document_id uuid,tenant_id uuid,category text,vendor_id uuid,vendor_match_confidence numeric,supplier_name text,invoice_number text,reference_number text,buyer_name text,invoice_date date,due_date date,currency text,total_amount numeric,subtotal numeric,tax_amount numeric,discount numeric,validation_status text,snapshot jsonb,created_by uuid,created_at timestamptz DEFAULT now());
+              -- Columns the duplicate-reference read uses (validation/documents/references.py invoice_references).
+              ALTER TABLE documents ADD COLUMN uploaded_at timestamptz DEFAULT now();
+              ALTER TABLE standardised_records ADD COLUMN record_code text, ADD COLUMN revision_number int DEFAULT 1;
             ''')
             db.execute("INSERT INTO documents VALUES (%s,%s,%s,NULL,'receipt','accounts_payable','extracted',3,1,'PUBLIC-TEST',now())", (document,tenant,accountant))
             db.execute('INSERT INTO raw_extractions VALUES (%s,%s,%s,true,1)', (extraction,document,Jsonb(raw)))
