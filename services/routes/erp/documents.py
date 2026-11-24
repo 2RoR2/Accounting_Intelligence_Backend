@@ -41,7 +41,8 @@ QUOTE_TRANSITIONS = {"draft": {"sent", "void"}, "pending_approval": {"draft", "s
                      "sent": {"accepted", "expired", "void"}, "accepted": {"void"},
                      "expired": {"sent", "void"}, "void": set()}
 # Documents the company prints and sends: edited only as drafts; issuing stores an unchangeable PDF revision.
-PRINTED_TYPES = {"quotation", "invoice", "credit-note", "debit-note", "payment", "purchase-payment", "delivery-order"}
+PRINTED_TYPES = {"quotation", "sales-order", "invoice", "credit-note", "debit-note", "payment", "purchase-payment",
+                 "delivery-order"}
 # A note must reference the document it corrects (credit notes settle it; debit notes add to what is owed).
 NOTE_TARGETS = {"credit-note": ("invoice", "debit-note"), "debit-note": ("invoice",),
                 "purchase-credit-note": ("bill", "purchase-debit-note"), "purchase-debit-note": ("bill",)}
@@ -158,6 +159,12 @@ class DocumentPatch(BaseModel):
     tags: list[str] | None = Field(default=None, max_length=100)
     fields: dict[str, Any] | None = None
     relatedDocumentId: str | None = None
+
+
+class DeliveredInput(BaseModel):
+    receivedBy: str = Field(min_length=1, max_length=200)
+    receivedOn: date
+    note: str | None = Field(default=None, max_length=1000)
 
 
 class TransitionInput(BaseModel):
@@ -429,10 +436,11 @@ def _contact_for_print(db, row) -> dict:
         return {"name": row["contact_name"] or ""}
     address = "\n".join(x for x in [c.get("address"), " ".join(p for p in [c.get("postcode"), c.get("city")] if p), c.get("state")] if x)
     return {"name": row["contact_name"] or c["name"], "code": c.get("contact_code"), "registrationNumber": c.get("registration_number"),
-            "tin": (c.get("fields") or {}).get("tin"), "address": address, "phone": c.get("phone"), "email": c.get("email")}
+            "tin": (c.get("fields") or {}).get("tin"), "sstNumber": (c.get("fields") or {}).get("sstNumber"),
+            "address": address, "phone": c.get("phone"), "email": c.get("email")}
 
 
-CONTACT_LABELS = {"quotation": "Quotation for", "invoice": "Bill to", "credit-note": "Credit to", "debit-note": "Bill to",
+CONTACT_LABELS = {"quotation": "Quotation for", "sales-order": "Order for", "invoice": "Bill to", "credit-note": "Credit to", "debit-note": "Bill to",
                   "payment": "Received from", "purchase-payment": "Pay to", "delivery-order": "Deliver to"}
 
 
@@ -463,7 +471,10 @@ def _print_data(db, row, *, revision=None, issued_at=None) -> dict:
             "subtotal": money(Decimal(row["subtotal"]) + discount), "discountTotal": money(discount), "taxAmount": money(row["tax_amount"]),
             "total": money(row["total_amount"]), "allocations": allocations, "notes": row["description"] or fields.get("notes"),
             "terms": fields.get("terms"), "paymentMethod": fields.get("paymentMethod"), "revision": revision,
-            "issuedAt": issued_at}
+            "issuedAt": issued_at,
+            # A quotation's due_date is how long its prices hold.
+            "validUntil": str(row["due_date"]) if row["due_date"] and row["document_type"] == "quotation" else None,
+            "attention": _text_field(fields, "attention"), "deliveryAddress": _text_field(fields, "deliveryAddress")}
     related = payload.get("relatedDocumentId") or payload.get("transferFrom")
     if related:
         target = db.execute("SELECT document_type,document_number FROM erp_document_headers WHERE id=%s AND tenant_id=%s",
@@ -472,6 +483,11 @@ def _print_data(db, row, *, revision=None, issued_at=None) -> dict:
             data["relatedNumber"] = target["document_number"]
             data["relatedLabel"] = "Original " + target["document_type"].replace("-", " ")
     return data
+
+
+def _text_field(fields: dict, key: str) -> str | None:
+    value = fields.get(key)
+    return (value.strip() or None) if isinstance(value, str) else None
 
 
 def _unit_price(value) -> str:
@@ -1064,6 +1080,9 @@ def _copy(db, user, source, target_type, link_type):
         payload.pop("relatedDocumentId", None)
     payload.pop("transferFrom", None)
     payload.pop("duplicateFrom", None)
+    if isinstance(payload.get("fields"), dict) and "delivered" in payload["fields"]:
+        # A delivery record belongs to the delivery order the customer signed, not to what is made from it.
+        payload["fields"] = {k: v for k, v in payload["fields"].items() if k != "delivered"}
     payload[f"{link_type}From"] = str(source["id"])
     subtotal, tax, total = _totals(target_type, payload.get("lines", []), amount)
     document_date = date.today()
@@ -1338,6 +1357,109 @@ def preview_document_pdf(document_type: str, document_id: str, request: Request)
         return _pdf_response(content, _file_name(db, row), inline=True)
 
 
+PREVIEW_MARK = "PREVIEW - NOT SAVED"
+
+
+def preview_unsaved_pdf(document_type: str, data: DocumentInput, request: Request, documentId: str | None = None):
+    """The PDF exactly as it would print, from what the form holds now. Nothing is stored and no number is taken: a new
+    document shows "<prefix>-<year>-(next)"; an existing draft (documentId) keeps its number and where it came from."""
+    _type(document_type)
+    user = erp_user(request, WRITE_ROLES)
+    if document_type not in PRINTED_TYPES:
+        raise HTTPException(422, "This document type is not printed.")
+    with connect() as db:
+        db.execute("SET TRANSACTION READ ONLY")
+        saved = _load(db, user, document_type, documentId) if documentId else None
+        lines = _clean_lines(data.lines)
+        subtotal, tax, total = _totals(document_type, lines, data.amount)
+        vendor_id, customer_id, employee_id, contact_name = _contact(db, user["tenant_id"], document_type, data.contactId)
+        on = data.documentDate or date.today()
+        payload = {"lines": lines, "allocations": _allocations(document_type, data.allocations), "fields": data.fields}
+        if data.relatedDocumentId:
+            payload["relatedDocumentId"] = str(parse_uuid(data.relatedDocumentId, "related document id"))
+        if saved and (saved["payload"] or {}).get("transferFrom"):
+            payload["transferFrom"] = saved["payload"]["transferFrom"]
+        if saved:
+            number = saved["document_number"]
+        elif data.number and data.number.strip():
+            number = data.number.strip()
+        else:
+            number = PREFIXES.get(document_type, "TX") + f"-{on.year}-(next)"
+        row = {"id": saved["id"] if saved else None, "tenant_id": user["tenant_id"], "document_type": document_type,
+               "document_number": number, "status": "draft", "vendor_id": vendor_id, "customer_id": customer_id,
+               "employee_id": employee_id, "contact_name": data.contactName or contact_name, "document_date": on,
+               "due_date": data.dueDate, "currency": data.currency.upper(), "reference_no": data.referenceNo,
+               "description": data.description, "subtotal": subtotal, "tax_amount": tax, "total_amount": total,
+               "payload": payload, "bank_account_id": None}
+        content = _render(db, row, watermark=PREVIEW_MARK)
+    return _pdf_response(content, f"{number}-preview.pdf", inline=True)
+
+
+def mark_delivered(document_id: str, data: DeliveredInput, request: Request):
+    """Record that an issued delivery order reached the customer, who signed for it. It never posts; the signed copy
+    is attached with the attachments panel. Recorded once."""
+    user = erp_user(request, WRITE_ROLES)
+    with connect() as db:
+        row = _load(db, user, "delivery-order", document_id, for_update=True)
+        if row["status"] != "ready":
+            raise HTTPException(409, "Only an issued delivery order can be marked delivered.")
+        payload = dict(row["payload"] or {})
+        fields = dict(payload.get("fields") or {})
+        if fields.get("delivered"):
+            raise HTTPException(409, "This delivery order is already marked delivered.")
+        if data.receivedOn < row["document_date"]:
+            raise HTTPException(422, "The delivery date cannot be before the delivery order date.")
+        received_by = data.receivedBy.strip()
+        if not received_by:
+            raise HTTPException(422, "Type who received the goods.")
+        fields["delivered"] = {"receivedBy": received_by, "receivedOn": data.receivedOn.isoformat(),
+                               "note": (data.note or "").strip() or None, "recordedBy": str(user["id"]),
+                               "recordedAt": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+        payload["fields"] = fields
+        updated = db.execute("""UPDATE erp_document_headers SET payload=%s,updated_by=%s,updated_at=now()
+            WHERE id=%s AND tenant_id=%s RETURNING *""", (Jsonb(payload), user["id"], row["id"], user["tenant_id"])).fetchone()
+        _event(db, user, row["id"], "delivered", reason=f"Received by {received_by} on {data.receivedOn.isoformat()}")
+        audit(db, user, "erp.delivery_order_delivered", str(row["id"]), {"number": row["document_number"],
+                                                                        "receivedOn": data.receivedOn.isoformat()})
+        return _detail(db, updated)
+
+
+def document_posting_preview(document_type: str, document_id: str, request: Request):
+    """What issuing this document does to the ledger, in accounts and amounts, for the confirm step. Read only: a
+    posted document shows its journal; a draft shows the plan the posting rules would post now."""
+    _type(document_type)
+    user = erp_user(request, READ_ROLES)
+    with connect() as db:
+        db.execute("SET TRANSACTION READ ONLY")
+        row = _load(db, user, document_type, document_id)
+        if document_type not in posting.POSTING_TYPES:
+            return {"posts": False, "posted": False, "problem": None, "balanced": True,
+                    "totalDebit": money(0), "totalCredit": money(0), "lines": []}
+        problem, lines = None, []
+        if row["journal_id"]:
+            lines = db.execute("""SELECT l.account_id,a.code,a.name,l.description,l.debit,l.credit
+                FROM journal_lines l JOIN ledger_accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+                WHERE l.journal_id=%s AND l.tenant_id=%s ORDER BY l.line_number""",
+                              (row["journal_id"], user["tenant_id"])).fetchall()
+        else:
+            try:
+                plan = posting.plan_for_document(db, user["tenant_id"], row)
+                ids = list({parse_uuid(line.account_id, "posting account id") for line in plan.lines})
+                accounts = {str(a["id"]): a for a in db.execute("""SELECT id,code,name FROM ledger_accounts
+                    WHERE tenant_id=%s AND id=ANY(%s)""", (user["tenant_id"], ids)).fetchall()}
+                lines = [{**accounts[line.account_id], "account_id": line.account_id, "description": line.description[:500],
+                          "debit": line.debit, "credit": line.credit} for line in plan.lines]
+            except HTTPException as error:
+                problem = error.detail
+    debit = sum((Decimal(line["debit"]) for line in lines), Decimal(0))
+    credit = sum((Decimal(line["credit"]) for line in lines), Decimal(0))
+    return {"posts": True, "posted": bool(row["journal_id"]), "problem": problem, "balanced": debit == credit and debit > 0,
+            "totalDebit": money(debit), "totalCredit": money(credit),
+            "lines": [{"accountId": str(line["account_id"]), "code": line["code"], "name": line["name"],
+                       "description": line["description"], "debit": money(line["debit"]), "credit": money(line["credit"])}
+                      for line in lines]}
+
+
 def list_document_files(document_type: str, document_id: str, request: Request):
     _type(document_type)
     user = erp_user(request, READ_ROLES)
@@ -1363,6 +1485,9 @@ def download_document_file(document_type: str, document_id: str, revision: int, 
 
 
 def register(router):
+    router.add_api_route('/api/erp/documents/delivery-order/{document_id}/delivered', mark_delivered, methods=['POST'], tags=['ERP Documents'])
+    router.add_api_route('/api/erp/documents/{document_type}/preview.pdf', preview_unsaved_pdf, methods=['POST'], tags=['ERP Documents'])
+    router.add_api_route('/api/erp/documents/{document_type}/{document_id}/posting-preview', document_posting_preview, methods=['GET'], tags=['ERP Documents'])
     router.add_api_route('/api/erp/documents/{document_type}/{document_id}/preview.pdf', preview_document_pdf, methods=['GET'], tags=['ERP Documents'])
     router.add_api_route('/api/erp/documents/{document_type}/{document_id}/files', list_document_files, methods=['GET'], tags=['ERP Documents'])
     router.add_api_route('/api/erp/documents/{document_type}/{document_id}/files/{revision}', download_document_file, methods=['GET'], tags=['ERP Documents'])

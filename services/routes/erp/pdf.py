@@ -23,6 +23,9 @@ PAGE_WIDTH = 595
 PAGE_HEIGHT = 842
 PRODUCER = "Accounting Intelligence"
 NO_SIGNATURE = "This is a computer-generated document. No signature is required."
+# A delivery order is the one printed document the customer signs: its signed copy is the proof of delivery.
+SIGN_AND_RETURN = "Please sign and chop one copy and return it to us."
+RECEIVED_HEADING = "Goods received in good order and condition"
 
 # Adobe AFM advance widths (1/1000 em) for character codes 32..126.
 _HELVETICA_WIDTHS = (
@@ -240,6 +243,7 @@ class PdfCanvas:
 # ---------------------------------------------------------------------------
 TITLES = {
     "quotation": "QUOTATION",
+    "sales-order": "SALES ORDER",
     "invoice": "INVOICE",
     "credit-note": "CREDIT NOTE",
     "debit-note": "DEBIT NOTE",
@@ -255,6 +259,7 @@ _DEFAULT_CONTACT_LABELS = {
     "payment": "Received from",
     "purchase-payment": "Pay to",
     "delivery-order": "Deliver to",
+    "sales-order": "Order for",
     "purchase-credit-note": "Supplier",
     "purchase-debit-note": "Supplier",
 }
@@ -380,6 +385,7 @@ class _Renderer:
             ("No.", self.number),
             ("Date", _date(doc.get("documentDate"))),
             ("Due date", _date(doc.get("dueDate"))),
+            ("Valid until", _date(doc.get("validUntil"))),
             ("Reference", _s(doc.get("referenceNo"))),
             ("Terms", _s(doc.get("paymentTerms"))),
             (_s(doc.get("relatedLabel")) or "Related document", _s(doc.get("relatedNumber"))),
@@ -429,28 +435,53 @@ class _Renderer:
         self.y += 4
 
     def contact(self) -> None:
+        """The customer or supplier block. A delivery order prints the delivery address under "Deliver to" and the
+        billing address beside it; other documents print the billing address and, when one is set, "Deliver to"."""
         c, doc = self.c, self.doc
         contact = doc.get("contact") or {}
         if not any(_s(v) for v in contact.values()):
             return
         label = _s(doc.get("contactLabel")) or _DEFAULT_CONTACT_LABELS.get(self.type, "Bill to")
-        width = 330
+        delivery = _s(doc.get("deliveryAddress"))
+        is_delivery_order = self.type == "delivery-order"
+        width = 300
+        top = self.y
         self.y += 12
         c.text(LEFT, self.y, label, 8, True)
         for ln in c.wrap(contact.get("name"), width, 10, True):
             self.y += 12
             c.text(LEFT, self.y, ln, 10, True)
-        ids = self.segments([f"{k}: {v}" for k, v in (
+        ids = [] if is_delivery_order else self.segments([f"{k}: {v}" for k, v in (
             ("Code", _s(contact.get("code"))),
             ("SSM", _s(contact.get("registrationNumber"))),
             ("TIN", _s(contact.get("tin"))),
+            ("SST No", _s(contact.get("sstNumber"))),
         ) if v], width, 8)
         reach = self.segments([f"{k}: {v}" for k, v in (
-            ("Tel", _s(contact.get("phone"))), ("Email", _s(contact.get("email"))),
+            ("Tel", _s(contact.get("phone"))), ("Email", "" if is_delivery_order else _s(contact.get("email"))),
         ) if v], width, 8)
-        for ln in ids + c.wrap(contact.get("address"), width, 8) + reach:
+        address = delivery if is_delivery_order and delivery else contact.get("address")
+        attention = _s(doc.get("attention"))
+        rows = ids + c.wrap(address, width, 8) + reach + (c.wrap(f"Attn: {attention}", width, 8) if attention else [])
+        for ln in rows:
             self.y += 10
             c.text(LEFT, self.y, ln, 8)
+        # Right column: the billing address on a delivery order, the delivery address on anything else.
+        if is_delivery_order and delivery:
+            side_label, side_parts = "Bill to", [_s(contact.get("name")), *_s(contact.get("address")).splitlines()]
+        elif delivery and not is_delivery_order:
+            side_label, side_parts = "Deliver to", delivery.splitlines()
+        else:
+            side_label, side_parts = "", []
+        if side_label:
+            x, side_width = LEFT + width + 25, RIGHT - (LEFT + width + 25)
+            ys = top + 12
+            c.text(x, ys, side_label, 8, True)
+            for part in side_parts:
+                for ln in c.wrap(part, side_width, 8):
+                    ys += 10
+                    c.text(x, ys, ln, 8)
+            self.y = max(self.y, ys)
         self.y += 10
 
     def table_header(self, columns: tuple) -> None:
@@ -583,15 +614,34 @@ class _Renderer:
             self.c.text(LEFT, self.y, ln, 8.5)
         self.y += 4
 
+    def received_by(self) -> None:
+        """Delivery order only: where the customer signs, names, dates and chops on receipt."""
+        c = self.c
+        height = 92
+        self.ensure(height + 14)
+        self.y += 14
+        top = self.y
+        c.rect(LEFT, top, CONTENT_WIDTH, height, stroke=True)
+        c.text(LEFT + 8, top + 14, RECEIVED_HEADING, 9, True)
+        for i, label in enumerate(("Signature", "Name / IC no.", "Date")):
+            base = top + 38 + i * 22
+            c.text(LEFT + 8, base, label, 8)
+            c.line(LEFT + 80, base + 1, LEFT + 300, base + 1, 0.5)
+        chop_x = LEFT + 330
+        c.rect(chop_x, top + 22, RIGHT - chop_x - 8, height - 30, stroke=True)
+        c.text((chop_x + RIGHT - 8) / 2, top + 22 + (height - 30) / 2 + 3, "Company chop", 8, align="center")
+        self.y = top + height + 4
+
     def footers(self) -> None:
         c = self.c
         revision = self.doc.get("revision")
         left = self.number + (f" rev {revision}" if _s(revision) else "")
+        note = SIGN_AND_RETURN if self.type == "delivery-order" else NO_SIGNATURE
         total = c.page_count
         for i in range(total):
             c.set_page(i)
             c.line(LEFT, 796, RIGHT, 796, 0.5)
-            c.text(PAGE_WIDTH / 2, 808, NO_SIGNATURE, 7.5, align="center")
+            c.text(PAGE_WIDTH / 2, 808, note, 7.5, align="center")
             c.text(LEFT, 820, left, 7.5)
             c.text(RIGHT, 820, f"Page {i + 1} of {total}", 7.5, align="right")
 
@@ -606,6 +656,8 @@ class _Renderer:
         self.totals_and_bank(has_lines)
         self.text_section("Notes", self.doc.get("notes"))
         self.text_section("Terms and conditions", self.doc.get("terms"))
+        if self.type == "delivery-order":
+            self.received_by()
         self.footers()
 
 
