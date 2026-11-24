@@ -1,7 +1,8 @@
 """Plan M B7: the Performance evaluation page reads the latest lite-extraction benchmark (read-only).
 
 `scripts/lite_benchmark.py` writes `runs/lite-benchmark-<UTC>.json`. This returns the newest completed one (not
-stopped, with documents), so the page shows current evidence only. The result is synthetic evaluation data, not a
+stopped, with documents), so the page shows current evidence only. `runs/` is git-ignored, so a deploy has none:
+the published hold-out report in the tracked `evaluation/` folder is the fallback (a local run always wins). The result is synthetic evaluation data, not a
 company's documents; local file paths are reduced to paths relative to the repository so no machine path leaks.
 """
 from __future__ import annotations
@@ -20,6 +21,11 @@ def runs_dir() -> Path:
     return Path(os.environ.get("EVALUATION_RUNS_DIR") or ROOT / "runs")
 
 
+def published_dir() -> Path:
+    """Tracked folder with the published benchmark report that ships with the deploy."""
+    return Path(os.environ.get("EVALUATION_PUBLISHED_DIR") or ROOT / "evaluation")
+
+
 def _relative(value):
     if not isinstance(value, str) or not value:
         return value
@@ -31,7 +37,15 @@ def _relative(value):
 
 
 def latest_result(folder: Path | None = None) -> dict | None:
-    folder = folder or runs_dir()
+    folders = [folder] if folder else [runs_dir(), published_dir()]
+    for folder in folders:
+        result = _latest_in(folder)
+        if result is not None:
+            return result
+    return None
+
+
+def _latest_in(folder: Path) -> dict | None:
     for path in sorted(folder.glob("lite-benchmark-*.json"), reverse=True):  # UTC stamp in the name sorts by time
         try:
             result = json.loads(path.read_text(encoding="utf-8"))

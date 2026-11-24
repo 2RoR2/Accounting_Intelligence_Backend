@@ -13,9 +13,15 @@ Configuration (environment):
     AI_<NAME>_MODEL / AI_<NAME>_BASE_URL / AI_<NAME>_API_KEY / AI_<NAME>_EXTRA_BODY
                          per-provider settings (NAME upper-case, e.g. AI_QWEN_MODEL)
     AI_TIMEOUT_SECONDS   default 30 (1-120)
-    AI_MAX_RETRIES       default 2 (0-4), for 429 and 5xx answers
+    AI_MAX_RETRIES       default 3 (0-4), for 429 and 5xx answers (429 waits Retry-After,
+                         up to 60 s, else 5/10/20 s)
     AI_MAX_CONCURRENCY   default 2 (1-8) simultaneous requests from this process
     AI_RESPONSE_FORMAT   json_object (default) | none
+    AI_REASONING_EFFORT  low | medium | high | off. Sent as "reasoning_effort" for
+                         reasoning models; default "low" for gpt-oss models (the
+                         answer is copy-and-normalise work, not deep reasoning, and
+                         medium effort spent ~2k hidden tokens and ~15 s per call),
+                         off (not sent) for every other model. AI_EXTRA_BODY wins.
 
 EXTRA_BODY is a JSON object merged into the request for provider-specific options
 (for example {"reasoning_effort": "low"}). It cannot replace model or messages.
@@ -150,8 +156,14 @@ class TextModelProvider:
             raise TextModelError('AI_EXTRA_BODY_INVALID') from None
         if not isinstance(self.extra_body, dict) or {'model', 'messages', 'stream'} & set(self.extra_body):
             raise TextModelError('AI_EXTRA_BODY_INVALID')
+        effort = env.get('AI_REASONING_EFFORT', '').strip().lower()
+        if not effort:
+            effort = 'low' if 'gpt-oss' in self.model.lower() else 'off'
+        if effort not in {'low', 'medium', 'high', 'off'}:
+            raise TextModelError('AI_REASONING_EFFORT_INVALID')
+        self.reasoning_effort = None if effort == 'off' else effort
         self.timeout = _number(env, 'AI_TIMEOUT_SECONDS', 30, 1, 120)
-        self.max_retries = _number(env, 'AI_MAX_RETRIES', 2, 0, 4, int)
+        self.max_retries = _number(env, 'AI_MAX_RETRIES', 3, 0, 4, int)
         self.response_format = env.get('AI_RESPONSE_FORMAT', 'json_object').strip() or 'json_object'
         if self.response_format not in {'json_object', 'none'}:
             raise TextModelError('AI_RESPONSE_FORMAT_INVALID')
@@ -163,7 +175,8 @@ class TextModelProvider:
 
     def complete_json(self, system, user, *, max_tokens=4000):
         """Return (parsed JSON object, call record). The record holds no content."""
-        body = {'temperature': 0, 'max_tokens': max_tokens, **self.extra_body,
+        body = {'temperature': 0, 'max_tokens': max_tokens,
+                **({'reasoning_effort': self.reasoning_effort} if self.reasoning_effort else {}), **self.extra_body,
                 'model': self.model, 'stream': False,
                 'messages': [{'role': 'system', 'content': system}, {'role': 'user', 'content': user}]}
         if self.response_format == 'json_object':
@@ -187,12 +200,8 @@ class TextModelProvider:
                 status = error.code
                 retry_after = error.headers.get('Retry-After') if error.headers else None
                 error.close()
-                if status in RETRYABLE_STATUS and attempts <= self.max_retries:
-                    try:
-                        delay = float(retry_after) if retry_after else 0.0
-                    except ValueError:
-                        delay = 0.0
-                    self._sleep(min(20.0, max(delay, 1.5 * 2 ** (attempts - 1))))
+                if status in RETRYABLE_STATUS and attempts <= self.max_retries and not exhausted_limit(status, retry_after):
+                    self._sleep(retry_delay(status, retry_after, attempts))
                     continue
                 code = {400: 'AI_BAD_REQUEST', 401: 'AI_AUTH_REJECTED', 402: 'AI_BILLING_REQUIRED',
                         403: 'AI_AUTH_REJECTED', 404: 'AI_MODEL_OR_ENDPOINT_NOT_FOUND', 413: 'AI_REQUEST_TOO_LARGE',
@@ -220,6 +229,39 @@ class TextModelProvider:
                         'attempts': attempts, 'seconds': seconds,
                         'prompt_tokens': usage.get('prompt_tokens'),
                         'completion_tokens': usage.get('completion_tokens')}
+
+
+RATE_LIMIT_MAX_WAIT_SECONDS = 60.0
+
+
+def _hinted_seconds(retry_after):
+    try:
+        hinted = float(retry_after) if retry_after else 0.0
+    except ValueError:
+        hinted = 0.0
+    return hinted if math.isfinite(hinted) and hinted > 0 else 0.0
+
+
+def exhausted_limit(status, retry_after):
+    """True for a 429 whose Retry-After is beyond a minute: a daily (or longer) quota is spent.
+
+    Waiting cannot help within one document, so the call fails at once and the next
+    configured provider (AI_PROVIDERS) is tried instead of holding the job for minutes.
+    """
+    return status == 429 and _hinted_seconds(retry_after) > RATE_LIMIT_MAX_WAIT_SECONDS
+
+
+def retry_delay(status, retry_after, attempt):
+    """Seconds to wait before retry number `attempt` (1-based).
+
+    A per-minute token limit (429) on a free tier resets within a minute, so a
+    rate-limited call honours Retry-After up to 60 s and otherwise backs off
+    5, 10, 20 s; server errors back off 1.5, 3, 6 s (both capped).
+    """
+    hinted = _hinted_seconds(retry_after)
+    if status == 429:
+        return min(60.0, max(hinted, 5.0 * 2 ** (attempt - 1)))
+    return min(20.0, max(hinted, 1.5 * 2 ** (attempt - 1)))
 
 
 def parse_json_object(content):

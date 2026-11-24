@@ -36,7 +36,10 @@ MANIFESTS = {'invoice': 'invoices.json', 'bill': 'bills.json', 'receipt': 'recei
 ENV_PREFIXES = ('AI_',)
 ENV_NAMES = {'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'DASHSCOPE_API_KEY', 'QWEN_CLOUD_API_KEY', 'OPENROUTER_API_KEY'}
 # A provider that answers with one of these will not succeed on the next document either.
-FATAL_AI_ERRORS = {'AI_AUTH_REJECTED', 'AI_BILLING_REQUIRED', 'AI_RATE_LIMITED', 'AI_MODEL_OR_ENDPOINT_NOT_FOUND',
+# A rate limit is not fatal: the provider already retried with back-off; the run
+# records the failure, cools down and continues so every document is scored.
+RATE_LIMIT_COOLDOWN_SECONDS = 30
+FATAL_AI_ERRORS = {'AI_AUTH_REJECTED', 'AI_BILLING_REQUIRED', 'AI_MODEL_OR_ENDPOINT_NOT_FOUND',
                    'AI_BASE_URL_INVALID', 'AI_API_KEY_MISSING', 'AI_MODEL_MISSING', 'AI_PROVIDER_UNKNOWN',
                    'AI_PROVIDERS_INVALID', 'AI_EXTRA_BODY_INVALID', 'AI_BAD_REQUEST'}
 
@@ -158,6 +161,8 @@ def run(args):
                         ai_errors[ai['error']] += 1
                         if ai['error'] in FATAL_AI_ERRORS:
                             stopped = 'PROVIDER_ERROR ' + ai['error']
+                        elif ai['error'] == 'AI_RATE_LIMITED':
+                            time.sleep(RATE_LIMIT_COOLDOWN_SECONDS)
                     for key in unmapped_keys(public, kind):
                         unmapped[kind].add(key)
                     view = prediction_view_from_public_result(sample, public)
@@ -188,6 +193,8 @@ def run(args):
         'benchmark': 'lite-extraction', 'created_at': datetime.now(timezone.utc).isoformat(),
         'settings': {'AI_EXTRACTION': mode, 'AI_PROVIDERS': os.getenv('AI_PROVIDERS', 'gemini') if mode == 'text' else None,
                      'AI_PREFILL': os.getenv('AI_PREFILL', 'verified'), 'DATE_ORDER': args.date_order,
+                     'AI_REASONING_EFFORT': os.getenv('AI_REASONING_EFFORT') or 'default (low for gpt-oss)',
+                     'LITE_OCR_DET_SIDE': os.getenv('LITE_OCR_DET_SIDE'), 'pace_seconds': args.pace,
                      'LITE_OCR_MAX_SIDE': os.getenv('LITE_OCR_MAX_SIDE', '1280'), 'OCR_THREADS': os.getenv('OCR_THREADS', '2'),
                      'types': args.types, 'limit': args.limit,
                      'manifest_dir': str(manifest_dir.relative_to(ROOT)) if manifest_dir.is_relative_to(ROOT) else str(manifest_dir)},
