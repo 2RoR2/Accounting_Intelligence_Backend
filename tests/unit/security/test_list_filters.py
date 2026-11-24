@@ -64,11 +64,14 @@ class ExceptionListFilterTests(unittest.TestCase):
         self.assertEqual(caught.exception.status_code, 422)
 
 
+ADMIN = {'id': 'admin-1', 'tenant_id': 'tenant-a', 'role': 'local_admin'}
+
+
 class AuditListFilterTests(unittest.TestCase):
-    def run_list(self, **query):
+    def run_list(self, user=ADMIN, **query):
         db = database()
         with patch.object(workspace_routes, 'connect', return_value=db), \
-             patch.object(workspace_routes, 'require_workspace_user', return_value=USER), \
+             patch.object(workspace_routes, 'require_workspace_user', return_value=user), \
              patch.object(workspace_routes, 'tenant_scope', return_value='tenant-a'):
             workspace_routes.list_audit(request(**query))
         return db.execute.call_args.args
@@ -84,6 +87,14 @@ class AuditListFilterTests(unittest.TestCase):
         self.assertIn('tenant_id=%s', sql); self.assertIn('resource = ANY(%s)', sql)
         self.assertEqual(params[:2], ('tenant-a', 'tenant-a'))
         self.assertEqual(params[2], names[:5])
+        self.assertNotIn(DOC, sql)
+
+    def test_an_accountant_reads_only_their_own_and_their_documents_entries(self):
+        # 25 Nov admin audit: the Audit trail is a local admin's page; an accountant got the whole company log.
+        sql, params = self.run_list(user=USER, resource=[DOC])
+        self.assertIn('a.user_id=%(me)s', sql)
+        self.assertIn('d.owner_id=%(me)s OR d.assigned_to=%(me)s', sql)
+        self.assertEqual(params, {'tenant': 'tenant-a', 'me': 'user-1', 'resources': [DOC]})
         self.assertNotIn(DOC, sql)
 
 

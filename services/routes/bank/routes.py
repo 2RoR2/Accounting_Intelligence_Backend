@@ -1,4 +1,5 @@
 from __future__ import annotations
+from services.set_aside import record_not_set_aside, refuse_set_aside_records
 from decimal import Decimal
 from services.routes.accounting.routes import (
     bank_payment_preview,
@@ -441,6 +442,7 @@ def _save_candidates(db, tenant_id, transaction_id, record_ids):
         (tenant_id,bank_transaction_id,record_id,reason_codes,proposed_by)
         SELECT r.tenant_id,%s,r.id,%s,'rules' FROM standardised_records r
         WHERE r.tenant_id=%s AND r.id=ANY(%s) AND r.is_current AND r.validation_status='passed'
+          AND """ + record_not_set_aside('r') + """
           AND NOT EXISTS (SELECT 1 FROM reconciliation_candidates c WHERE c.tenant_id=r.tenant_id
             AND c.bank_transaction_id=%s AND c.record_id=r.id)
         ORDER BY r.id FOR SHARE OF r
@@ -458,8 +460,8 @@ def _propose_candidates(db, tenant_id, transaction_id, row, records):
 def _eligible_records(db, tenant_id):
     return db.execute("""SELECT id AS record_id, document_id, category, COALESCE(reference_number, invoice_number) AS reference_number,
             total_amount, currency, revision_number
-        FROM standardised_records WHERE tenant_id=%s AND is_current=true
-          AND validation_status='passed'""", (tenant_id,)).fetchall()
+        FROM standardised_records r WHERE tenant_id=%s AND is_current=true
+          AND validation_status='passed' AND """ + record_not_set_aside('r'), (tenant_id,)).fetchall()
 
 
 def _bank_audit(db, user, action, resource, details):
@@ -685,6 +687,7 @@ def search_bank_match_records(transaction_id: str, request: Request, q: str = ""
                   AND NOT EXISTS (SELECT 1 FROM settlement_allocations undo
                     WHERE undo.tenant_id=a.tenant_id AND undo.reverses_allocation_id=a.id)),0) allocated_amount
             FROM standardised_records r WHERE r.tenant_id=%s AND r.is_current=true AND r.validation_status='passed'
+              AND """ + record_not_set_aside('r') + """
               AND (%s='' OR r.record_code ILIKE %s OR COALESCE(r.reference_number,'') ILIKE %s OR COALESCE(r.invoice_number,'') ILIKE %s
                    OR COALESCE(r.supplier_name,r.buyer_name,'') ILIKE %s)
             ORDER BY r.created_at DESC LIMIT 50""", (user["tenant_id"], q.strip(), term, term, term, term)).fetchall()
@@ -893,6 +896,8 @@ def decide_reconciliation(data: BankMatchDecisionInput, request: Request):
             WHERE c.id=%s AND c.tenant_id=%s FOR UPDATE OF b""", (candidate_id, user["tenant_id"])).fetchone()
         if not candidate:
             raise HTTPException(404, "Reconciliation candidate not found.")
+        if data.decision == "confirmed":  # rejecting a suggestion for a set-aside document stays possible
+            refuse_set_aside_records(db, user["tenant_id"], [candidate["record_id"]])
         if data.postPayment:
             # Read after the bank-line lock: a concurrent confirm may have committed while this request waited.
             current = db.execute("SELECT status FROM reconciliation_candidates WHERE id=%s AND tenant_id=%s",

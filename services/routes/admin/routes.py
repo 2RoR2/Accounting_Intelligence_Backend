@@ -1,4 +1,5 @@
 from __future__ import annotations
+import json
 from main import *
 from main import _lock_upload_identity, _processing_error, _lock_workspace_document, _require_current_extraction, _authorised_document, _bank_row_values, _bank_transaction_dto, _uuid_or_422, _account_dto, _cost_centre_dto
 from security.authentication import revoke_user_sessions
@@ -55,6 +56,14 @@ def _create_invited_user(db, tenant_id, name, email, role, invited_by):
         raise HTTPException(409, "This email is already registered.")
     token, expires_at = _issue_activation_token(db, row["id"])
     return dict(row, invitation_expires_at=expires_at), token
+
+
+def _user_audit(db, actor, tenant_id, action, target, details=None):
+    """One audit row per user-management action (25 Nov admin audit: none were recorded). Never a password or link."""
+    db.execute("""INSERT INTO audit_logs(tenant_id,user_id,user_name,role,action,resource,details)
+        VALUES (%s,%s,%s,%s,%s,%s,%s)""", (tenant_id, actor["id"], actor.get("name", "Workspace user"), actor["role"], action,
+                                          str(target["id"]), json.dumps({"name": target.get("name"), "email": target.get("email"),
+                                                                         "role": target.get("role"), **(details or {})}, default=str)))
 
 
 def _deliver_invitation(user_row, token, expires_at, company):
@@ -134,6 +143,7 @@ def invite_user(data: InviteInput, request: Request):
     with connect() as db:
         tenant = _lock_tenant_with_seat(db, user["tenant_id"])
         row, token = _create_invited_user(db, user["tenant_id"], data.name, data.email, "accountant", user["id"])
+        _user_audit(db, user, user["tenant_id"], "user.invited", row)
     return {**api_user(row), "invitation": _deliver_invitation(row, token, row["invitation_expires_at"], tenant["name"])}
 
 def add_company_user(tenant_id: str, data: CompanyUserInput, request: Request):
@@ -143,14 +153,18 @@ def add_company_user(tenant_id: str, data: CompanyUserInput, request: Request):
     with connect() as db:
         tenant = _lock_tenant_with_seat(db, tenant_id)
         row, token = _create_invited_user(db, tenant_id, data.name, data.email, data.role, admin["id"])
+        _user_audit(db, admin, tenant_id, "user.invited", row)
     return {**api_user(row), "invitation": _deliver_invitation(row, token, row["invitation_expires_at"], tenant["name"])}
 
 def change_user_status(user_id: str, data: UserStatusInput, request: Request):
     user = require_workspace_user(request, {"local_admin"})
     with connect() as db:
+        before = db.execute("SELECT status FROM users WHERE id=%s AND tenant_id=%s AND role='accountant' FOR UPDATE",
+                            (user_id, user["tenant_id"])).fetchone()
         row = db.execute("UPDATE users SET status=%s WHERE id=%s AND tenant_id=%s AND role='accountant' RETURNING *", (data.status, user_id, user["tenant_id"])).fetchone()
         if not row:
             raise HTTPException(404, "Account is not manageable in this workspace.")
+        _user_audit(db, user, user["tenant_id"], "user.status_changed", row, {"from": before["status"], "to": row["status"]})
         if data.status == "invitation_expired":
             # Cancelling an invitation kills its pending link too.
             db.execute("DELETE FROM auth_tokens WHERE user_id=%s AND purpose='activation' AND used_at IS NULL", (row["id"],))
@@ -169,6 +183,8 @@ def update_user_credentials(user_id: str, data: AdminCredentialsInput, request: 
             revoke_user_sessions(db, user_id)
         else:
             row = db.execute("UPDATE users SET name=%s WHERE id=%s RETURNING *", (data.name, user_id)).fetchone()
+        _user_audit(db, user, user["tenant_id"], "user.updated", row,
+                    {"previousName": target.get("name"), "temporaryPasswordSet": bool(data.password)})
     return api_user(row)
 
 def resend_invitation(user_id: str, request: Request):
@@ -191,6 +207,7 @@ def resend_invitation(user_id: str, request: Request):
             _lock_tenant_with_seat(db, target["tenant_id"])  # re-inviting takes a seat back
         token, expires_at = _issue_activation_token(db, user_id)
         row = db.execute("UPDATE users SET status='invited' WHERE id=%s RETURNING *", (user_id,)).fetchone()
+        _user_audit(db, user, target["tenant_id"], "user.invitation_resent", row)
     return {**api_user(row), "invitation": _deliver_invitation(row, token, expires_at, target["tenant_name"])}
 
 def company_request(data: CompanyInput):
@@ -247,10 +264,12 @@ def list_permissions(request: Request):
 def set_user_permission(user_id: str, data: PermissionInput, request: Request):
     user = require_workspace_user(request, {"super_admin", "local_admin"})
     with connect() as db:
-        target = db.execute("SELECT id FROM users WHERE id=%s AND (%s='super_admin' OR tenant_id=%s)", (user_id, user["role"], user["tenant_id"])).fetchone()
+        target = db.execute("SELECT id,tenant_id,name,email,role FROM users WHERE id=%s AND (%s='super_admin' OR tenant_id=%s)", (user_id, user["role"], user["tenant_id"])).fetchone()
         if not target: raise HTTPException(404, "User not found.")
         db.execute("""INSERT INTO user_permissions(user_id,permission_key,granted,granted_by,updated_at)
             VALUES (%s,%s,%s,%s,now()) ON CONFLICT (user_id,permission_key) DO UPDATE SET granted=EXCLUDED.granted,granted_by=EXCLUDED.granted_by,updated_at=now()""", (user_id, data.permissionKey, data.granted, user["id"]))
+        _user_audit(db, user, target["tenant_id"], "user.permission_changed", target,
+                    {"permission": data.permissionKey, "granted": data.granted})
     return {"userId": user_id, "permissionKey": data.permissionKey, "granted": data.granted}
 
 def list_platform_notifications(request: Request):

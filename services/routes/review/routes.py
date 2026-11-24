@@ -9,7 +9,7 @@ def accountant_inbox(request: Request, status: str | None = None, assignedTo: st
     with connect() as db:
         rows = db.execute("""SELECT d.*, w.priority, w.due_at
             FROM documents d LEFT JOIN workload_assignments w ON w.document_id=d.id
-            WHERE d.tenant_id=%s AND d.excluded_at IS NULL AND (%s IS NULL OR d.status=%s) AND (%s IS NULL OR d.assigned_to=%s)
+            WHERE d.tenant_id=%s AND d.excluded_at IS NULL AND (%s::text IS NULL OR d.status=%s) AND (%s::uuid IS NULL OR d.assigned_to=%s::uuid)
             ORDER BY CASE WHEN w.priority='urgent' THEN 0 WHEN w.priority='high' THEN 1 ELSE 2 END, d.uploaded_at DESC""",
             (scope, status, status, assignedTo, assignedTo)).fetchall()
     return [{"id": str(r["id"]), "code": r["document_code"], "name": r["original_filename"], "status": r["status"].upper(), "assignedTo": str(r["assigned_to"]) if r["assigned_to"] else None, "priority": r["priority"] or "normal", "dueAt": str(r["due_at"] or "")} for r in rows]
@@ -70,7 +70,7 @@ def list_workload(request: Request):
         rows = db.execute("""SELECT w.*,d.document_code,d.original_filename,u.name AS assignee_name
             FROM workload_assignments w JOIN documents d ON d.id=w.document_id
             JOIN users u ON u.id=w.assigned_to
-            WHERE w.tenant_id=%s AND w.completed_at IS NULL ORDER BY w.due_at NULLS LAST,w.priority DESC""", (user["tenant_id"],)).fetchall()
+            WHERE w.tenant_id=%s AND w.completed_at IS NULL AND d.excluded_at IS NULL ORDER BY w.due_at NULLS LAST,w.priority DESC""", (user["tenant_id"],)).fetchall()
     return [{"id": str(r["id"]), "documentId": str(r["document_id"]), "documentCode": r["document_code"], "filename": r["original_filename"], "assignedTo": str(r["assigned_to"]), "assigneeName": r["assignee_name"], "priority": r["priority"], "dueAt": str(r["due_at"] or "")} for r in rows]
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 from main import *
+from services.set_aside import record_not_set_aside
 from main import _lock_upload_identity, _processing_error, _lock_workspace_document, _require_current_extraction, _authorised_document, _bank_row_values, _bank_transaction_dto, _uuid_or_422, _account_dto, _cost_centre_dto
 from services.extraction.persistence.auto_kind import stored_kind_or_auto
 
@@ -71,16 +72,18 @@ def _export_rows(db, tenant_id, resource, filters=None):
         ids = _record_ids(filters)
         only = " AND id = ANY(%s::uuid[])" if ids is not None else ""
         rows = db.execute("SELECT record_code,category,supplier_name,buyer_name,invoice_number,reference_number,currency,total_amount,validation_status "
-                          f"FROM standardised_records WHERE tenant_id=%s AND is_current{only} ORDER BY created_at DESC",
+                          f"FROM standardised_records r WHERE tenant_id=%s AND is_current AND {record_not_set_aside('r')}{only} ORDER BY created_at DESC",
                           (tenant_id, ids) if ids is not None else (tenant_id,)).fetchall()
     elif resource == "documents":
         headers = ["document_code", "kind", "original_filename", "status"]
-        rows = db.execute("SELECT document_code,kind,original_filename,status FROM documents WHERE tenant_id=%s ORDER BY uploaded_at DESC", (tenant_id,)).fetchall()
+        rows = db.execute("SELECT document_code,kind,original_filename,status FROM documents WHERE tenant_id=%s AND excluded_at IS NULL ORDER BY uploaded_at DESC", (tenant_id,)).fetchall()
         # A kind=auto upload whose type is not detected yet exports as "auto", not its placeholder kind.
         rows = [{**row, "kind": stored_kind_or_auto(row)} for row in rows]
     else:
         headers = ["type", "severity", "status", "message"]
-        rows = db.execute("SELECT type,severity,status,message FROM exceptions WHERE tenant_id=%s ORDER BY created_at DESC", (tenant_id,)).fetchall()
+        rows = db.execute("""SELECT e.type,e.severity,e.status,e.message FROM exceptions e
+            JOIN documents d ON d.id=e.document_id AND d.tenant_id=e.tenant_id AND d.excluded_at IS NULL
+            WHERE e.tenant_id=%s ORDER BY e.created_at DESC""", (tenant_id,)).fetchall()
     return headers, [[row[header] for header in headers] for row in rows]
 
 def create_export(data: ExportInput, request: Request):
@@ -128,7 +131,7 @@ def export_records_xlsx(request: Request):
         with connect() as db:
             rows = db.execute("""SELECT sr.record_code,sr.category,sr.supplier_name,sr.buyer_name,COALESCE(sr.invoice_number,sr.reference_number) AS reference,sr.invoice_date,sr.due_date,sr.currency,sr.total_amount,sr.validation_status
                 FROM standardised_records sr
-                WHERE sr.tenant_id=%s AND sr.is_current
+                WHERE sr.tenant_id=%s AND sr.is_current AND """ + record_not_set_aside("sr") + """
                 ORDER BY sr.created_at DESC""", (user["tenant_id"],)).fetchall()
             workbook = Workbook(); sheet = workbook.active; sheet.title = "Approved records"
             headers = ["Record ID","Category","Supplier","Customer","Invoice/Reference","Issue date","Due date","Currency","Total","Validation"]

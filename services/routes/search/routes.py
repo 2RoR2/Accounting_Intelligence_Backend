@@ -81,7 +81,7 @@ def search(request: Request, q: str = "", limit: int = DEFAULT_LIMIT):
         for r in db.execute("""SELECT r.id,r.record_code,r.invoice_number,r.supplier_name,r.buyer_name,r.category,r.invoice_date,
                     r.total_amount,r.currency,d.kind
                 FROM standardised_records r JOIN documents d ON d.id=r.document_id AND d.tenant_id=r.tenant_id
-                WHERE r.tenant_id=%(tenant)s AND r.is_current AND (r.record_code ILIKE %(like)s ESCAPE '\\'
+                WHERE r.tenant_id=%(tenant)s AND r.is_current AND d.excluded_at IS NULL AND (r.record_code ILIKE %(like)s ESCAPE '\\'
                     OR r.invoice_number ILIKE %(like)s ESCAPE '\\' OR r.reference_number ILIKE %(like)s ESCAPE '\\'
                     OR r.supplier_name ILIKE %(like)s ESCAPE '\\' OR r.buyer_name ILIKE %(like)s ESCAPE '\\'
                     OR (%(amount)s::numeric IS NOT NULL AND r.total_amount=%(amount)s::numeric))

@@ -5,6 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 from main import *
+from services.set_aside import record_not_set_aside, refuse_set_aside
 
 review_logger = logging.getLogger(__name__)
 
@@ -521,24 +522,36 @@ def restore_document(document_id: str, request: Request):
     user = require_workspace_user(request, {'local_admin'})
     document_id = str(_uuid_or_422(document_id, 'document id'))
     with connect() as db:
-        row = db.execute("""UPDATE documents SET excluded_at=NULL, excluded_reason=NULL, updated_at=now()
-            WHERE id=%s AND tenant_id=%s AND excluded_at IS NOT NULL RETURNING id""", (document_id, user['tenant_id'])).fetchone()
+        row = db.execute("""SELECT id,excluded_at,excluded_reason FROM documents
+            WHERE id=%s AND tenant_id=%s AND excluded_at IS NOT NULL FOR UPDATE""", (document_id, user['tenant_id'])).fetchone()
         if not row:
             raise HTTPException(404, 'No set-aside document with this id.')
-        _document_action(db, user, document_id, 'document.restored', {})
+        db.execute("UPDATE documents SET excluded_at=NULL, excluded_reason=NULL, updated_at=now() WHERE id=%s AND tenant_id=%s",
+                   (document_id, user['tenant_id']))
+        # The audit keeps what was undone: the reason and when it had been set aside.
+        _document_action(db, user, document_id, 'document.restored',
+                         {'previousReason': row['excluded_reason'], 'setAsideAt': str(row['excluded_at'])})
     return {'documentId': document_id, 'excluded': False}
 
 
 def list_excluded_documents(request: Request):
     """Documents set aside, newest first, so a mistake can be found and restored."""
     user = require_workspace_user(request, {'local_admin', 'accountant'})
-    ownership = " AND (owner_id=%s OR assigned_to=%s)" if user['role'] == 'accountant' else ""
+    ownership = " AND (d.owner_id=%s OR d.assigned_to=%s)" if user['role'] == 'accountant' else ""
     with connect() as db:
-        rows = db.execute(f"""SELECT id,document_code,original_filename,kind,status,excluded_at,excluded_reason FROM documents
-            WHERE tenant_id=%s AND excluded_at IS NOT NULL{ownership} ORDER BY excluded_at DESC LIMIT 200""",
+        # Who set it aside comes from the audit row the exclude wrote (the documents row keeps only reason and time).
+        rows = db.execute(f"""SELECT d.id,d.document_code,d.original_filename,d.kind,d.status,d.excluded_at,d.excluded_reason,
+                who.user_name AS excluded_by
+            FROM documents d
+            LEFT JOIN LATERAL (SELECT a.user_name FROM audit_logs a
+                WHERE a.tenant_id=d.tenant_id AND a.resource=d.id::text AND a.action='document.excluded'
+                ORDER BY a.created_at DESC LIMIT 1) who ON true
+            WHERE d.tenant_id=%s AND d.excluded_at IS NOT NULL{ownership}
+            ORDER BY d.excluded_at DESC LIMIT 200""",
                           [user['tenant_id'], *([user['id'], user['id']] if ownership else [])]).fetchall()
     return [{'id': str(r['id']), 'code': r['document_code'], 'name': r['original_filename'], 'kind': r['kind'],
-             'status': r['status'].upper(), 'excludedAt': str(r['excluded_at']), 'reason': r['excluded_reason']} for r in rows]
+             'status': r['status'].upper(), 'excludedAt': str(r['excluded_at']), 'reason': r['excluded_reason'],
+             'excludedBy': r['excluded_by']} for r in rows]
 
 
 def delete_document(document_id: str, request: Request):
@@ -592,7 +605,8 @@ def list_records(request: Request, category: str | None = None, due: str | None 
                 JOIN documents d ON d.id=r.document_id AND d.tenant_id=r.tenant_id AND d.excluded_at IS NULL
                 WHERE {' AND '.join(clauses)} ORDER BY r.created_at DESC""", params).fetchall()
         else:
-            rows = db.execute("SELECT * FROM standardised_records WHERE (%s IS NULL OR tenant_id=%s) ORDER BY created_at DESC", (scope, scope)).fetchall()
+            rows = db.execute(f"""SELECT r.* FROM standardised_records r WHERE (%s IS NULL OR r.tenant_id=%s)
+                AND {record_not_set_aside('r')} ORDER BY r.created_at DESC""", (scope, scope)).fetchall()
         output = []
         for r in rows:
             fields = db.execute("""SELECT fp.* FROM field_predictions fp
@@ -756,6 +770,7 @@ def standardise_document(document_id: str, request: Request):
         doc = db.execute("SELECT * FROM documents WHERE id=%s AND tenant_id=%s AND status='validated' FOR UPDATE", (document_id, user["tenant_id"])).fetchone()
         if not doc:
             raise HTTPException(422, "The document must be validated before standardising.")
+        refuse_set_aside(doc)
         approved = db.execute("""SELECT 1 FROM review_decisions
             WHERE document_id=%s AND tenant_id=%s AND decision='approved'
               AND approved_content_revision=(SELECT content_revision FROM documents WHERE id=%s AND tenant_id=%s)
@@ -1011,11 +1026,12 @@ def correct_extracted_field(document_id: str, field_key: str, data: FieldCorrect
     ownership = " AND (d.owner_id=%s OR d.assigned_to=%s)" if user['role'] == 'accountant' else ""
     owner_params = [user['id'], user['id']] if ownership else []
     with connect() as db:
-        document = db.execute(f"""SELECT d.id,d.content_revision,d.status FROM documents d
+        document = db.execute(f"""SELECT d.id,d.content_revision,d.status,d.excluded_at FROM documents d
             WHERE d.id=%s AND d.tenant_id=%s{ownership} FOR UPDATE""",
             [document_id, user['tenant_id'], *owner_params]).fetchone()
         if not document:
             raise HTTPException(404, "Document not found.")
+        refuse_set_aside(document)
         if document['content_revision'] != data.expectedContentRevision:
             raise HTTPException(409, "The document changed. Refresh it before correcting this field.")
         if document['status'] in {'completed', 'standardised'}:

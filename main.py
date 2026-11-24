@@ -703,6 +703,9 @@ def _lock_workspace_document(db, document_id, user, *, protect_record=True):
     document = db.execute('SELECT d.* FROM documents d WHERE d.id=%s AND d.tenant_id=%s' + visibility + ' FOR UPDATE', params).fetchone()
     if not document:
         raise HTTPException(404, 'Document not found.')
+    # A set-aside document takes part in nothing (edits, review, approval, retry) until a local admin restores it.
+    from services.set_aside import refuse_set_aside
+    refuse_set_aside(document)
     if protect_record and (document['status'] in {'completed', 'standardised'} or db.execute(
             'SELECT 1 FROM standardised_records WHERE document_id=%s LIMIT 1', (document_id,)).fetchone()):
         raise HTTPException(409, 'Standardised documents require an amendment.')
