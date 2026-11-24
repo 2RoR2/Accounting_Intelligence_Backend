@@ -39,8 +39,12 @@ Rotating it signs users out and requires re-enrollment for accounts with existin
 4. Set Render `FRONTEND_ORIGINS` to the exact HTTPS origins of the Vercel UAT frontend and the Render
    service, separated by a comma with no paths. Start with the Vercel origin if the Render URL has
    yet to be assigned, then add the Render origin and redeploy. Use a stable Vercel UAT alias if
-   deployment URLs change. Set `FRONTEND_ORIGIN` to the Vercel UAT origin if using the admin CLI to
-   generate activation links.
+   deployment URLs change. Set `FRONTEND_ORIGIN` to the Vercel UAT origin: invitation emails (local
+   admin invites, Super Admin "add user", company approval, resend) and the admin CLI build
+   `<FRONTEND_ORIGIN>/activate?token=…` links from it. Without it the API falls back to
+   `APP_PUBLIC_URL`, then `FRONTEND_URL`, then the first `FRONTEND_ORIGINS` entry. Invitation email
+   uses the same Brevo/SMTP settings as sign-in codes; if delivery fails, the invite still succeeds
+   and the admin is shown the link once to send privately.
 5. In the frontend's Vercel project, set `BACKEND_URL` to the Render HTTPS origin for the environment
    serving UAT. Deploy the approved frontend commit with that setting. Confirm the Render service is
    live and `GET /api/health` returns HTTP 200 with `status` equal to `ok`.

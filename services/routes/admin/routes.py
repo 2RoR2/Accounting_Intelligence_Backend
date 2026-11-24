@@ -2,6 +2,73 @@ from __future__ import annotations
 from main import *
 from main import _lock_upload_identity, _processing_error, _lock_workspace_document, _require_current_extraction, _authorised_document, _bank_row_values, _bank_transaction_dto, _uuid_or_422, _account_dto, _cost_centre_dto
 from security.authentication import revoke_user_sessions
+from services.notifications.mailer import send_invitation_email
+
+INVITATION_DAYS = 7
+invite_log = logging.getLogger(__name__)
+
+
+def activation_origin():
+    """Public frontend origin for activation links (first configured origin wins)."""
+    for name in ("FRONTEND_ORIGIN", "APP_PUBLIC_URL", "FRONTEND_URL"):
+        value = os.getenv(name, "").strip()
+        if value:
+            return value.rstrip("/")
+    origins = [v.strip() for v in os.getenv("FRONTEND_ORIGINS", "").split(",") if v.strip()]
+    return (origins[0] if origins else "http://localhost:3000").rstrip("/")
+
+
+def _lock_tenant_with_seat(db, tenant_id):
+    """Lock the company row so concurrent invites cannot overrun the seat limit."""
+    tenant = db.execute("SELECT * FROM tenants WHERE id=%s FOR UPDATE", (tenant_id,)).fetchone()
+    if not tenant:
+        raise HTTPException(404, "Company not found.")
+    if tenant["status"] != "active":
+        raise HTTPException(409, "Company is not active.")
+    used = db.execute("SELECT count(*) AS n FROM users WHERE tenant_id=%s AND status IN ('active','invited')",
+                      (tenant_id,)).fetchone()["n"]
+    if used >= tenant["seat_limit"]:
+        raise HTTPException(409, "Account limit reached.")
+    return tenant
+
+
+def _issue_activation_token(db, user_id):
+    """Replace any unused activation link with a new single-use one; only the hash is stored."""
+    token = secrets.token_urlsafe(32)
+    db.execute("DELETE FROM auth_tokens WHERE user_id=%s AND purpose='activation' AND used_at IS NULL", (user_id,))
+    row = db.execute("""INSERT INTO auth_tokens(user_id,purpose,token_hash,expires_at)
+        VALUES (%s,'activation',%s,now()+make_interval(days => %s)) RETURNING expires_at""",
+        (user_id, digest(token), INVITATION_DAYS)).fetchone()
+    db.execute("UPDATE users SET invited_at=now(), invitation_expires_at=%s WHERE id=%s", (row["expires_at"], user_id))
+    return token, row["expires_at"]
+
+
+def _create_invited_user(db, tenant_id, name, email, role, invited_by):
+    if db.execute("SELECT id FROM users WHERE lower(email)=lower(%s)", (email,)).fetchone():
+        raise HTTPException(409, "This email is already registered.")
+    try:
+        with db.transaction():
+            row = db.execute("""INSERT INTO users(tenant_id,name,email,role,status,invited_by,invited_at)
+                VALUES (%s,%s,%s,%s,'invited',%s,now()) RETURNING *""",
+                (tenant_id, name.strip(), email.strip().lower(), role, invited_by)).fetchone()
+    except UniqueViolation:
+        raise HTTPException(409, "This email is already registered.")
+    token, expires_at = _issue_activation_token(db, row["id"])
+    return dict(row, invitation_expires_at=expires_at), token
+
+
+def _deliver_invitation(user_row, token, expires_at, company):
+    """Email the link after the invite has committed. On failure, hand it back once to the admin."""
+    link = activation_origin() + "/activate?token=" + token
+    expires = expires_at.astimezone(timezone.utc).strftime("%d %b %Y %H:%M UTC")
+    try:
+        send_invitation_email(user_row["email"], name=user_row["name"], company=company,
+                              role=user_row["role"], link=link, expires=expires)
+    except Exception as exc:
+        # The exception text never contains the link; log only its type.
+        invite_log.warning("Invitation email for user %s failed: %s", user_row["id"], type(exc).__name__)
+        return {"emailSent": False, "activationLink": link, "expiresAt": str(expires_at)}
+    return {"emailSent": True, "activationLink": None, "expiresAt": str(expires_at)}
 
 def list_tenants(request: Request):
     user = require_workspace_user(request)
@@ -65,16 +132,18 @@ def list_users(request: Request, tenant_id: str | None = None):
 def invite_user(data: InviteInput, request: Request):
     user = require_workspace_user(request, {"local_admin"})
     with connect() as db:
-        tenant = db.execute("SELECT * FROM tenants WHERE id=%s AND status='active'", (user["tenant_id"],)).fetchone()
-        count = db.execute("SELECT count(*) AS n FROM users WHERE tenant_id=%s AND status IN ('active','invited')", (user["tenant_id"],)).fetchone()["n"]
-        if not tenant or count >= tenant["seat_limit"]:
-            raise HTTPException(409, "Account limit reached.")
-        if db.execute("SELECT id FROM users WHERE lower(email)=lower(%s)", (data.email,)).fetchone():
-            raise HTTPException(409, "This email is already registered.")
-        row = db.execute("""INSERT INTO users(tenant_id,name,email,role,status,invited_by,invited_at,invitation_expires_at)
-            VALUES (%s,%s,%s,'accountant','invited',%s,now(),now()+interval '7 days') RETURNING *""",
-            (user["tenant_id"], data.name, data.email, user["id"])).fetchone()
-    return api_user(row)
+        tenant = _lock_tenant_with_seat(db, user["tenant_id"])
+        row, token = _create_invited_user(db, user["tenant_id"], data.name, data.email, "accountant", user["id"])
+    return {**api_user(row), "invitation": _deliver_invitation(row, token, row["invitation_expires_at"], tenant["name"])}
+
+def add_company_user(tenant_id: str, data: CompanyUserInput, request: Request):
+    """Super Admin adds a Company Admin or Accountant to an existing company by invitation."""
+    admin = require_workspace_user(request, {"super_admin"})
+    tenant_id = str(_uuid_or_422(tenant_id, "Company"))
+    with connect() as db:
+        tenant = _lock_tenant_with_seat(db, tenant_id)
+        row, token = _create_invited_user(db, tenant_id, data.name, data.email, data.role, admin["id"])
+    return {**api_user(row), "invitation": _deliver_invitation(row, token, row["invitation_expires_at"], tenant["name"])}
 
 def change_user_status(user_id: str, data: UserStatusInput, request: Request):
     user = require_workspace_user(request, {"local_admin"})
@@ -82,6 +151,9 @@ def change_user_status(user_id: str, data: UserStatusInput, request: Request):
         row = db.execute("UPDATE users SET status=%s WHERE id=%s AND tenant_id=%s AND role='accountant' RETURNING *", (data.status, user_id, user["tenant_id"])).fetchone()
         if not row:
             raise HTTPException(404, "Account is not manageable in this workspace.")
+        if data.status == "invitation_expired":
+            # Cancelling an invitation kills its pending link too.
+            db.execute("DELETE FROM auth_tokens WHERE user_id=%s AND purpose='activation' AND used_at IS NULL", (row["id"],))
     return api_user(row)
 
 def update_user_credentials(user_id: str, data: AdminCredentialsInput, request: Request):
@@ -100,13 +172,26 @@ def update_user_credentials(user_id: str, data: AdminCredentialsInput, request: 
     return api_user(row)
 
 def resend_invitation(user_id: str, request: Request):
-    user = require_workspace_user(request, {"local_admin"})
+    """Issue a fresh activation link (old ones stop working) and email it again."""
+    user = require_workspace_user(request, {"local_admin", "super_admin"})
+    user_id = str(_uuid_or_422(user_id, "User"))
     with connect() as db:
-        row = db.execute("""UPDATE users SET status='invited', invited_at=now(), invitation_expires_at=now()+interval '7 days'
-            WHERE id=%s AND tenant_id=%s AND role='accountant' RETURNING *""", (user_id, user["tenant_id"])).fetchone()
-        if not row:
+        target = db.execute("""SELECT u.*, t.name AS tenant_name, t.status AS tenant_status FROM users u
+            JOIN tenants t ON t.id=u.tenant_id WHERE u.id=%s FOR UPDATE OF u""", (user_id,)).fetchone()
+        manageable = target and (
+            (user["role"] == "super_admin" and target["role"] in ("local_admin", "accountant"))
+            or (target["tenant_id"] == user["tenant_id"] and target["role"] == "accountant"))
+        if not manageable:
             raise HTTPException(404, "Account is not manageable in this workspace.")
-    return api_user(row)
+        if target["status"] not in ("invited", "invitation_expired"):
+            raise HTTPException(409, "This account has already been activated.")
+        if target["tenant_status"] != "active":
+            raise HTTPException(409, "Company is not active.")
+        if target["status"] == "invitation_expired":
+            _lock_tenant_with_seat(db, target["tenant_id"])  # re-inviting takes a seat back
+        token, expires_at = _issue_activation_token(db, user_id)
+        row = db.execute("UPDATE users SET status='invited' WHERE id=%s RETURNING *", (user_id,)).fetchone()
+    return {**api_user(row), "invitation": _deliver_invitation(row, token, expires_at, target["tenant_name"])}
 
 def company_request(data: CompanyInput):
     rate_limit("registration:" + data.email, 5, 3600)
@@ -138,10 +223,10 @@ def approve_company_request(request_id: str, data: CompanyReviewInput, request: 
             raise HTTPException(404, "Request has already been reviewed.")
         tenant = db.execute("""INSERT INTO tenants(name,registration_number,admin_email,seat_limit,status)
             VALUES (%s,%s,%s,%s,'active') RETURNING *""", (item["company_name"], item["registration_number"], item["contact_email"], data.limit)).fetchone()
-        invited = db.execute("""INSERT INTO users(tenant_id,name,email,role,status,invited_by,invited_at,invitation_expires_at)
-            VALUES (%s,%s,%s,'local_admin','invited',%s,now(),now()+interval '7 days') RETURNING *""", (tenant["id"], item["contact_name"], item["contact_email"], admin["id"])).fetchone()
+        invited, token = _create_invited_user(db, tenant["id"], item["contact_name"], item["contact_email"], "local_admin", admin["id"])
         db.execute("UPDATE company_requests SET status='approved',tenant_id=%s,reviewed_by=%s,reviewed_at=now() WHERE id=%s", (tenant["id"], admin["id"], request_id))
-    return {"tenantId": str(tenant["id"]), "userId": str(invited["id"]), "status": "APPROVED"}
+    invitation = _deliver_invitation(invited, token, invited["invitation_expires_at"], tenant["name"])
+    return {"tenantId": str(tenant["id"]), "userId": str(invited["id"]), "status": "APPROVED", "invitation": invitation}
 
 def reject_company_request(request_id: str, data: CompanyReviewInput, request: Request):
     admin = require_workspace_user(request, {"super_admin"})
@@ -193,6 +278,7 @@ def register(router, handlers):
     router.add_api_route('/api/users/{user_id}/status', change_user_status, methods=['PATCH'])
     router.add_api_route('/api/users/{user_id}/credentials', update_user_credentials, methods=['PATCH'])
     router.add_api_route('/api/users/{user_id}/resend-invitation', resend_invitation, methods=['POST'])
+    router.add_api_route('/api/tenants/{tenant_id}/users', add_company_user, methods=['POST'], status_code=201)
     router.add_api_route('/api/company-requests', company_request, methods=['POST'], status_code=201)
     router.add_api_route('/api/company-requests', list_company_requests, methods=['GET'])
     router.add_api_route('/api/company-requests/{request_id}/approve', approve_company_request, methods=['POST'])

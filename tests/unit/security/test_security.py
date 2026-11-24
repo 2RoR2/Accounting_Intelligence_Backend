@@ -128,10 +128,13 @@ class AccountTests(unittest.TestCase):
                 VALUES (%s,'Test User','user@example.com',%s,'accountant','active') RETURNING id""",
                 (tenant["id"], hash_password("StrongPass123!"))).fetchone()["id"]
         self.client = TestClient(api.app, headers={"X-Requested-With": "AccountingIntelligence", "Origin": "http://localhost:3000"})
-        self.mail = patch.object(api, "send_reset_code")
+        # The security routes module binds its own copies of the mailer functions
+        # (`from main import *`), so stub them where the handlers look them up.
+        import services.routes.security.routes as security_routes
+        self.mail = patch.object(security_routes, "send_reset_code")
         self.send = self.mail.start()
         self.addCleanup(self.mail.stop)
-        self.login_mail = patch.object(api, "send_login_code")
+        self.login_mail = patch.object(security_routes, "send_login_code")
         self.login_send = self.login_mail.start()
         self.addCleanup(self.login_mail.stop)
         self.addCleanup(self.client.close)

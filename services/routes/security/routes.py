@@ -367,9 +367,10 @@ def activate(data: ActivationInput):
         user = user_by_email(db, user["email"].lower())
         if user["status"] != "invited" or user["tenant_status"] != "active":
             raise HTTPException(400, "Invitation or company is not active.")
-        db.execute("UPDATE users SET password_hash=%s,status='active' WHERE id=%s",
+        # The invitee just chose this password, so no forced change on first sign-in.
+        db.execute("UPDATE users SET password_hash=%s,status='active',must_change_password=false WHERE id=%s",
                    (hash_password(data.password), user["id"]))
-        db.execute("UPDATE auth_tokens SET used_at=now() WHERE user_id=%s AND purpose='activation'", (user["id"],))
+        db.execute("UPDATE auth_tokens SET used_at=now() WHERE user_id=%s AND purpose='activation' AND used_at IS NULL", (user["id"],))
     return {"success": True}
 """Security API route registrations."""
 

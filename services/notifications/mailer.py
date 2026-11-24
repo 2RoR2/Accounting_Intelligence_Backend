@@ -74,3 +74,62 @@ def send_reset_code(recipient: str, code: str):
 
 def send_login_code(recipient: str, code: str):
     _send_code(recipient, code, "Your Accounting Intelligence sign-in code", "sign-in code", "60 seconds")
+
+
+def _deliver(recipient: str, subject: str, text: str, html: str):
+    """Send one message through Brevo when configured, otherwise SMTP."""
+    provider = os.environ.get("EMAIL_PROVIDER", "auto").strip().lower()
+    brevo_key = os.environ.get("BREVO_API_KEY", "").strip()
+    if provider not in {"brevo", "smtp", "auto"}:
+        raise RuntimeError("EMAIL_PROVIDER must be brevo, smtp, or auto.")
+    if provider == "brevo" or (provider == "auto" and brevo_key):
+        if not brevo_key:
+            raise RuntimeError("EMAIL_PROVIDER=brevo requires BREVO_API_KEY.")
+        send_brevo_email(recipient=recipient, subject=subject, text=text, html=html)
+        return
+    username = os.environ.get("SMTP_USER", "").strip()
+    password = os.environ.get("SMTP_PASSWORD", "").replace(" ", "").strip()
+    sender = os.environ.get("SMTP_FROM", username).strip()
+    if not username or not password or "@" not in sender:
+        raise RuntimeError("Configure Brevo or SMTP email settings.")
+    message = EmailMessage()
+    message["From"] = f"Accounting Intelligence <{sender}>"
+    message["To"] = recipient
+    message["Subject"] = subject
+    message.set_content(text)
+    message.add_alternative(html, subtype="html")
+    port = int(os.getenv("SMTP_PORT", "587"))
+    smtp_class = smtplib.SMTP_SSL if port == 465 else smtplib.SMTP
+    with smtp_class(os.getenv("SMTP_HOST", "smtp.gmail.com"), port, timeout=5) as smtp:
+        if port != 465:
+            smtp.starttls(context=ssl.create_default_context())
+        smtp.login(username, password)
+        smtp.send_message(message)
+
+
+ROLE_LABELS = {"local_admin": "Company Admin", "accountant": "Accountant"}
+
+
+def send_invitation_email(recipient: str, *, name: str, company: str, role: str, link: str, expires: str):
+    """Email a single-use activation link. The link is a credential: never log it."""
+    from html import escape
+    role_label = ROLE_LABELS.get(role, "user")
+    subject = f"You're invited to {company} on AccordAI"
+    sign_in = ("You will set up an authenticator app the first time you sign in."
+               if role == "local_admin" else "Each sign-in also asks for a code we email you.")
+    text = (f"Hello {name},\n\n"
+            f"You have been invited to {company} on AccordAI as {role_label}.\n\n"
+            f"Choose your password here (single use, expires {expires}):\n{link}\n\n"
+            f"{sign_in}\n\n"
+            "If you did not expect this invitation, ignore this email. Never forward this link.")
+    html = ("<html><body style='font-family:Arial,sans-serif;color:#172033'>"
+            "<h2 style='margin-bottom:8px'>AccordAI</h2>"
+            f"<p>Hello {escape(name)},</p>"
+            f"<p>You have been invited to <strong>{escape(company)}</strong> as <strong>{role_label}</strong>.</p>"
+            f"<p><a href='{escape(link, quote=True)}' style='display:inline-block;padding:10px 18px;"
+            "background:#2563eb;color:#fff;border-radius:6px;text-decoration:none'>Set your password</a></p>"
+            f"<p>This link works once and expires <strong>{escape(expires)}</strong>.</p>"
+            f"<p>{escape(sign_in)}</p>"
+            "<p style='color:#667085;font-size:13px'>If you did not expect this invitation, ignore this email. "
+            "Never forward this link.</p></body></html>")
+    _deliver(recipient, subject, text, html)

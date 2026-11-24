@@ -400,8 +400,12 @@ class InviteInput(BaseModel):
     email: Email
 
 
+class CompanyUserInput(InviteInput):
+    role: Literal["local_admin", "accountant"]
+
+
 class UserStatusInput(BaseModel):
-    status: Annotated[str, StringConstraints(pattern=r"^(active|disabled|invited)$")]
+    status: Annotated[str, StringConstraints(pattern=r"^(active|disabled|invited|invitation_expired)$")]
 
 
 class AdminCredentialsInput(BaseModel):
