@@ -39,7 +39,8 @@ def _image(image_format):
 
 PNG, JPEG, WEBP = _image('PNG'), _image('JPEG'), _image('WEBP')
 PDF = b'%PDF-1.7\n1 0 obj\n<< /Type /Catalog >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n'
-ATTACHABLE = ('payment', 'purchase-payment', 'refund', 'purchase-refund', 'money-in', 'money-out', 'bank-transfer', 'journal-entry')
+ATTACHABLE = ('payment', 'purchase-payment', 'refund', 'purchase-refund', 'money-in', 'money-out', 'bank-transfer', 'journal-entry',
+              'bill', 'purchase-credit-note', 'purchase-debit-note')
 
 
 class Session:
@@ -147,7 +148,7 @@ def test_every_proof_record_type_accepts_a_file_and_a_link(company):
         assert items[0]['mediaType'] == 'image/png' and items[0]['sizeBytes'] == len(PNG) and items[0]['uploadedBy'] == 'Accountant'
         assert items[0]['fileUrl'] == f"/api/erp/attachments/{items[0]['id']}/file" and items[0]['url'] is None
         assert items[1]['url'] == 'https://bank.example.com/slip/1' and items[1]['name'] == 'bank.example.com' and items[1]['fileUrl'] is None
-    # Invoices, bills and the like keep their own source file: not attachable here.
+    # Invoices, quotations and the like keep their own printed PDF: not attachable here.
     invoice = ids['records']['invoice']
     assert upload(accountant, 'invoice', invoice, PNG).status_code == 404
     assert link(accountant, 'invoice', invoice, 'https://example.com/a').status_code == 404

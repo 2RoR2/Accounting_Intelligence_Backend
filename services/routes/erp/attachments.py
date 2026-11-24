@@ -1,8 +1,9 @@
 """Proof attached to typed records: a receipt photo, bank slip, PDF or an https link.
 
 Targets are typed ERP documents: payments received/made, refunds, money in, money out, bank transfers and manual
-journals. Files use the same private document storage as uploads (S3 in production, a local folder in development)
-and the same hardened rules: at most 10 MB, at most limit+1 bytes read, PDF/PNG/JPEG/WebP only, decided from the
+journals, plus typed supplier documents (bills, supplier credit and debit notes), which carry the supplier's copy.
+Files use the same private document storage as uploads (S3 in production, a local folder in development) and the same
+hardened rules: at most 10 MB, at most limit+1 bytes read, PDF/PNG/JPEG/WebP only, decided from the
 file's own bytes (never the name or the client's content type). Files are served with the safe preview headers of
 the document viewer. Every read is tenant-checked (another company's id answers 404). Removing is a soft delete
 that keeps the stored object and the row; uploads and removals write audit rows.
@@ -29,10 +30,13 @@ MAX_DECODE_PIXELS = 40_000_000  # about 160 MB decoded as RGBA: the most one upl
 MAX_LINK_LENGTH = 2000
 MAX_NAME_LENGTH = 200
 TARGET_TYPE = "erp_document"
-# Typed records that can carry proof. Anything else (invoices, bills, quotations ...) has its own source file.
+# Typed records that can carry proof. A typed bill or supplier note is keyed in from the supplier's paper, so it carries
+# that paper here (the form shows it where sales documents show their printed preview). Documents the company prints
+# itself (invoices, quotations ...) keep their own stored PDF instead.
 ATTACHABLE_TYPES = frozenset({
     "payment", "purchase-payment", "refund", "purchase-refund",
     "money-in", "money-out", "bank-transfer", "journal-entry",
+    "bill", "purchase-credit-note", "purchase-debit-note",
 })
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 
