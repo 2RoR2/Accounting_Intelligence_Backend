@@ -937,9 +937,16 @@ def decide_reconciliation(data: BankMatchDecisionInput, request: Request):
                     WHERE reversal.tenant_id=a.tenant_id AND reversal.reverses_allocation_id=a.id)""",
                 (user["tenant_id"], settlement["id"], candidate["record_id"])).fetchone()
             if not existing_allocation:
-                db.execute("""INSERT INTO settlement_allocations
-                    (tenant_id,settlement_id,record_id,amount,created_by)
-                    VALUES (%s,%s,%s,%s,%s)""", (user["tenant_id"], settlement["id"], candidate["record_id"], abs(candidate["signed_amount_decimal"]), user["id"]))
+                try:
+                    db.execute("""INSERT INTO settlement_allocations
+                        (tenant_id,settlement_id,record_id,amount,created_by)
+                        VALUES (%s,%s,%s,%s,%s)""", (user["tenant_id"], settlement["id"], candidate["record_id"], abs(candidate["signed_amount_decimal"]), user["id"]))
+                except RaiseException as error:
+                    # The record is already settled (for example by a payment voucher issued earlier). Say so,
+                    # instead of the generic "account service unavailable" a database error would produce.
+                    raise HTTPException(409, "This bill is already settled by an earlier payment, so this bank line "
+                                             "cannot be matched to it again. Reject the match, or match the line to "
+                                             "another record.") from error
         elif data.decision == 'reversed':
             settlement = db.execute("""SELECT id FROM settlements
                 WHERE tenant_id=%s AND source_type='bank_import' AND source_id=%s FOR UPDATE""", (user["tenant_id"], candidate["bank_transaction_id"])).fetchone()

@@ -96,5 +96,6 @@ def company_today(db, tenant_id):
 
 
 def records_to_post() -> str:
-    """Approved records with no posted journal yet (alias r)."""
-    return f"{APPROVED_RECORD} AND NOT {POSTED_JOURNAL_FOR_RECORD}"
+    """Approved records with no posted journal yet (aliases r and d). Only invoices, bills and credit notes post
+    from the records list; an approved expense receipt is kept as a record and never waits here."""
+    return f"{APPROVED_RECORD} AND d.kind IN ('invoice','bill','credit_note') AND NOT {POSTED_JOURNAL_FOR_RECORD}"

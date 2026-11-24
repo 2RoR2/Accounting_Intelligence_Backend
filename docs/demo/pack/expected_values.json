@@ -1,0 +1,139 @@
+{
+  "invoice": {
+    "supplier": "Seladah Cement & Concrete Sdn. Bhd.",
+    "ssm": "202401800004",
+    "tin": "C9992000004",
+    "number": "SCC-2611-0412",
+    "date": "2026-11-19",
+    "due": "2026-12-19",
+    "subtotal": "5976.00",
+    "tax": "298.80",
+    "total": "6274.80",
+    "reference": null,
+    "lines": [
+      {
+        "description": "Portland cement 50 kg (OPC)",
+        "quantity": "200",
+        "unit_price": "19.80",
+        "amount": "3960.00"
+      },
+      {
+        "description": "Ready-mix mortar 25 kg",
+        "quantity": "80",
+        "unit_price": "12.20",
+        "amount": "976.00"
+      },
+      {
+        "description": "Fine river sand (delivered to site)",
+        "quantity": "20",
+        "unit_price": "52.00",
+        "amount": "1040.00"
+      }
+    ]
+  },
+  "bill": {
+    "supplier": "Kenyalang Telecom Sdn. Bhd.",
+    "ssm": "202401800012",
+    "tin": "C9992000012",
+    "number": "KT-BL-2611-3358",
+    "date": "2026-11-20",
+    "due": "2026-12-20",
+    "subtotal": "427.60",
+    "tax": "34.21",
+    "total": "461.81",
+    "reference": null,
+    "lines": [
+      {
+        "description": "Business Fibre 100 Mbps - monthly fee",
+        "quantity": "1",
+        "unit_price": "299.00",
+        "amount": "299.00"
+      },
+      {
+        "description": "Static IP address add-on",
+        "quantity": "1",
+        "unit_price": "40.00",
+        "amount": "40.00"
+      },
+      {
+        "description": "Fixed line rental (2 lines)",
+        "quantity": "2",
+        "unit_price": "25.00",
+        "amount": "50.00"
+      },
+      {
+        "description": "Call charges (itemised overleaf)",
+        "quantity": "1",
+        "unit_price": "38.60",
+        "amount": "38.60"
+      }
+    ]
+  },
+  "receipt": {
+    "supplier": "Rengas Stationers",
+    "ssm": "202401800003",
+    "tin": "C9992000003",
+    "number": "RS-088412",
+    "date": "2026-11-21",
+    "due": null,
+    "subtotal": "92.50",
+    "tax": "9.25",
+    "total": "101.75",
+    "reference": null,
+    "lines": [
+      {
+        "description": "A4 copier paper 80gsm (ream)",
+        "quantity": "5",
+        "unit_price": "13.90",
+        "amount": "69.50"
+      },
+      {
+        "description": "Flip file A4 (plastic)",
+        "quantity": "10",
+        "unit_price": "2.30",
+        "amount": "23.00"
+      }
+    ]
+  },
+  "credit_note": {
+    "supplier": "Pauh Builders Supply Sdn. Bhd.",
+    "ssm": "202401800001",
+    "tin": "C9992000001",
+    "number": "PBS-CN-2611-017",
+    "date": "2026-11-20",
+    "due": null,
+    "subtotal": "150.00",
+    "tax": "15.00",
+    "total": "165.00",
+    "reference": "PI-2611-01",
+    "lines": [
+      {
+        "description": "Hex bolts M10 x 60 mm, zinc (box 100) - returned damaged",
+        "quantity": "8",
+        "unit_price": "18.75",
+        "amount": "150.00"
+      }
+    ]
+  },
+  "bank_statement": {
+    "account": "000026119901",
+    "opening": "25538.76",
+    "closing": "19255.96",
+    "lines": [
+      [
+        "2026-11-24",
+        "IBG TRANSFER SELADAH CEMENT & CONC",
+        "SCC-2611-0412",
+        "-6274.80",
+        "19263.96"
+      ],
+      [
+        "2026-11-24",
+        "SERVICE CHARGE",
+        "FEE-2611-C",
+        "-8.00",
+        "19255.96"
+      ]
+    ]
+  }
+}

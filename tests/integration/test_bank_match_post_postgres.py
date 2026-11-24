@@ -175,3 +175,30 @@ def test_post_payment_flag_needs_a_confirm_decision(company):
                                                 "expectedRevision": candidate["revision"], "reason": "No",
                                                 "postPayment": True})
     assert response.status_code == 422
+
+
+def test_matching_a_bank_line_to_an_already_settled_bill_is_a_clear_409(company):
+    """Demo rehearsal: a bill paid earlier (e.g. by a payment voucher) refused a later bank match with a 503."""
+    connect, tenant, users, _, request = company
+    line, candidate = proposed_match(company)
+    with connect() as db:  # an earlier payment already allocated the whole bill
+        settlement = db.execute("""INSERT INTO settlements(tenant_id,settlement_ref,settlement_date,direction,amount,
+            currency,source_type,created_by) VALUES (%s,'PV-EARLIER',%s,'money_out',100.00,'MYR','manual_record',%s)
+            RETURNING id""", (tenant, DAY, users["admin"]["id"])).fetchone()["id"]
+        db.execute("""INSERT INTO settlement_allocations(tenant_id,settlement_id,record_id,amount,created_by)
+            VALUES (%s,%s,%s,100.00,%s)""", (tenant, settlement, candidate["recordId"], users["admin"]["id"]))
+    refused = confirm(request, candidate)
+    assert refused.status_code == 409 and "already settled" in refused.json()["detail"]
+    assert counts(connect, line, candidate)["candidate"] == "proposed"
+
+
+def test_an_approved_expense_receipt_never_waits_in_the_journals_to_post_list(company):
+    """Demo rehearsal: a saved receipt showed as 'not posted yet' but its preview said it cannot post from there."""
+    connect, _, users, _, request = company
+    with connect() as db:
+        bill, receipt = insert_record(db, users), insert_record(db, users)
+        db.execute("""UPDATE documents SET kind='receipt' WHERE id=(SELECT document_id FROM standardised_records WHERE id=%s)""",
+                   (receipt,))
+    waiting = [row["id"] for row in ok(request("GET", "/api/records?posting=to-post"))]
+    assert waiting == [bill]
+    assert ok(request("GET", "/api/home/summary", "admin"))["tiles"]["journalsToPost"]["count"] == 1
