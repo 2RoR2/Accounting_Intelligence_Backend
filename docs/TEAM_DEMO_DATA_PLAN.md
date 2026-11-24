@@ -1,7 +1,20 @@
 # Team demo data plan (draft for approval)
 
-Status: **Phase 1 plan, v2 (Jonathan's answers of 24 Nov folded in, see §6).** Waiting for a final go on Phase 2.
-Nothing below has been built or applied yet.
+Status: **Phase 2 built and proven locally (24 Nov); hosted uat not touched.** The plan below is v2 (Jonathan's
+answers of 24 Nov folded in, see §6). Commands and the hosted runbook are in [COMPANY_PACKS.md](COMPANY_PACKS.md#team-demo-companies-tkk-ehb-cda-and-team-work);
+the per-role run-through is [demo/TEAM_TEST_SCRIPT.md](demo/TEAM_TEST_SCRIPT.md).
+
+Where the build differs from the plan text, deliberately:
+- **Opening position.** Each company opens with an opening-funds journal (bank, cash, share capital), as KNT does.
+  There are no imported opening AR/AP items; open items come from the Sep–Nov documents instead.
+- **Bank layouts.** Two layouts are used: signed amount (TKK, CDA) and Debit/Credit columns (EHB). The third
+  `company_pack` layout needs saved column mappings first.
+- **Catalogue size.** TKK has 11 items, EHB 13 and CDA 8. Every item appears on a document, which the tally checks.
+- **How the team documents are made.** They are created by each company's two fixture logins through the app's own
+  submit, approve and post steps, then assigned with the app's assignment function. Submitted documents therefore
+  name the fixture accountant, so a teammate who is an admin can approve them.
+- **Tally after the team Inbox.** The tally reads each team document's printed values from its read record. It
+  counts the posted ones in P&L and AP, and requires every document to be in its planned lane.
 Written 24 Nov 2026 on branch `claude/team-demo-data-31ccd9`. The base is backend `features` at 5ca59c3.
 
 Goal: every teammate (Rachel, Angeline, Aina, Aleeya, Jonathan) can use and test every part of AccordAI with enough
