@@ -5,7 +5,7 @@ import pytest
 from pypdf import PdfReader
 
 from services.routes.erp.pdf import (
-    ISSUED_TYPES, NO_SIGNATURE, TITLES, PdfCanvas, render_document_pdf,
+    ISSUED_TYPES, NO_SIGNATURE, RECEIVED_HEADING, SIGN_AND_RETURN, TITLES, PdfCanvas, render_document_pdf,
 )
 
 COMPANY = {
@@ -75,10 +75,12 @@ def test_renders_each_issued_type(doc_type):
     text = "\n".join(pages_text(data))
     for needle in (COMPANY["name"], "SSM: 201901000005 (1234567-A)", "TIN: C2584563200",
                    "SST No: W10-1808-32000001", "Borneo Hardware Enterprise",
-                   "IV-2026-00003", "IV-2026-00003 rev 2", NO_SIGNATURE, TITLES[doc_type],
+                   "IV-2026-00003", "IV-2026-00003 rev 2",
+                   SIGN_AND_RETURN if doc_type == "delivery-order" else NO_SIGNATURE, TITLES[doc_type],
                    "20/11/2026"):
         assert needle in text, (doc_type, needle)
     if doc_type == "delivery-order":
+        assert RECEIVED_HEADING in text and "Company chop" in text and NO_SIGNATURE not in text
         assert "Amount" not in text
         assert "1,270.00" not in text and "Total" not in text
     else:
@@ -181,3 +183,32 @@ def test_canvas_primitives_and_xref():
     for num, entry in enumerate(entries[:8], 1):
         offset = int(entry[:10])
         assert data[offset:].startswith(f"{num} 0 obj".encode())
+
+
+def test_buyer_sst_validity_attention_and_delivery_address_print():
+    contact = {**make_doc()["contact"], "sstNumber": "W10-2611-99910009"}
+    quote = make_doc("quotation", contact=contact, dueDate=None, validUntil="2026-12-25",
+                     attention="Lim Siew Ling (Purchasing)", deliveryAddress="Jetty 3, Jalan Pending Contoh, 93450 Kuching")
+    text = "\n".join(pages_text(render_document_pdf(quote, COMPANY)))
+    assert "SST No: W10-2611-99910009" in text
+    assert "Valid until" in text and "25/12/2026" in text
+    assert "Attn: Lim Siew Ling (Purchasing)" in text
+    assert "Deliver to" in text and "Jetty 3, Jalan Pending Contoh" in text
+    # Nothing set: none of the new rows print.
+    plain = "\n".join(pages_text(render_document_pdf(make_doc("quotation", dueDate=None), COMPANY)))
+    assert "Valid until" not in plain and "Attn:" not in plain and "Deliver to" not in plain
+
+
+def test_delivery_order_prints_site_under_deliver_to_and_billing_beside_it():
+    doc = make_doc("delivery-order", deliveryAddress="Phase 2 site, Taman Contoh, 94300 Kota Samarahan",
+                   attention="Nurul Ain")
+    text = "\n".join(pages_text(render_document_pdf(doc, COMPANY)))
+    assert "Deliver to" in text and "Phase 2 site, Taman Contoh" in text
+    assert "Bill to" in text and "No. 8, Jalan Padungan" in text
+    assert "Attn: Nurul Ain" in text and "buyer@borneo.example" not in text
+    assert RECEIVED_HEADING in text and "Name / IC no." in text and SIGN_AND_RETURN in text
+
+
+def test_sales_order_is_an_issued_type():
+    text = "\n".join(pages_text(render_document_pdf(make_doc("sales-order"), COMPANY)))
+    assert "SALES ORDER" in text and "Order for" in text and "Total (MYR)" in text and "Payment to:" not in text
