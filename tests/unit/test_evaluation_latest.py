@@ -29,6 +29,7 @@ def test_latest_completed_result_with_relative_paths(tmp_path, monkeypatch):
 
 def test_endpoint_requires_a_workspace_user_and_404s_without_results(tmp_path, monkeypatch):
     monkeypatch.setenv('EVALUATION_RUNS_DIR', str(tmp_path))
+    monkeypatch.setenv('EVALUATION_PUBLISHED_DIR', str(tmp_path / 'published-none'))
     client = TestClient(main.app)
     with patch.object(evaluation, 'require_workspace_user', side_effect=main.HTTPException(401, 'Sign in.')):
         assert client.get('/api/evaluation/latest', headers=HEADERS).status_code == 401
@@ -37,3 +38,46 @@ def test_endpoint_requires_a_workspace_user_and_404s_without_results(tmp_path, m
         write(tmp_path, 'lite-benchmark-20261124T000000Z.json', documents=[{'id': 1}], settings={'manifest_dir': 'holdout'})
         response = client.get('/api/evaluation/latest', headers=HEADERS)
         assert response.status_code == 200 and response.json()['benchmark'] == 'lite-extraction'
+
+
+def test_published_report_is_the_fallback_when_no_local_run_exists(tmp_path, monkeypatch):
+    runs, published = tmp_path / 'runs', tmp_path / 'published'
+    runs.mkdir(), published.mkdir()
+    monkeypatch.setenv('EVALUATION_RUNS_DIR', str(runs))
+    monkeypatch.setenv('EVALUATION_PUBLISHED_DIR', str(published))
+    write(published, 'lite-benchmark-20261124T010000Z.json', documents=[{'id': 1}], settings={'manifest_dir': 'holdout'})
+    assert evaluation.latest_result()['file'] == 'lite-benchmark-20261124T010000Z.json'
+    write(runs, 'lite-benchmark-20261101T000000Z.json', documents=[{'id': 1}], settings={})
+    assert evaluation.latest_result()['file'] == 'lite-benchmark-20261101T000000Z.json'  # a local run wins
+
+
+def _no_machine_paths(text):
+    return 'Users' not in text and ':\\' not in text and '/home/' not in text
+
+
+def test_every_published_report_is_complete_labelled_and_has_no_machine_paths():
+    for path in sorted((evaluation.ROOT / 'evaluation').glob('lite-benchmark-*.json')):
+        text = path.read_text(encoding='utf-8')
+        report = json.loads(text)
+        assert report['documents'] and not report.get('stopped'), path.name
+        assert report['dataset']['synthetic'] is True and 'synthetic' in report['dataset']['label'].lower()
+        assert _no_machine_paths(text), path.name
+
+
+def test_publish_strips_machine_paths_and_refuses_a_stopped_run(tmp_path):
+    from scripts.publish_evaluation import publish
+    source = tmp_path / 'run.json'
+    body = {'benchmark': 'lite-extraction', 'created_at': '2026-11-24T01:02:03+00:00', 'documents': [{'file': 'HLD-1'}],
+            'settings': {'manifest_dir': r'C:\Users\someone\repo\ai\synthetic\output\holdout'},
+            'note': '/home/someone/x/report.json', 'stopped': None}
+    source.write_text(json.dumps(body), encoding='utf-8')
+    target = publish(source, folder=tmp_path / 'evaluation')
+    assert target.name == 'lite-benchmark-20261124T010203Z.json'
+    text = target.read_text(encoding='utf-8')
+    published = json.loads(text)
+    assert published['settings']['manifest_dir'] == 'ai/synthetic/output/holdout' and published['note'] == 'report.json'
+    assert published['dataset']['synthetic'] is True and _no_machine_paths(text)
+    source.write_text(json.dumps({**body, 'stopped': 'PROVIDER_ERROR AI_RATE_LIMITED'}), encoding='utf-8')
+    import pytest
+    with pytest.raises(ValueError):
+        publish(source, folder=tmp_path / 'evaluation')

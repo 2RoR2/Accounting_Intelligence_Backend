@@ -70,24 +70,52 @@ MODEL_FIELDS = {
     'buyer_tax_id': 'the customer\'s tax number, when printed',
     'note_reason': 'reason printed on a credit or debit note',
     'rounding': 'cash rounding adjustment printed on a receipt (may be negative)',
-    'document_number': 'invoice / receipt / bill / note number',
+    'document_number': 'invoice / receipt / bill / note number: the number itself with any letter prefix such as DN- or B, without its label',
     'document_date': 'issue or transaction date',
-    'due_date': 'payment due date',
+    'due_date': 'payment due date ("Due Date", "Pay Before", "Tarikh Akhir Bayaran")',
     'transaction_time': 'time of sale on a receipt (HH:MM)',
     'purchase_order_number': 'purchase order reference',
     'payment_terms': 'payment terms as printed, e.g. Net 30',
     'payment_method': 'one of cash, card, bank_transfer, cheque, e_wallet, direct_debit, other',
-    'account_number': 'customer account number on a utility or service bill',
+    'account_number': 'customer account number on a utility or service bill ("Account No." / "No. Akaun"); never the bill number',
     'billing_period': 'billing period as printed on a bill',
     'original_invoice_number': 'invoice a credit or debit note refers to',
     'currency': 'ISO 4217 code (RM means MYR)',
-    'subtotal': 'amount before tax',
+    'subtotal': 'amount before tax (on a bill: "Current Charges" / "Jumlah Caj Semasa")',
     'discount': 'document-level discount amount',
     'tax_amount': 'total tax (SST, GST, VAT, service tax)',
     'total_amount': 'final total including tax',
-    'amount_due': 'amount still payable, when printed separately from the total',
+    'amount_due': 'amount still payable, when printed separately from the total (on a bill: "Amount Due" / "Jumlah Perlu Dibayar", which can include arrears)',
 }
 DATE_FIELDS = {'document_date', 'due_date'}
+NAME_FIELDS = {'seller_name', 'buyer_name'}
+REFERENCE_FIELDS = {'document_number', 'account_number', 'original_invoice_number', 'purchase_order_number'}
+# A printed label the model copied in front of a reference number ("Bill No.: B293891844").
+_REFERENCE_LABEL = re.compile(r'^[^\d:#]{0,40}\b(?:no|number|nombor|num|ref|reference|rujukan)\b\.?\s*[:#]\s*(?=\S)', re.I)
+# A document heading printed on the same line as a name or address ("... Berhad | BIL / BILL WATER").
+_HEADING_COLUMN = re.compile(
+    r'(?:(?:bil|bill|invoice|invois|tax|cukai|receipt|resit|nota|note|credit|kredit|debit|statement|penyata|'
+    r'water|air|electricity|elektrik|internet|broadband|telefon|telephone|utility|utiliti)\b[\s/:.-]*)+', re.I)
+
+
+def drop_heading_columns(value, *, name=False):
+    """Remove document-heading columns joined to a name or address by " | ".
+
+    The layout joins text printed far apart on one line with " | "; a heading such
+    as "BIL / BILL WATER" beside the provider name is not part of the name. A name
+    keeps only its first remaining column. Nothing else is changed.
+    """
+    if not value or ' | ' not in value:
+        return value
+    lines = []
+    for line in value.split('\n'):
+        parts = [part.strip() for part in line.split(' | ')]
+        kept = [part for part in parts if part and not _HEADING_COLUMN.fullmatch(part)]
+        if name and kept:
+            kept = kept[:1]
+        if kept:
+            lines.append(' '.join(kept))
+    return '\n'.join(lines) or value
 ADDRESS_FIELDS = {'seller_address', 'buyer_address'}
 _DATE_TOKEN = r'\d{1,2}[/.-]\d{1,2}[/.-](?:\d{4}|\d{2})'
 _PERIOD = re.compile(rf'({_DATE_TOKEN})\s*(?:-|–|to|hingga|until|sehingga)\s*({_DATE_TOKEN})', re.I)
@@ -392,6 +420,11 @@ class _Resolver:
         value = value if value is not None else raw
         if value.casefold() in {'null', 'none', 'n/a', 'na', '-', 'unknown', 'not printed', 'not available'}:
             return self._missing()
+        if name in REFERENCE_FIELDS:
+            value, raw = _REFERENCE_LABEL.sub('', value), _REFERENCE_LABEL.sub('', raw) if raw else raw
+        if name in NAME_FIELDS or name in ADDRESS_FIELDS:
+            is_name = name in NAME_FIELDS
+            value, raw = drop_heading_columns(value, name=is_name), drop_heading_columns(raw, name=is_name)
         if name in MONEY_FIELDS:
             amount = parse_amount(raw) or parse_amount(value)
             if amount is None:
@@ -445,7 +478,7 @@ class _Resolver:
             return self._accept(method, raw, rows)
         if name == 'billing_period':
             # OCR often drops the spaces around the dash: keep both printed dates, normalise the joint.
-            period = _PERIOD.search(value) or _PERIOD.search(raw or '')
+            period = _PERIOD.search(raw or '') or _PERIOD.search(value)  # the printed separators win
             rows = self.index.find_text(value) or self.index.find_text(raw)
             if period and rows:
                 return self._accept(f'{period[1]} - {period[2]}', raw, rows)
@@ -498,6 +531,78 @@ class _Resolver:
                      model=self.model, provider=self.provider)
 
 
+_TWO_DECIMALS = re.compile(r'(?<![\d.,])\d{1,3}(?:,\d{3})*\.\d{2}(?![\d.,])|(?<![\d.,])\d+\.\d{2}(?![\d.,])')
+_BILL_LABELS = {
+    'amount_due': re.compile(r'amount\s+due|perlu\s+dibayar|total\s+payable|amount\s+payable', re.I),
+    'subtotal': re.compile(r'current\s+charges|caj\s+semasa|sub[\s-]?total|jumlah\s+kecil', re.I),
+}
+# Lines that change what is payable: the amount due is not read as the total when any is printed.
+_BALANCE_ADJUSTMENT = re.compile(
+    r'arrears|tunggakan|outstanding|previous\s+balance|baki|payment\s+received|bayaran\s+diterima|deposit|'
+    r'rebate|rebat|adjustment|pelarasan|credit|kredit|overpaid|lebihan|discount|diskaun|rounding|pembundaran', re.I)
+
+
+def _labelled_amount(text, label):
+    """The one two-decimal amount printed on the one line that carries `label`, else None.
+
+    Skipped when several lines carry the label, when that line also names a balance
+    adjustment (an arrears figure could be read instead) or holds more than one amount.
+    """
+    hits = [line for line in text.splitlines() if label.search(line)]
+    if len(hits) != 1 or _BALANCE_ADJUSTMENT.search(hits[0]):
+        return None
+    amounts = _TWO_DECIMALS.findall(hits[0])
+    return parse_amount(amounts[0]) if len(amounts) == 1 else None
+
+
+def derive_bill_values(fields, text, index, issues, *, prefill):
+    """Fill a missing bill subtotal or amount due from the document's own printed figures.
+
+    The value placed is always an amount printed in the source; tax is never computed.
+      subtotal    the amount on the one "Current Charges" / "Subtotal" line, else the
+                  printed amount that equals printed total minus printed tax
+      amount_due  the amount on the one "Amount Due" line, else the printed total when
+                  no arrears, payment, deposit, credit or other adjustment is printed
+    Each fill is flagged with VALUE_FROM_PRINTED_FIGURES for the reviewer.
+    """
+    def value(key):
+        cell = fields.get(key) or {}
+        return cell.get('value') if cell.get('state') == 'resolved' and cell.get('value') is not None else None
+
+    def printed(amount):
+        return index.find_amount(Decimal(amount).copy_abs()) if amount is not None else []
+
+    def fill(key, amount, check, detail):
+        rows = printed(amount)
+        if not rows:
+            return False
+        fields[key] = _cell('resolved', amount, method=_read_method(rows) if prefill else 'VLM',
+                            raw=rows[0]['text'], evidence=[index.evidence(row) for row in rows],
+                            candidates=[{'source': 'printed_figures', 'value': amount, 'auto_accepted': False,
+                                         'source_check': check}] if prefill else [])
+        if not prefill:
+            fields[key]['source_check'] = check
+        issues.append({'code': 'VALUE_FROM_PRINTED_FIGURES', 'field': key, 'detail': detail})
+        return True
+
+    total, tax = value('total_amount'), value('tax_amount')
+    if 'subtotal' in fields and value('subtotal') is None:
+        amount = _labelled_amount(text, _BILL_LABELS['subtotal'])
+        if not (amount and fill('subtotal', amount, 'printed_on_labelled_line',
+                                'Read from the printed current-charges / subtotal line. Confirm it.')):
+            if total is not None and tax is not None and Decimal(total) > Decimal(tax) >= 0:
+                fill('subtotal', format(Decimal(total) - Decimal(tax), 'f'), 'printed_total_less_printed_tax',
+                     'The printed amount equal to the printed total less the printed tax. Confirm it.')
+    if 'amount_due' in fields and value('amount_due') is None:
+        amount = _labelled_amount(text, _BILL_LABELS['amount_due'])
+        if not (amount and fill('amount_due', amount, 'printed_on_labelled_line',
+                                'Read from the printed amount-due line. Confirm it.')):
+            if total is not None and not _BALANCE_ADJUSTMENT.search(text):
+                fill('amount_due', total, 'printed_total_no_adjustment_printed',
+                     'No arrears, payment or adjustment is printed, so the amount due is the printed total. Confirm it.')
+    return fields
+
+
 def prefill_policy(environ=None):
     env = os.environ if environ is None else environ
     policy = env.get('AI_PREFILL', 'verified').strip().lower() or 'verified'
@@ -542,6 +647,9 @@ def structure_document(document, *, providers=None, environ=None):
     fields = {}
     for model_name, source_key in PROFILE_FIELDS.get(kind, {}).items():
         fields[source_key] = resolver.field(model_name, answered.get(model_name))
+    if kind == 'bill':
+        fields = derive_bill_values(fields, text[:MAX_PROMPT_CHARACTERS], resolver.index, resolver.issues,
+                                    prefill=policy == 'verified')
     lines = []
     items = answer.get('line_items') if isinstance(answer.get('line_items'), list) else []
     for item in items[:MAX_LINE_ITEMS] if classified else []:

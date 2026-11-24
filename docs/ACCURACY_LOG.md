@@ -75,3 +75,27 @@ those documents had no fields. Rows 2 and 3 are therefore compared on the 57 doc
 completed. The full-run figure for run 3 was 726/798 = 90.98%; with the 3 failed documents scored
 as in run 2 it would be 768/798 = 96.2% (a projection, not a measurement). From run 4 on,
 `AI_MAX_RETRIES=4`.
+
+## Hosted settings lift (24 Nov 2026): Groq `openai/gpt-oss-120b`, lite OCR (`LITE_OCR_DET_SIDE=736`)
+
+Baseline (hold-out, 23-24 Nov night, before this change): 36 of 60 documents ran because the
+benchmark stopped at the first `AI_RATE_LIMITED`; strict accuracy 0.841, coverage 0.904, no false
+fills; 22.6 s mean / 36.4 s p90 per document (read 2.6 s, model 19.9 s); 2 model failures
+(`AI_RESPONSE_TRUNCATED`, `AI_RATE_LIMITED`).
+
+Changes: `reasoning_effort=low` by default for gpt-oss models (`AI_REASONING_EFFORT`); 429 back-off
+honours Retry-After up to 60 s (5/10/20 s otherwise, 3 retries); the benchmark records a rate limit
+and continues; bill subtotal / amount due read from the printed "Current Charges" / "Amount Due"
+line, else printed total less printed tax (only when that amount is printed) / printed total when
+no arrears, payment or adjustment is printed; document-heading columns (" | BIL / BILL WATER")
+removed from names and addresses; a label copied before a reference number removed; billing
+period keeps the printed separators.
+
+Tuning subset after the change (11 of 60 tuning documents): bills 003/004/006/012 and receipts
+002/005/011/013 with the final code: 92/96 correct (0.958), coverage 0.990, model 3.2 s mean, total
+4.3 s mean; an earlier probe (bills 003/004, invoice 001, credit note 007): invoices and notes
+30/30, model 3-10 s; invoice 008 with the final code: 12/15. No full tuning
+before/after and no hold-out run: the Groq key reached its 200,000 tokens-per-day limit
+(rolling window) during this work. Run the hold-out once when the budget allows, at `--pace 20`
+(8,000 tokens per minute at ~2.6k tokens per document), then publish it with
+`scripts/publish_evaluation.py`.
