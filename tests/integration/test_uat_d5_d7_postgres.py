@@ -53,6 +53,8 @@ def database():
     try:
         migrations = [(ROOT / f"database/migrations/{name}.sql").read_text(encoding="utf-8") for name in (
             "20261125_bank_recorded_document", "20261126_bank_recorded_document_void",
+            # Re-run after 20261126, which it replaces the bank guard of (otherwise the fixture would restore the old one).
+            "20261206_bank_document_match",
             "20261127_vendor_default_expense_account",
         )]
         schema = (ROOT / "database/PostgreSQL Database schema.sql").read_text(encoding="utf-8-sig")

@@ -747,10 +747,17 @@ def _void(db, user, doc, reason):
     updated = db.execute("""UPDATE erp_document_headers SET status='void',voided_at=now(),void_reason=%s,reversal_journal_id=%s,
             updated_by=%s,updated_at=now() WHERE id=%s AND tenant_id=%s RETURNING *""",
                       (reason, reversal, user["id"], doc["id"], user["tenant_id"])).fetchone()
-    if doc["document_type"] in {"money-in", "money-out"}:
+    # A voided money document releases its bank line: one recorded from the line (money in/out), or one matched to the
+    # line by hand (a voucher or a payment received), whose match row is closed with the void as its reason.
+    manual = db.execute("""SELECT id,bank_transaction_id FROM bank_document_matches WHERE tenant_id=%s AND document_id=%s
+        AND unmatched_at IS NULL FOR UPDATE""", (user["tenant_id"], doc["id"])).fetchall()
+    if doc["document_type"] in {"money-in", "money-out"} or manual:
         reopened = db.execute("""UPDATE bank_transactions SET status='imported',recorded_document_id=NULL
             WHERE tenant_id=%s AND recorded_document_id=%s RETURNING id""",
             (user["tenant_id"], doc["id"])).fetchall()
+        for row in manual:
+            db.execute("""UPDATE bank_document_matches SET unmatched_at=now(),unmatched_by=%s,unmatch_reason=%s
+                WHERE id=%s""", (user["id"], f"Voided {doc['document_number']}: {reason}"[:1000], row["id"]))
         for bank in reopened:
             audit(db, user, "bank.recorded_document_voided", bank["id"], {"documentId": str(doc["id"])})
     if db.execute("SELECT 1 FROM erp_document_files WHERE tenant_id=%s AND document_id=%s LIMIT 1",

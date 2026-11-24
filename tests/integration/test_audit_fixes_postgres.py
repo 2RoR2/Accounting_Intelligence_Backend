@@ -61,14 +61,19 @@ def test_blocked_submission_names_what_blocks_it(company):
     assert detail.startswith("Resolve the current validation findings") or "Save and revalidate" in detail
 
 
-def insert_money_document(company, *, document_type="purchase-payment", amount="100.00", status="ready"):
+def insert_money_document(company, *, document_type="purchase-payment", amount="100.00", status="ready",
+                          bank_account="OPS"):
+    """A ready money document paid through the OPS bank account, another catalog account code, or none (None)."""
     connect, tenant, users, _, _ = company
     with connect() as db:
-        bank = db.execute("SELECT id FROM erp_catalog_entries WHERE tenant_id=%s AND kind='bank-account'", (tenant,)).fetchone()
+        bank = None
+        if bank_account:
+            bank = db.execute("SELECT id FROM erp_catalog_entries WHERE tenant_id=%s AND kind='bank-account' AND code=%s",
+                              (tenant, bank_account)).fetchone()["id"]
         return str(db.execute("""INSERT INTO erp_document_headers(tenant_id,document_type,document_number,status,
                 contact_name,document_date,currency,subtotal,total_amount,bank_account_id,created_by)
             VALUES (%s,%s,%s,%s,'Triple Six Point Enterprise 666',%s,'MYR',%s,%s,%s,%s) RETURNING id""",
-            (tenant, document_type, f"PV-T-{uuid4().hex[:6]}", status, DAY, amount, amount, bank["id"],
+            (tenant, document_type, f"PV-T-{uuid4().hex[:6]}", status, DAY, amount, amount, bank,
              users["admin"]["id"])).fetchone()["id"])
 
 
@@ -160,3 +165,97 @@ def test_a_submitted_document_cannot_be_set_aside(company):
                json={"decision": "submitted", "note": "ready", "expectedContentRevision": doc["expectedContentRevision"]}))
     refused = request("POST", f"/api/documents/{doc['documentId']}/exclude", "accountant", json={"reason": "Changed my mind"})
     assert refused.status_code == 409 and "Return or reject it first" in refused.json()["detail"]
+
+
+def match_rows(connect, line):
+    with connect() as db:
+        return db.execute("""SELECT document_id,unmatched_at,unmatch_reason FROM bank_document_matches
+            WHERE bank_transaction_id=%s ORDER BY matched_at""", (line,)).fetchall()
+
+
+def test_a_wrong_match_is_unmatched_with_a_reason_and_matched_again(company):
+    import psycopg
+    connect, _, _, _, request = company
+    line = insert_bank_line(company)
+    wrong, right = insert_money_document(company), insert_money_document(company)  # two RM 100 vouchers
+    ok(request("POST", f"{BANK}/{line}/match-document", "accountant", json={"documentId": wrong}))
+    detail = ok(request("GET", f"{BANK}/{line}", "accountant"))
+    assert detail["recordedDocumentId"] == wrong and detail["recordedByMatch"] is True
+
+    assert request("POST", f"{BANK}/{line}/unmatch-document", "accountant", json={"reason": "no"}).status_code == 422
+    undone = ok(request("POST", f"{BANK}/{line}/unmatch-document", "accountant",
+                        json={"reason": "Picked the wrong RM 100 voucher"}))
+    assert undone["status"] == "imported"
+    with connect() as db:
+        row = db.execute("SELECT status,recorded_document_id FROM bank_transactions WHERE id=%s", (line,)).fetchone()
+        audit = db.execute("SELECT details FROM audit_logs WHERE action='bank.unmatch_recorded_document' AND resource=%s",
+                           (line,)).fetchone()
+    assert row["status"] == "imported" and row["recorded_document_id"] is None
+    assert "Picked the wrong RM 100 voucher" in audit["details"]
+    # Unmatching twice is refused; the wrong voucher is free again and the right one can be matched.
+    assert request("POST", f"{BANK}/{line}/unmatch-document", json={"reason": "Again, by mistake"}).status_code == 409
+    assert wrong in {item["documentId"] for item in ok(request("GET", f"{BANK}/{line}/recorded-documents"))}
+    ok(request("POST", f"{BANK}/{line}/match-document", "accountant", json={"documentId": right}))
+    rows = match_rows(connect, line)
+    assert [(str(r["document_id"]), r["unmatched_at"] is not None) for r in rows] == [(wrong, True), (right, False)]
+    assert rows[0]["unmatch_reason"] == "Picked the wrong RM 100 voucher"
+    # A match row is kept for audit: it cannot be deleted.
+    with pytest.raises(psycopg.errors.RaiseException):
+        with connect() as db:
+            db.execute("DELETE FROM bank_document_matches WHERE bank_transaction_id=%s", (line,))
+
+
+def test_a_line_recorded_as_a_money_document_still_cannot_be_unlinked(company):
+    import psycopg
+    connect, _, _, accounts, request = company
+    fee = insert_bank_line(company, amount="2.50")
+    expense = ok(request("POST", f"{BANK}/{fee}/record-expense", "accountant",
+                         json={"ledgerAccountId": str(accounts["5000"]), "description": "Monthly fee"}), 201)
+    assert ok(request("GET", f"{BANK}/{fee}"))["recordedByMatch"] is False
+    refused = request("POST", f"{BANK}/{fee}/unmatch-document", json={"reason": "Trying to unlink it"})
+    assert refused.status_code == 409 and "voiding that document" in refused.json()["detail"]
+    with pytest.raises(psycopg.errors.RaiseException, match="cannot be changed"):
+        with connect() as db:
+            db.execute("UPDATE bank_transactions SET status='imported',recorded_document_id=NULL WHERE id=%s", (fee,))
+    with connect() as db:
+        linked = db.execute("SELECT recorded_document_id FROM bank_transactions WHERE id=%s", (fee,)).fetchone()
+    assert str(linked["recorded_document_id"]) == expense["documentId"]
+
+
+def test_both_bank_accounts_must_be_known_and_the_same(company):
+    from psycopg.types.json import Jsonb
+    connect, tenant, _, accounts, request = company
+    with connect() as db:
+        db.execute("""INSERT INTO erp_catalog_entries(tenant_id,kind,name,code,ledger_account_id,data)
+            VALUES (%s,'bank-account','Cash in hand','CASH',%s,%s)""",
+                   (tenant, accounts["1010"], Jsonb({"accountNumber": "CASH-1"})))
+    line = insert_bank_line(company)
+    cash = insert_money_document(company, bank_account="CASH")
+    no_account = insert_money_document(company, bank_account=None)
+    found = {row["documentId"]: row["problem"] for row in ok(request("GET", f"{BANK}/{line}/recorded-documents"))}
+    assert "another bank account" in found[cash]
+    assert "names no bank account" in found[no_account]
+    for document in (cash, no_account):
+        assert request("POST", f"{BANK}/{line}/match-document", json={"documentId": document}).status_code == 409
+    # A statement line whose account is not known cannot be matched either, even to a voucher with an account.
+    unknown = insert_bank_line(company, reference="NOT-A-KNOWN-ACCOUNT")
+    voucher = insert_money_document(company)
+    candidates = {row["documentId"]: row["problem"] for row in ok(request("GET", f"{BANK}/{unknown}/recorded-documents"))}
+    assert "not known" in candidates[voucher]
+    assert request("POST", f"{BANK}/{unknown}/match-document", json={"documentId": voucher}).status_code == 409
+
+
+def test_a_matched_voucher_cannot_become_an_expense_and_voiding_it_reopens_the_line(company):
+    connect, _, _, accounts, request = company
+    line = insert_bank_line(company)
+    voucher = insert_money_document(company)
+    ok(request("POST", f"{BANK}/{line}/match-document", json={"documentId": voucher}))
+    refused = request("POST", f"{BANK}/{line}/record-expense", json={"ledgerAccountId": str(accounts["5000"])})
+    assert refused.status_code == 409 and "Unmatch it first" in refused.json()["detail"]
+    voided = request("POST", f"/api/erp/documents/purchase-payment/{voucher}/transition",
+                     json={"status": "void", "reason": "Entered twice"})
+    assert voided.status_code == 200, voided.text
+    with connect() as db:
+        row = db.execute("SELECT status,recorded_document_id FROM bank_transactions WHERE id=%s", (line,)).fetchone()
+    assert row["status"] == "imported" and row["recorded_document_id"] is None
+    assert match_rows(connect, line)[0]["unmatch_reason"].startswith("Voided ")
