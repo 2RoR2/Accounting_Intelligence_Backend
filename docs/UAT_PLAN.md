@@ -111,7 +111,7 @@ Expected result: the tester reaches the Dashboard of the demo trading company wi
 
 Steps:
 1. Read the Dashboard.
-2. Open one item from each list (to review, ready to approve, needs fixing, bank lines to match, bills due in 7 days, customers overdue, journals waiting to post).
+2. Open one item from each list (to review, ready to submit (an admin sees "ready to approve"), needs fixing, bank lines to match, bills due in 7 days, customers overdue, journals waiting to post).
 
 Expected result: each count is shown and links to the matching list; the Dashboard does not show all zeros for the demo company.
 

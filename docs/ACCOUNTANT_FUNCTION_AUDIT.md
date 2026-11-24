@@ -86,7 +86,7 @@ state are all in the API response but not shown as columns.
 
 ## 4. Inbox › To review lanes
 
-**Purpose:** work queue: To review → Ready to approve → Sent for approval (admin: Approval queue).
+**Purpose:** work queue: To review → Ready to submit → Sent for approval (admin: Ready to approve → Approval queue).
 
 | Function | Expected behaviour | Status | Evidence | Fix |
 |---|---|---|---|---|

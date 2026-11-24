@@ -264,7 +264,9 @@ def list_documents(
         params.extend([amount, amount])
     with connect() as db:
         rows = db.execute(f"""
-            SELECT d.*, sr.total_amount,
+            SELECT d.*, sr.total_amount, total_field.value AS read_total_value,
+                   -- The same predicate as the "ready" lane (services/routes/home/lanes.py), so the badge and the count agree.
+                   ({DOCUMENT_LANES['ready']}) AS ready_to_submit,
                    -- Before a record exists, the party is the extraction's current value. A contact's related documents depend on this.
                    COALESCE(sr.supplier_name, supplier_field.value) AS supplier_name,
                    COALESCE(sr.buyer_name, customer_field.value) AS buyer_name,
@@ -279,6 +281,16 @@ def list_documents(
                 ORDER BY revision_number DESC
                 LIMIT 1
             ) sr ON true
+            LEFT JOIN LATERAL (
+                -- What the AI read (or a reviewer corrected) on the current extraction, for a document with no saved record yet.
+                SELECT COALESCE(fp.current_value, fp.normalized_value, fp.raw_value) AS value
+                FROM field_predictions fp
+                JOIN raw_extractions re ON re.id=fp.extraction_id AND re.is_current=true
+                WHERE fp.document_id=d.id AND fp.field_key::text IN ('total', 'total_amount', 'amount_due')
+                  AND NULLIF(btrim(COALESCE(fp.current_value, fp.normalized_value, fp.raw_value)), '') IS NOT NULL
+                ORDER BY array_position(ARRAY['total', 'total_amount', 'amount_due'], fp.field_key::text), fp.created_at DESC
+                LIMIT 1
+            ) total_field ON true
             LEFT JOIN LATERAL (
                 SELECT current_value, normalized_value, raw_value
                 FROM field_predictions
@@ -312,7 +324,23 @@ def list_documents(
             ORDER BY d.uploaded_at DESC
         """, params).fetchall()
         names = _ReadableNames(db, user)
-    return [{"id": str(r["id"]), "code": r["document_code"], **names.of(r), "name": _display_filename(r["original_filename"], r["detected_identifier"], r["buyer_name"] if r["category"] == "accounts_receivable" else r["supplier_name"]), "originalFilename": r["original_filename"], "tenantId": str(r["tenant_id"]), "ownerId": str(r["owner_id"]), "assignedTo": str(r["assigned_to"]) if r["assigned_to"] else None, **read_kind(r), "category": r["category"].upper(), "status": r["status"].upper(), "mimeType": r["mime_type"], "fileSize": r["file_size_bytes"], "contentRevision": r["content_revision"], "seconds": float(r["processing_seconds"]) if r["processing_seconds"] is not None else 0, "totalAmount": float(r["total_amount"]) if r["total_amount"] is not None else None, "supplier": r["supplier_name"], "customer": r["buyer_name"], "dueDate": r["due_date_value"], "createdAt": str(r["uploaded_at"]), "updatedAt": str(r["updated_at"])} for r in rows]
+    return [{"id": str(r["id"]), "code": r["document_code"], **names.of(r), "name": _display_filename(r["original_filename"], r["detected_identifier"], r["buyer_name"] if r["category"] == "accounts_receivable" else r["supplier_name"]), "originalFilename": r["original_filename"], "tenantId": str(r["tenant_id"]), "ownerId": str(r["owner_id"]), "assignedTo": str(r["assigned_to"]) if r["assigned_to"] else None, **read_kind(r), "category": r["category"].upper(), "status": r["status"].upper(), "mimeType": r["mime_type"], "fileSize": r["file_size_bytes"], "contentRevision": r["content_revision"], "seconds": float(r["processing_seconds"]) if r["processing_seconds"] is not None else 0, **list_total(r), "readyToSubmit": bool(r.get("ready_to_submit")), "supplier": r["supplier_name"], "customer": r["buyer_name"], "dueDate": r["due_date_value"], "createdAt": str(r["uploaded_at"]), "updatedAt": str(r["updated_at"])} for r in rows]
+
+def list_total(row) -> dict:
+    """The total a document list shows and where it came from.
+
+    The saved record's total once there is one ("record", approved). Until then the total the AI read from the
+    document (current extraction: total, total_amount or amount_due), marked "read" so the page can show it as
+    not yet approved. A value that is not a clean amount is left out rather than guessed.
+    """
+    if row["total_amount"] is not None:
+        return {"totalAmount": float(row["total_amount"]), "totalSource": "record"}
+    from services.extraction.lite.structure import parse_amount
+    read = parse_amount(row.get("read_total_value"))
+    if read is not None:
+        return {"totalAmount": float(read), "totalSource": "read"}
+    return {"totalAmount": None, "totalSource": None}
+
 
 class _ReadableNames:
     """Plan M4/M2 for document lists: the rule name from the record and whether the company is the seller."""

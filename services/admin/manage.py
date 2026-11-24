@@ -57,6 +57,9 @@ def main():
     from services.admin import planm_tidy
     planm_tidy.add_arguments(commands.add_parser(
         "planm-tidy", help="local only: contact codes, own-sales captures excluded, M4 names (dry run unless --apply)"))
+    from services.admin import repair_nonumber
+    repair_nonumber.add_arguments(commands.add_parser(
+        "repair-nonumber", help="rename stored document names that still say NONUMBER (dry run unless --apply)"))
     for command, help_text in (("seed-knt", "load the KNT demo books into a local database"),
                                ("reset-knt", "delete and rebuild the local KNT demo books"),
                                ("tally", "verify a company's demo books (KNT by default) and print a summary")):
@@ -89,6 +92,8 @@ def main():
         except demo_company.SeedError as error:
             parser.exit(2, f"{error}\n")
         return
+    if args.command == "repair-nonumber":
+        sys.exit(repair_nonumber.run(args))
     if args.command == "planm-tidy":
         sys.exit(planm_tidy.run(args))
     if args.command in company_commands.COMMANDS or (args.command == "tally" and (args.company or args.all
