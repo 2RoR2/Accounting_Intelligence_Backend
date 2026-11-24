@@ -1,0 +1,28 @@
+{
+  "_comment": "Example only: synthetic .test addresses. Copy it OUTSIDE the repository, put each person's real address (a +company address for every company after their first), and pass it with --roster. Slots never change; they keep each person's document numbers apart. Layout: docs/TEAM_DEMO_DATA_PLAN.md section 2.2.",
+  "people": [
+    {"slot": "KNT.accountant.1", "name": "Jonathan", "email": "jonathan@team.demo.test", "inbox": "full"},
+    {"slot": "KNT.accountant.2", "name": "Rachel", "email": "rachel@team.demo.test", "inbox": "full"},
+    {"slot": "KNT.accountant.3", "name": "Angeline", "email": "angeline@team.demo.test", "inbox": "full"},
+    {"slot": "KNT.accountant.4", "name": "Aina", "email": "aina@team.demo.test", "inbox": "full"},
+    {"slot": "KNT.accountant.5", "name": "Aleeya", "email": "aleeya@team.demo.test", "inbox": "full"},
+    {"slot": "KNT.accountant.6", "name": "SAIC Accountant 1", "email": "saic1@client.demo.test", "inbox": "starter"},
+    {"slot": "KNT.accountant.7", "name": "SAIC Accountant 2", "email": "saic2@client.demo.test", "inbox": "starter"},
+    {"slot": "KNT.accountant.8", "name": "SAIC Accountant 3", "email": "saic3@client.demo.test", "inbox": "starter"},
+
+    {"slot": "TKK.admin.1", "name": "Rachel (TKK admin)", "email": "rachel+tkk@team.demo.test"},
+    {"slot": "TKK.accountant.1", "name": "Angeline", "email": "angeline+tkk@team.demo.test", "inbox": "full"},
+    {"slot": "TKK.accountant.2", "name": "Aleeya", "email": "aleeya+tkk@team.demo.test", "inbox": "full"},
+    {"slot": "TKK.accountant.3", "name": "Jonathan", "email": "jonathan+tkk@team.demo.test", "inbox": "full"},
+
+    {"slot": "EHB.admin.1", "name": "Angeline (EHB admin)", "email": "angeline+ehb@team.demo.test"},
+    {"slot": "EHB.admin.2", "name": "Aleeya (EHB admin)", "email": "aleeya+ehb@team.demo.test"},
+    {"slot": "EHB.accountant.1", "name": "Rachel", "email": "rachel+ehb@team.demo.test", "inbox": "full"},
+    {"slot": "EHB.accountant.2", "name": "Aina", "email": "aina+ehb@team.demo.test", "inbox": "full"},
+    {"slot": "EHB.accountant.3", "name": "Jonathan", "email": "jonathan+ehb@team.demo.test", "inbox": "full"},
+
+    {"slot": "CDA.admin.1", "name": "Aina (CDA admin)", "email": "aina+cda@team.demo.test"},
+    {"slot": "CDA.accountant.1", "name": "Rachel", "email": "rachel+cda@team.demo.test", "inbox": "full"},
+    {"slot": "CDA.accountant.2", "name": "Aleeya", "email": "aleeya+cda@team.demo.test", "inbox": "full"}
+  ]
+}

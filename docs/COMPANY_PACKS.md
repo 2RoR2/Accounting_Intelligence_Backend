@@ -147,3 +147,80 @@ month 3 (credit notes negative).
 - Every bank row has one gold row; every referenced id exists; allocations sum to the bank amount.
 - Closing receivables and payables equal the documents and opening items less the allocations in
   `expected_matches.csv`; no item is over-allocated; every opening item receives a payment.
+
+## Team demo companies (TKK, EHB, CDA) and team work
+
+Plan and decisions: [TEAM_DEMO_DATA_PLAN.md](TEAM_DEMO_DATA_PLAN.md). Three more fictional companies, built
+with the same steps as KNT (`services/admin/company_seed.py`). The scenario comes from
+`ai/synthetic/sme_profiles.py` and `ai/synthetic/sme_books.py`, with a fixed seed, so the same code always builds
+the same books. Every company has:
+
+- Sep–Nov 2026 books, with a cut-off of 23 Nov;
+- an opening-funds journal;
+- contacts with full headers, products, tax-code labels and payment terms;
+- quotation chains into invoices;
+- credit and debit notes, one of them paid together with its invoice in one transfer;
+- typed supplier bills, some paid and some open;
+- 14 Inbox documents stored as already-read records (no AI is called);
+- three bank statements that reconcile, each with one unidentified line;
+- September closed (locked).
+
+| Code | Company | Trade, place | Bank account label | Statement layout |
+|---|---|---|---|---|
+| TKK | Teratai Kopi & Katering Sdn. Bhd. | café and catering, Kuching | Maybank Current Account ••4402 | signed amount, ISO dates |
+| EHB | Enggang Hardware & Building Supply Sdn. Bhd. | hardware and rental, Miri | RHB Current Account ••7715 | Debit/Credit columns, dd/mm/yyyy |
+| CDA | Cendana Advisory Sdn. Bhd. | accounting and tax advisory, Kota Kinabalu | CIMB Current Account ••3360 | signed amount, ISO dates |
+
+The banks are real Malaysian banks named on the account label (as KNT names Public Bank). Account numbers are
+invented, and no bank's design is copied. Tax is typed as printed on every document.
+
+### Commands
+
+```bash
+python services/admin/manage.py build-pack --company TKK           # files only
+python services/admin/manage.py seed-company --company TKK         # local, from empty (then tallies)
+python services/admin/manage.py reset-company --company TKK        # local: wipe TKK (users kept) and rebuild
+python services/admin/manage.py apply-company --company TKK        # dry run; add --apply (and --allow-remote)
+python services/admin/manage.py tally --company TKK                # or --all; read-only
+python services/admin/manage.py team-accounts --roster PRIVATE.json             # dry run; then --apply
+python services/admin/manage.py team-inbox --company TKK --roster PRIVATE.json  # dry run; then --apply
+python services/admin/manage.py team-upload-pack --roster PRIVATE.json          # live-upload test files
+```
+
+**The roster** is a private JSON file kept outside the repository. The format is in
+`docs/demo/team_roster.example.json` (synthetic addresses).
+- Each slot (`TKK.accountant.2`) gives one person one role in one company. A person who works in several companies
+  uses a `+company` address for each company after their first; Gmail delivers it to the same inbox.
+- Emails are always printed masked.
+
+**`team-accounts`** creates missing users as active with no password.
+- Each person sets their own password with Forgot password (email code).
+- Local admins enrol an authenticator at first sign-in.
+- It never changes an existing user. An address that already belongs to another company or role, or a full seat
+  limit, stops the run before anything is written.
+
+**`team-inbox`** gives each roster accountant their own documents.
+- A full set is 12: 3 to review, 3 ready, 2 waiting for approval, 3 needing a fix (unknown supplier, possible
+  duplicate, missing number) and 1 approved and posted, including a supplier credit note and debit note. A starter
+  set is 6.
+- The documents are made by the company's fixture logins through the app (submit, approve, post) and assigned with
+  the app's own assignment (workload row, audit entry, notification). They are temporarily set active for the run.
+- Amounts follow each supplier's usual amount, so the app's unusual-amount check stays quiet except where a finding
+  is meant to appear.
+- A second run adds nothing.
+
+**`tally`** knows about the team documents. Each one must still be in the lane it was made for, and the posted ones
+count in P&L and AP. Run it right after an apply: once people work in a company, its books move on.
+
+### Applying to hosted UAT (only on Jonathan's explicit go-ahead)
+
+1. In a shell with the uat `DATABASE_URL` (read from the private env file, never printed) and
+   `COMPANY_PACK_REMOTE_HOST` set to its host, run every command without `--apply`, and check the plan.
+2. Create a Neon snapshot branch of `uat` (`uat-pre-team-demo-<yyyymmdd-hhmm>`) and record its id.
+3. Run `apply-company --company TKK --apply --allow-remote`, then EHB, then CDA. On a remote database the fixture
+   logins get no password and are disabled at the end.
+4. Run `team-accounts --apply --allow-remote`, then `team-inbox --company … --apply --allow-remote` for each company,
+   KNT included. Without the S3 bucket variables in the shell, Inbox files stay on this machine and the hosted
+   preview cannot show them (the command warns).
+5. Run `tally --all --allow-remote`, then sign in as one admin and one accountant per company and check the lanes.
+6. Rollback: restore `uat` from the snapshot branch. This also discards anything done after the snapshot.

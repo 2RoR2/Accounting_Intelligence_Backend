@@ -59,12 +59,20 @@ def main():
         "planm-tidy", help="local only: contact codes, own-sales captures excluded, M4 names (dry run unless --apply)"))
     for command, help_text in (("seed-knt", "load the KNT demo books into a local database"),
                                ("reset-knt", "delete and rebuild the local KNT demo books"),
-                               ("tally", "verify the local KNT books and print a reconciliation summary")):
+                               ("tally", "verify a company's demo books (KNT by default) and print a summary")):
         subparser = commands.add_parser(command, help=help_text)
         if command != "tally":
             subparser.add_argument("--out", type=Path, default=ROOT / "ai/synthetic/output/packs/knt",
                                    help="directory for the generated KNT pack")
             subparser.add_argument("--prompt-password", action="store_true", help="choose new demo users' password")
+        else:
+            which = subparser.add_mutually_exclusive_group()
+            which.add_argument("--company", help="KNT, TKK, EHB or CDA (default KNT)")
+            which.add_argument("--all", action="store_true", help="every demo company that exists in this database")
+            subparser.add_argument("--allow-remote", action="store_true",
+                                   help="read a database that is not on this machine (also needs COMPANY_PACK_REMOTE_HOST)")
+    from services.admin import company_commands
+    company_commands.add_arguments(commands)
     extend = commands.add_parser("extend-knt", help="add the richer KNT demo data to existing KNT books (dry run by default)")
     extend.add_argument("--as-user", required=True, help="email of an active KNT company admin the changes are made as")
     extend.add_argument("--apply", action="store_true", help="write the changes; without it only the plan is printed")
@@ -83,6 +91,9 @@ def main():
         return
     if args.command == "planm-tidy":
         sys.exit(planm_tidy.run(args))
+    if args.command in company_commands.COMMANDS or (args.command == "tally" and (args.company or args.all
+                                                                                  or args.allow_remote)):
+        sys.exit(company_commands.run(args))
     if args.command in {"seed-knt", "reset-knt", "tally"}:
         from services.admin.knt_seed import locked_database, seed
         from services.admin.knt_tally import print_tally, tally
