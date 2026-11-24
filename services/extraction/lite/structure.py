@@ -555,6 +555,55 @@ def _labelled_amount(text, label):
     return parse_amount(amounts[0]) if len(amounts) == 1 else None
 
 
+def _fill_printed(fields, key, amount, index, issues, *, prefill, check, detail):
+    """Place a printed amount in an empty field with its evidence; False when it is not printed."""
+    rows = index.find_amount(Decimal(amount).copy_abs()) if amount is not None else []
+    if not rows:
+        return False
+    fields[key] = _cell('resolved', amount, method=_read_method(rows) if prefill else 'VLM',
+                        raw=rows[0]['text'], evidence=[index.evidence(row) for row in rows],
+                        candidates=[{'source': 'printed_figures', 'value': amount, 'auto_accepted': False,
+                                     'source_check': check}] if prefill else [])
+    if not prefill:
+        fields[key]['source_check'] = check
+    issues.append({'code': 'VALUE_FROM_PRINTED_FIGURES', 'field': key, 'detail': detail})
+    return True
+
+
+_GRAND_TOTAL = re.compile(r'grand\s+total|jumlah\s+besar|jumlah\s+keseluruhan|total\s+amount|total\s+payable|'
+                          r'total\s+(?:credit|debit)|jumlah\s+(?:kredit|debit)', re.I)
+
+
+def _resolved(fields, key):
+    cell = fields.get(key) or {}
+    return cell.get('value') if cell.get('state') == 'resolved' and cell.get('value') is not None else None
+
+
+def derive_document_total(fields, text, index, issues, *, prefill):
+    """Fill a missing invoice / note total from the one printed grand-total line.
+
+    The amount must be the only amount on the only line carrying a grand-total label
+    and be printed in the source. When the subtotal and tax were both read, the amount
+    must also equal subtotal + tax - discount as printed: that sum is only a check, the
+    stored value is the printed one. Flagged VALUE_FROM_PRINTED_FIGURES for the reviewer.
+    """
+    if 'total_amount' not in fields or _resolved(fields, 'total_amount') is not None:
+        return fields
+    hits = [line for line in text.splitlines() if _GRAND_TOTAL.search(line)]
+    amounts = _TWO_DECIMALS.findall(hits[0]) if len(hits) == 1 else []
+    amount = parse_amount(amounts[0]) if len(amounts) == 1 else None
+    if amount is None:
+        return fields
+    subtotal, tax = _resolved(fields, 'subtotal'), _resolved(fields, 'tax_amount')
+    if subtotal is not None and tax is not None:
+        discount = _resolved(fields, 'discount') or '0'
+        if Decimal(subtotal) + Decimal(tax) - abs(Decimal(discount)) != Decimal(amount):
+            return fields
+    _fill_printed(fields, 'total_amount', amount, index, issues, prefill=prefill, check='printed_on_grand_total_line',
+                  detail='Read from the printed grand-total line. Confirm it.')
+    return fields
+
+
 def derive_bill_values(fields, text, index, issues, *, prefill):
     """Fill a missing bill subtotal or amount due from the document's own printed figures.
 
@@ -569,21 +618,8 @@ def derive_bill_values(fields, text, index, issues, *, prefill):
         cell = fields.get(key) or {}
         return cell.get('value') if cell.get('state') == 'resolved' and cell.get('value') is not None else None
 
-    def printed(amount):
-        return index.find_amount(Decimal(amount).copy_abs()) if amount is not None else []
-
     def fill(key, amount, check, detail):
-        rows = printed(amount)
-        if not rows:
-            return False
-        fields[key] = _cell('resolved', amount, method=_read_method(rows) if prefill else 'VLM',
-                            raw=rows[0]['text'], evidence=[index.evidence(row) for row in rows],
-                            candidates=[{'source': 'printed_figures', 'value': amount, 'auto_accepted': False,
-                                         'source_check': check}] if prefill else [])
-        if not prefill:
-            fields[key]['source_check'] = check
-        issues.append({'code': 'VALUE_FROM_PRINTED_FIGURES', 'field': key, 'detail': detail})
-        return True
+        return _fill_printed(fields, key, amount, index, issues, prefill=prefill, check=check, detail=detail)
 
     total, tax = value('total_amount'), value('tax_amount')
     if 'subtotal' in fields and value('subtotal') is None:
@@ -647,6 +683,9 @@ def structure_document(document, *, providers=None, environ=None):
     fields = {}
     for model_name, source_key in PROFILE_FIELDS.get(kind, {}).items():
         fields[source_key] = resolver.field(model_name, answered.get(model_name))
+    if kind in {'invoice', 'credit_note', 'debit_note'}:
+        fields = derive_document_total(fields, text[:MAX_PROMPT_CHARACTERS], resolver.index, resolver.issues,
+                                       prefill=policy == 'verified')
     if kind == 'bill':
         fields = derive_bill_values(fields, text[:MAX_PROMPT_CHARACTERS], resolver.index, resolver.issues,
                                     prefill=policy == 'verified')

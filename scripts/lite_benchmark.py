@@ -145,7 +145,8 @@ def run(args):
                     row.update(read_seconds=provenance.get('read_seconds'), model_seconds=ai.get('seconds'),
                                read_from=sorted({page['read_from'] for page in provenance.get('pages', [])}),
                                classified_as=public['document_type'].get('value'),
-                               ai_outcomes=ai.get('outcomes'), ai_error=ai.get('error'))
+                               ai_outcomes=ai.get('outcomes'), ai_error=ai.get('error'),
+                               ai_failures=ai.get('failed') or ai.get('failed_before') or None)
                     for key, count in (ai.get('outcomes') or {}).items():
                         outcomes[key] += count
                     tokens = (ai.get('prompt_tokens') or 0) + (ai.get('completion_tokens') or 0)

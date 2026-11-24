@@ -99,3 +99,25 @@ before/after and no hold-out run: the Groq key reached its 200,000 tokens-per-da
 (rolling window) during this work. Run the hold-out once when the budget allows, at `--pace 20`
 (8,000 tokens per minute at ~2.6k tokens per document), then publish it with
 `scripts/publish_evaluation.py`.
+
+## Hold-out run 2 (24 Nov 2026, 10:43 MYT): hosted chain `custom,gemini`, `AI_MAX_RETRIES=1`
+
+Changes since run 1 (features `dd7e7c6`): 5xx retry budget `AI_SERVER_RETRIES=2`; one re-ask
+when an answer is not JSON; layout keeps a company name and the address under it on separate
+lines (rows that overlap sideways at a clearly different height); overlapping OCR fragments of
+one value read once in the model text; missing invoice/note total read from the one printed
+grand-total line (checked against printed subtotal + tax - discount).
+
+| Hold-out | Strict | Coverage | Invoice+notes | Bill | Receipt | Model failures |
+|---|---|---|---|---|---|---|
+| Run 1 (features) | 0.918 (732/797) | 0.949 | 0.852 | 0.953 | 1.000 | 2 (`AI_HTTP_ERROR`) |
+| Run 2 (this change) | 0.913 (728/797) | 0.924 | 0.964 | 0.855 | 0.889 | 4 (Gemini 503 after 2 retries) |
+| 54 documents answered in both runs | 0.953 -> 0.971 | | 0.928 -> 0.961 | 0.952 -> 0.962 | 1.000 -> 1.000 | |
+
+Run 2 is not published: its overall score is below run 1, because four Gemini 503 answers
+(two bills, two receipts; 48 fields) outlasted the retries. On the documents the model answered
+in both runs no type got worse; one document lost one field. Tuning (features code, 60 docs):
+0.810 with 8 `AI_HTTP_ERROR`; invoices+notes 0.669 -> 0.913 after the provider and line fixes
+(before the fragment refinement, which was checked on OCR layout only). Not fixed: invoice
+totals hidden under a printed "PAID / DIBAYAR" stamp (OCR does not read the amount; it is not
+calculated), garbled note numbers ("N&602-3364").

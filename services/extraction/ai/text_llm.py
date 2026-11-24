@@ -13,7 +13,9 @@ Configuration (environment):
     AI_<NAME>_MODEL / AI_<NAME>_BASE_URL / AI_<NAME>_API_KEY / AI_<NAME>_EXTRA_BODY
                          per-provider settings (NAME upper-case, e.g. AI_QWEN_MODEL)
     AI_TIMEOUT_SECONDS   default 30 (1-120)
-    AI_MAX_RETRIES       default 3 (0-4), for 429 and 5xx answers (429 waits Retry-After,
+    AI_SERVER_RETRIES    default 2 (0-4), for 500/502/503/504 answers (a provider that is
+                         briefly overloaded); waits 1.5, 3 s, or Retry-After up to 20 s
+    AI_MAX_RETRIES       default 3 (0-4), for 429 and network errors (429 waits Retry-After,
                          up to 60 s, else 5/10/20 s)
     AI_MAX_CONCURRENCY   default 2 (1-8) simultaneous requests from this process
     AI_RESPONSE_FORMAT   json_object (default) | none
@@ -44,7 +46,9 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+SERVER_ERROR_STATUS = {500, 502, 503, 504}
+UNREADABLE_ANSWER_ERRORS = {'AI_RESPONSE_NOT_JSON', 'AI_RESPONSE_MALFORMED'}
+RETRYABLE_STATUS = {429} | SERVER_ERROR_STATUS
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 PRESETS = {
     'gemini': {'base': 'https://generativelanguage.googleapis.com/v1beta/openai',
@@ -65,8 +69,9 @@ _slots_lock = threading.Lock()
 
 class TextModelError(RuntimeError):
     """Operator-safe error code: never contains the API key or document text."""
-    def __init__(self, code):
+    def __init__(self, code, status=None):
         self.code = code
+        self.status = status  # HTTP status when the provider answered with an error
         self.failures = []
         super().__init__(code)
 
@@ -164,6 +169,9 @@ class TextModelProvider:
         self.reasoning_effort = None if effort == 'off' else effort
         self.timeout = _number(env, 'AI_TIMEOUT_SECONDS', 30, 1, 120)
         self.max_retries = _number(env, 'AI_MAX_RETRIES', 3, 0, 4, int)
+        # Server errors are usually a short overload; they get their own budget so that a
+        # low AI_MAX_RETRIES (set to keep rate-limit waits short) does not drop the document.
+        self.server_retries = _number(env, 'AI_SERVER_RETRIES', 2, 0, 4, int)
         self.response_format = env.get('AI_RESPONSE_FORMAT', 'json_object').strip() or 'json_object'
         if self.response_format not in {'json_object', 'none'}:
             raise TextModelError('AI_RESPONSE_FORMAT_INVALID')
@@ -200,13 +208,16 @@ class TextModelProvider:
                 status = error.code
                 retry_after = error.headers.get('Retry-After') if error.headers else None
                 error.close()
-                if status in RETRYABLE_STATUS and attempts <= self.max_retries and not exhausted_limit(status, retry_after):
+                budget = self.server_retries if status in SERVER_ERROR_STATUS else self.max_retries
+                if status in RETRYABLE_STATUS and attempts <= budget and not exhausted_limit(status, retry_after):
                     self._sleep(retry_delay(status, retry_after, attempts))
                     continue
                 code = {400: 'AI_BAD_REQUEST', 401: 'AI_AUTH_REJECTED', 402: 'AI_BILLING_REQUIRED',
                         403: 'AI_AUTH_REJECTED', 404: 'AI_MODEL_OR_ENDPOINT_NOT_FOUND', 413: 'AI_REQUEST_TOO_LARGE',
-                        429: 'AI_RATE_LIMITED'}.get(status, 'AI_HTTP_ERROR')
-                raise TextModelError(code) from None
+                        429: 'AI_RATE_LIMITED'}.get(status)
+                if code is None:
+                    code = 'AI_PROVIDER_SERVER_ERROR' if status in SERVER_ERROR_STATUS else 'AI_HTTP_ERROR'
+                raise TextModelError(code, status) from None
             except (URLError, TimeoutError, OSError):
                 if attempts <= self.max_retries:
                     self._sleep(min(20.0, 1.5 * 2 ** (attempts - 1)))
@@ -309,13 +320,17 @@ def complete_json(system, user, *, providers=None, max_tokens=4000):
     failures = []
     with _request_slots():
         for provider in providers:
-            try:
-                answer, record = provider.complete_json(system, user, max_tokens=max_tokens)
-            except TextModelError as error:
-                failures.append({'provider': provider.name, 'error': error.code})
-                continue
-            record['failed_before'] = failures
-            return answer, record
+            for attempt in (1, 2):
+                try:
+                    answer, record = provider.complete_json(system, user, max_tokens=max_tokens)
+                except TextModelError as error:
+                    failures.append({'provider': provider.name, 'error': error.code,
+                                     **({'status': error.status} if getattr(error, 'status', None) else {})})
+                    if error.code in UNREADABLE_ANSWER_ERRORS and attempt == 1:
+                        continue  # A sampled answer that is not JSON is usually a one-off: ask once more.
+                    break
+                record['failed_before'] = failures
+                return answer, record
     error = TextModelError(failures[-1]['error'] if failures else 'AI_NO_PROVIDER')
     error.failures = failures
     raise error
