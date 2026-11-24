@@ -1,0 +1,2827 @@
+{
+  "benchmark": "lite-extraction",
+  "created_at": "2026-11-24T01:45:06.807866+00:00",
+  "settings": {
+    "AI_EXTRACTION": "text",
+    "AI_PROVIDERS": "custom,gemini",
+    "AI_PREFILL": "verified",
+    "DATE_ORDER": "DMY",
+    "AI_REASONING_EFFORT": "default (low for gpt-oss)",
+    "LITE_OCR_DET_SIDE": "736",
+    "pace_seconds": 5.0,
+    "LITE_OCR_MAX_SIDE": "1280",
+    "OCR_THREADS": "1",
+    "types": [
+      "invoice",
+      "bill",
+      "receipt"
+    ],
+    "limit": 0,
+    "manifest_dir": "ai/synthetic/output/holdout"
+  },
+  "ocr_warm_seconds": 0.629,
+  "overall": {
+    "eligible": 797,
+    "correct": 732,
+    "incorrect": 24,
+    "missing": 41,
+    "false_fills": 0,
+    "accuracy": 0.9184,
+    "coverage": 0.9486,
+    "address_normalized_accuracy": 0.926
+  },
+  "by_type": {
+    "invoice": {
+      "documents": 24,
+      "eligible": 365,
+      "correct": 311,
+      "incorrect": 19,
+      "missing": 35,
+      "false_fills": 0,
+      "accuracy": 0.8521,
+      "coverage": 0.9041,
+      "address_normalized_accuracy": 0.8658
+    },
+    "bill": {
+      "documents": 18,
+      "eligible": 234,
+      "correct": 223,
+      "incorrect": 5,
+      "missing": 6,
+      "false_fills": 0,
+      "accuracy": 0.953,
+      "coverage": 0.9744,
+      "address_normalized_accuracy": 0.9573
+    },
+    "receipt": {
+      "documents": 18,
+      "eligible": 198,
+      "correct": 198,
+      "incorrect": 0,
+      "missing": 0,
+      "false_fills": 0,
+      "accuracy": 1.0,
+      "coverage": 1.0,
+      "address_normalized_accuracy": 1.0
+    }
+  },
+  "by_field": {
+    "bill.amount_due": {
+      "eligible": 18,
+      "correct": 16,
+      "incorrect": 0,
+      "missing": 2,
+      "accuracy": 0.8889,
+      "not_correct": [
+        "HLD-BILL-035",
+        "HLD-BILL-038"
+      ]
+    },
+    "bill.bill_date": {
+      "eligible": 18,
+      "correct": 18,
+      "incorrect": 0,
+      "missing": 0,
+      "accuracy": 1.0,
+      "not_correct": []
+    },
+    "bill.bill_number": {
+      "eligible": 18,
+      "correct": 15,
+      "incorrect": 1,
+      "missing": 2,
+      "accuracy": 0.8333,
+      "not_correct": [
+        "HLD-BILL-034",
+        "HLD-BILL-035",
+        "HLD-BILL-058"
+      ]
+    },
+    "bill.billing_period": {
+      "eligible": 18,
+      "correct": 18,
+      "incorrect": 0,
+      "missing": 0,
+      "accuracy": 1.0,
+      "not_correct": []
+    },
+    "bill.currency": {
+      "eligible": 18,
+      "correct": 18,
+      "incorrect": 0,
+      "missing": 0,
+      "accuracy": 1.0,
+      "not_correct": []
+    },
+    "bill.customer_account_number": {
+      "eligible": 18,
+      "correct": 17,
+      "incorrect": 1,
+      "missing": 0,
+      "accuracy": 0.9444,
+      "not_correct": [
+        "HLD-BILL-034"
+      ]
+    },
+    "bill.customer_name": {
+      "eligible": 18,
+      "correct": 18,
+      "incorrect": 0,
+      "missing": 0,
+      "accuracy": 1.0,
+      "not_correct": []
+    },
+    "bill.due_date": {
+      "eligible": 18,
+      "correct": 16,
+      "incorrect": 0,
+      "missing": 2,
+      "accuracy": 0.8889,
+      "not_correct": [
+        "HLD-BILL-041",
+        "HLD-BILL-047"
+      ]
+    },
+    "bill.provider_address": {
+      "eligible": 18,
+      "correct": 15,
+      "incorrect": 3,
+      "missing": 0,
+      "accuracy": 0.8333,
+      "not_correct": [
+        "HLD-BILL-034",
+        "HLD-BILL-035",
+        "HLD-BILL-058"
+      ]
+    },
+    "bill.provider_name": {
+      "eligible": 18,
+      "correct": 18,
+      "incorrect": 0,
+      "missing": 0,
+      "accuracy": 1.0,
+      "not_correct": []
+    },
+    "bill.subtotal": {
+      "eligible": 18,
+      "correct": 18,
+      "incorrect": 0,
+      "missing": 0,
+      "accuracy": 1.0,
+      "not_correct": []
+    },
+    "bill.tax": {
+      "eligible": 18,
+      "correct": 18,
+      "incorrect": 0,
+      "missing": 0,
+      "accuracy": 1.0,
+      "not_correct": []
+    },
+    "bill.total": {
+      "eligible": 18,
+      "correct": 18,
+      "incorrect": 0,
+      "missing": 0,
+      "accuracy": 1.0,
+      "not_correct": []
+    },
+    "invoice.credit_note_number": {
+      "eligible": 5,
+      "correct": 4,
+      "incorrect": 0,
+      "missing": 1,
+      "accuracy": 0.8,
+      "not_correct": [
+        "HLD-CREDITNOTE-024"
+      ]
+    },
+    "invoice.currency": {
+      "eligible": 24,
+      "correct": 22,
+      "incorrect": 0,
+      "missing": 2,
+      "accuracy": 0.9167,
+      "not_correct": [
+        "HLD-INVOICE-012",
+        "HLD-CREDITNOTE-024"
+      ]
+    },
+    "invoice.customer_address": {
+      "eligible": 24,
+      "correct": 17,
+      "incorrect": 5,
+      "missing": 2,
+      "accuracy": 0.7083,
+      "not_correct": [
+        "HLD-INVOICE-012",
+        "HLD-DEBITNOTE-013",
+        "HLD-CREDITNOTE-024",
+        "HLD-DEBITNOTE-025",
+        "HLD-INVOICE-042",
+        "HLD-INVOICE-049",
+        "HLD-INVOICE-052"
+      ]
+    },
+    "invoice.customer_name": {
+      "eligible": 24,
+      "correct": 21,
+      "incorrect": 1,
+      "missing": 2,
+      "accuracy": 0.875,
+      "not_correct": [
+        "HLD-INVOICE-012",
+        "HLD-CREDITNOTE-024",
+        "HLD-DEBITNOTE-025"
+      ]
+    },
+    "invoice.debit_note_number": {
+      "eligible": 5,
+      "correct": 3,
+      "incorrect": 1,
+      "missing": 1,
+      "accuracy": 0.6,
+      "not_correct": [
+        "HLD-DEBITNOTE-018",
+        "HLD-DEBITNOTE-025"
+      ]
+    },
+    "invoice.due_date": {
+      "eligible": 14,
+      "correct": 13,
+      "incorrect": 0,
+      "missing": 1,
+      "accuracy": 0.9286,
+      "not_correct": [
+        "HLD-INVOICE-012"
+      ]
+    },
+    "invoice.invoice_date": {
+      "eligible": 24,
+      "correct": 22,
+      "incorrect": 0,
+      "missing": 2,
+      "accuracy": 0.9167,
+      "not_correct": [
+        "HLD-INVOICE-012",
+        "HLD-CREDITNOTE-024"
+      ]
+    },
+    "invoice.invoice_number": {
+      "eligible": 14,
+      "correct": 13,
+      "incorrect": 0,
+      "missing": 1,
+      "accuracy": 0.9286,
+      "not_correct": [
+        "HLD-INVOICE-012"
+      ]
+    },
+    "invoice.note_reason": {
+      "eligible": 10,
+      "correct": 7,
+      "incorrect": 2,
+      "missing": 1,
+      "accuracy": 0.7,
+      "not_correct": [
+        "HLD-CREDITNOTE-024",
+        "HLD-DEBITNOTE-025",
+        "HLD-DEBITNOTE-037"
+      ]
+    },
+    "invoice.original_invoice_number": {
+      "eligible": 10,
+      "correct": 7,
+      "incorrect": 1,
+      "missing": 2,
+      "accuracy": 0.7,
+      "not_correct": [
+        "HLD-DEBITNOTE-018",
+        "HLD-CREDITNOTE-024",
+        "HLD-DEBITNOTE-025"
+      ]
+    },
+    "invoice.payment_terms": {
+      "eligible": 14,
+      "correct": 13,
+      "incorrect": 0,
+      "missing": 1,
+      "accuracy": 0.9286,
+      "not_correct": [
+        "HLD-INVOICE-012"
+      ]
+    },
+    "invoice.purchase_order_number": {
+      "eligible": 5,
+      "correct": 5,
+      "incorrect": 0,
+      "missing": 0,
+      "accuracy": 1.0,
+      "not_correct": []
+    },
+    "invoice.subtotal": {
+      "eligible": 24,
+      "correct": 22,
+      "incorrect": 0,
+      "missing": 2,
+      "accuracy": 0.9167,
+      "not_correct": [
+        "HLD-INVOICE-012",
+        "HLD-CREDITNOTE-024"
+      ]
+    },
+    "invoice.supplier_address": {
+      "eligible": 24,
+      "correct": 13,
+      "incorrect": 9,
+      "missing": 2,
+      "accuracy": 0.5417,
+      "not_correct": [
+        "HLD-INVOICE-009",
+        "HLD-INVOICE-012",
+        "HLD-DEBITNOTE-013",
+        "HLD-CREDITNOTE-015",
+        "HLD-INVOICE-023",
+        "HLD-CREDITNOTE-024",
+        "HLD-DEBITNOTE-025",
+        "HLD-INVOICE-042",
+        "HLD-INVOICE-049",
+        "HLD-INVOICE-052",
+        "HLD-INVOICE-055"
+      ]
+    },
+    "invoice.supplier_name": {
+      "eligible": 24,
+      "correct": 22,
+      "incorrect": 0,
+      "missing": 2,
+      "accuracy": 0.9167,
+      "not_correct": [
+        "HLD-INVOICE-012",
+        "HLD-CREDITNOTE-024"
+      ]
+    },
+    "invoice.supplier_registration_id": {
+      "eligible": 24,
+      "correct": 22,
+      "incorrect": 0,
+      "missing": 2,
+      "accuracy": 0.9167,
+      "not_correct": [
+        "HLD-INVOICE-012",
+        "HLD-CREDITNOTE-024"
+      ]
+    },
+    "invoice.supplier_sst_id": {
+      "eligible": 24,
+      "correct": 22,
+      "incorrect": 0,
+      "missing": 2,
+      "accuracy": 0.9167,
+      "not_correct": [
+        "HLD-INVOICE-012",
+        "HLD-CREDITNOTE-024"
+      ]
+    },
+    "invoice.supplier_tin": {
+      "eligible": 24,
+      "correct": 22,
+      "incorrect": 0,
+      "missing": 2,
+      "accuracy": 0.9167,
+      "not_correct": [
+        "HLD-INVOICE-012",
+        "HLD-CREDITNOTE-024"
+      ]
+    },
+    "invoice.tax": {
+      "eligible": 24,
+      "correct": 22,
+      "incorrect": 0,
+      "missing": 2,
+      "accuracy": 0.9167,
+      "not_correct": [
+        "HLD-INVOICE-012",
+        "HLD-CREDITNOTE-024"
+      ]
+    },
+    "invoice.total": {
+      "eligible": 24,
+      "correct": 19,
+      "incorrect": 0,
+      "missing": 5,
+      "accuracy": 0.7917,
+      "not_correct": [
+        "HLD-INVOICE-012",
+        "HLD-CREDITNOTE-024",
+        "HLD-INVOICE-032",
+        "HLD-INVOICE-042",
+        "HLD-INVOICE-055"
+      ]
+    },
+    "receipt.currency": {
+      "eligible": 18,
+      "correct": 18,
+      "incorrect": 0,
+      "missing": 0,
+      "accuracy": 1.0,
+      "not_correct": []
+    },
+    "receipt.merchant_address": {
+      "eligible": 18,
+      "correct": 18,
+      "incorrect": 0,
+      "missing": 0,
+      "accuracy": 1.0,
+      "not_correct": []
+    },
+    "receipt.merchant_name": {
+      "eligible": 18,
+      "correct": 18,
+      "incorrect": 0,
+      "missing": 0,
+      "accuracy": 1.0,
+      "not_correct": []
+    },
+    "receipt.payment_method": {
+      "eligible": 18,
+      "correct": 18,
+      "incorrect": 0,
+      "missing": 0,
+      "accuracy": 1.0,
+      "not_correct": []
+    },
+    "receipt.receipt_number": {
+      "eligible": 18,
+      "correct": 18,
+      "incorrect": 0,
+      "missing": 0,
+      "accuracy": 1.0,
+      "not_correct": []
+    },
+    "receipt.rounding": {
+      "eligible": 18,
+      "correct": 18,
+      "incorrect": 0,
+      "missing": 0,
+      "accuracy": 1.0,
+      "not_correct": []
+    },
+    "receipt.subtotal": {
+      "eligible": 18,
+      "correct": 18,
+      "incorrect": 0,
+      "missing": 0,
+      "accuracy": 1.0,
+      "not_correct": []
+    },
+    "receipt.tax": {
+      "eligible": 18,
+      "correct": 18,
+      "incorrect": 0,
+      "missing": 0,
+      "accuracy": 1.0,
+      "not_correct": []
+    },
+    "receipt.total": {
+      "eligible": 18,
+      "correct": 18,
+      "incorrect": 0,
+      "missing": 0,
+      "accuracy": 1.0,
+      "not_correct": []
+    },
+    "receipt.transaction_date": {
+      "eligible": 18,
+      "correct": 18,
+      "incorrect": 0,
+      "missing": 0,
+      "accuracy": 1.0,
+      "not_correct": []
+    },
+    "receipt.transaction_time": {
+      "eligible": 18,
+      "correct": 18,
+      "incorrect": 0,
+      "missing": 0,
+      "accuracy": 1.0,
+      "not_correct": []
+    }
+  },
+  "seconds_per_document": {
+    "total": {
+      "mean": 6.078,
+      "median": 5.375,
+      "max": 16.46,
+      "p90": 8.469
+    },
+    "read": {
+      "mean": 1.225,
+      "median": 1.49,
+      "max": 3.032,
+      "p90": 2.336
+    },
+    "model": {
+      "mean": 4.507,
+      "median": 3.408,
+      "max": 15.388,
+      "p90": 6.764
+    }
+  },
+  "statuses": {
+    "candidate_for_review": 58,
+    "ai_attempt_failed_needs_review": 2
+  },
+  "ai_value_outcomes": {
+    "filled": 754,
+    "candidate": 0,
+    "discarded": 4,
+    "missing": 105,
+    "line_items": 234
+  },
+  "ai_errors": {
+    "AI_HTTP_ERROR": 2
+  },
+  "models": {
+    "gemini/gemini-3.5-flash-lite": 58
+  },
+  "stopped": null,
+  "tokens_total": 144159,
+  "tokens_per_document": {
+    "mean": 2485.5,
+    "median": 2421.0,
+    "max": 3487,
+    "p90": 2860
+  },
+  "discarded_by_field_reason": {
+    "original_invoice_number:not_found_in_source": 1,
+    "document_number:not_found_in_source": 1,
+    "due_date:date_not_readable": 1,
+    "due_date:not_found_in_source": 1
+  },
+  "unmapped_source_keys": {},
+  "documents": [
+    {
+      "file": "HLD-INVOICE-001",
+      "type": "invoice",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 3.923,
+      "read_seconds": 0.038,
+      "model_seconds": 3.575,
+      "read_from": [
+        "text_layer"
+      ],
+      "classified_as": "invoice",
+      "ai_outcomes": {
+        "filled": 15,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 5,
+        "line_items": 1
+      },
+      "ai_error": null,
+      "tokens": 2106,
+      "prompt_tokens": 1266,
+      "completion_tokens": 840,
+      "model_attempts": 1,
+      "errors": [],
+      "eligible": 15,
+      "correct": 15,
+      "incorrect": 0,
+      "missing": 0
+    },
+    {
+      "file": "HLD-INVOICE-009",
+      "type": "invoice",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 6.186,
+      "read_seconds": 3.032,
+      "model_seconds": 2.877,
+      "read_from": [
+        "ocr"
+      ],
+      "classified_as": "invoice",
+      "ai_outcomes": {
+        "filled": 15,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 5,
+        "line_items": 1
+      },
+      "ai_error": null,
+      "tokens": 2421,
+      "prompt_tokens": 1312,
+      "completion_tokens": 1109,
+      "model_attempts": 1,
+      "errors": [
+        {
+          "field": "supplier_address",
+          "outcome": "INCORRECT",
+          "gold": "No. 54, Jalan Rambai 9/8\nTaman Nirmala Baru\n47301 Petaling Jaya, Selangor",
+          "predicted": "Taman Nirmala Baru No. 54\nJalan Rambai 9/8\n47301 Petaling Jaya, Selangor"
+        }
+      ],
+      "eligible": 15,
+      "correct": 14,
+      "incorrect": 1,
+      "missing": 0
+    },
+    {
+      "file": "HLD-INVOICE-011",
+      "type": "invoice",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 4.945,
+      "read_seconds": 0.009,
+      "model_seconds": 4.642,
+      "read_from": [
+        "text_layer"
+      ],
+      "classified_as": "invoice",
+      "ai_outcomes": {
+        "filled": 16,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 4,
+        "line_items": 5
+      },
+      "ai_error": null,
+      "tokens": 2421,
+      "prompt_tokens": 1412,
+      "completion_tokens": 1009,
+      "model_attempts": 1,
+      "errors": [],
+      "eligible": 16,
+      "correct": 16,
+      "incorrect": 0,
+      "missing": 0
+    },
+    {
+      "file": "HLD-INVOICE-012",
+      "type": "invoice",
+      "status": "EXTRACTED",
+      "extraction_status": "ai_attempt_failed_needs_review",
+      "error": null,
+      "seconds": 6.663,
+      "read_seconds": 0.013,
+      "model_seconds": null,
+      "read_from": [
+        "text_layer"
+      ],
+      "classified_as": "unknown",
+      "ai_outcomes": null,
+      "ai_error": "AI_HTTP_ERROR",
+      "tokens": null,
+      "prompt_tokens": null,
+      "completion_tokens": null,
+      "model_attempts": null,
+      "errors": [
+        {
+          "field": "supplier_name",
+          "outcome": "MISSING",
+          "gold": "Rembulan Zamrud Teknologi Sdn. Bhd.",
+          "predicted": null
+        },
+        {
+          "field": "supplier_address",
+          "outcome": "MISSING",
+          "gold": "No. 19, Jalan Tembusu 11/6\nTaman Dahlia Jaya\n88300 Kota Kinabalu, Sabah",
+          "predicted": null
+        },
+        {
+          "field": "supplier_registration_id",
+          "outcome": "MISSING",
+          "gold": "2022038957496",
+          "predicted": null
+        },
+        {
+          "field": "supplier_sst_id",
+          "outcome": "MISSING",
+          "gold": "W62-6997-73339428",
+          "predicted": null
+        },
+        {
+          "field": "supplier_tin",
+          "outcome": "MISSING",
+          "gold": "C1465113859",
+          "predicted": null
+        },
+        {
+          "field": "customer_name",
+          "outcome": "MISSING",
+          "gold": "Nirmala Selasih Catering Sdn. Bhd.",
+          "predicted": null
+        },
+        {
+          "field": "customer_address",
+          "outcome": "MISSING",
+          "gold": "No. 85, Jalan Pinang 8/6\nTaman Nirmala Indah\n10450 George Town, Pulau Pinang",
+          "predicted": null
+        },
+        {
+          "field": "invoice_date",
+          "outcome": "MISSING",
+          "gold": "2026-05-10",
+          "predicted": null
+        },
+        {
+          "field": "currency",
+          "outcome": "MISSING",
+          "gold": "MYR",
+          "predicted": null
+        },
+        {
+          "field": "subtotal",
+          "outcome": "MISSING",
+          "gold": "3937.60",
+          "predicted": null
+        },
+        {
+          "field": "tax",
+          "outcome": "MISSING",
+          "gold": "315.01",
+          "predicted": null
+        },
+        {
+          "field": "total",
+          "outcome": "MISSING",
+          "gold": "4252.61",
+          "predicted": null
+        },
+        {
+          "field": "invoice_number",
+          "outcome": "MISSING",
+          "gold": "INV-2605-4027",
+          "predicted": null
+        },
+        {
+          "field": "payment_terms",
+          "outcome": "MISSING",
+          "gold": "Net 30",
+          "predicted": null
+        },
+        {
+          "field": "due_date",
+          "outcome": "MISSING",
+          "gold": "2026-06-09",
+          "predicted": null
+        }
+      ],
+      "eligible": 15,
+      "correct": 0,
+      "incorrect": 0,
+      "missing": 15
+    },
+    {
+      "file": "HLD-DEBITNOTE-013",
+      "type": "invoice",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 5.334,
+      "read_seconds": 1.69,
+      "model_seconds": 3.369,
+      "read_from": [
+        "ocr"
+      ],
+      "classified_as": "debit_note",
+      "ai_outcomes": {
+        "filled": 15,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 2,
+        "line_items": 1
+      },
+      "ai_error": null,
+      "tokens": 2168,
+      "prompt_tokens": 1271,
+      "completion_tokens": 897,
+      "model_attempts": 1,
+      "errors": [
+        {
+          "field": "supplier_address",
+          "outcome": "INCORRECT",
+          "gold": "No. 15, Jalan Pinang 4/3\nTaman Dahlia Jaya\n75200 Melaka, Melaka",
+          "predicted": "No. 15\nJalan Pinang 4/3 Taman Dahlia Jaya\n75200 Melaka, Melaka"
+        },
+        {
+          "field": "customer_address",
+          "outcome": "INCORRECT",
+          "gold": "No. 13, Jalan Meranti 12/6\nTaman Saujana Baru\n30250 Ipoh, Perak",
+          "predicted": "No. 13\nJalan Meranti 12/6 Angsana Selasih Elektrikal Sdn. Bhd.\n30250 Ipoh\nPerak Taman Saujana Baru"
+        }
+      ],
+      "eligible": 15,
+      "correct": 13,
+      "incorrect": 2,
+      "missing": 0
+    },
+    {
+      "file": "HLD-CREDITNOTE-015",
+      "type": "invoice",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 7.793,
+      "read_seconds": 1.62,
+      "model_seconds": 5.857,
+      "read_from": [
+        "ocr"
+      ],
+      "classified_as": "credit_note",
+      "ai_outcomes": {
+        "filled": 15,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 2,
+        "line_items": 1
+      },
+      "ai_error": null,
+      "tokens": 2249,
+      "prompt_tokens": 1274,
+      "completion_tokens": 975,
+      "model_attempts": 2,
+      "errors": [
+        {
+          "field": "supplier_address",
+          "outcome": "INCORRECT",
+          "gold": "No. 80, Jalan Tembusu 5/3\nTaman Saujana Utama\n88300 Kota Kinabalu, Sabah",
+          "predicted": "No. 80, Jalan Tembusu 5/3\nTaman Saujana Utama\nCo.Reg.N.:2023033329284 SST:B98-8010-80352086 TIN:C6724981140 88300 Kota Kinabalu\nSabah"
+        }
+      ],
+      "eligible": 15,
+      "correct": 14,
+      "incorrect": 1,
+      "missing": 0
+    },
+    {
+      "file": "HLD-INVOICE-016",
+      "type": "invoice",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 11.206,
+      "read_seconds": 2.84,
+      "model_seconds": 7.716,
+      "read_from": [
+        "ocr"
+      ],
+      "classified_as": "invoice",
+      "ai_outcomes": {
+        "filled": 16,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 4,
+        "line_items": 13
+      },
+      "ai_error": null,
+      "tokens": 3487,
+      "prompt_tokens": 1630,
+      "completion_tokens": 1857,
+      "model_attempts": 1,
+      "errors": [],
+      "eligible": 16,
+      "correct": 16,
+      "incorrect": 0,
+      "missing": 0
+    },
+    {
+      "file": "HLD-DEBITNOTE-018",
+      "type": "invoice",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 5.379,
+      "read_seconds": 1.872,
+      "model_seconds": 3.247,
+      "read_from": [
+        "ocr"
+      ],
+      "classified_as": "debit_note",
+      "ai_outcomes": {
+        "filled": 13,
+        "candidate": 0,
+        "discarded": 2,
+        "missing": 2,
+        "line_items": 3
+      },
+      "ai_error": null,
+      "tokens": 2610,
+      "prompt_tokens": 1376,
+      "completion_tokens": 1234,
+      "model_attempts": 1,
+      "errors": [
+        {
+          "field": "debit_note_number",
+          "outcome": "MISSING",
+          "gold": "DN-2605-1890",
+          "predicted": null
+        },
+        {
+          "field": "original_invoice_number",
+          "outcome": "MISSING",
+          "gold": "INV-2605-1135",
+          "predicted": null
+        }
+      ],
+      "eligible": 15,
+      "correct": 13,
+      "incorrect": 0,
+      "missing": 2
+    },
+    {
+      "file": "HLD-CREDITNOTE-019",
+      "type": "invoice",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 8.451,
+      "read_seconds": 2.017,
+      "model_seconds": 6.172,
+      "read_from": [
+        "ocr"
+      ],
+      "classified_as": "credit_note",
+      "ai_outcomes": {
+        "filled": 15,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 2,
+        "line_items": 3
+      },
+      "ai_error": null,
+      "tokens": 2353,
+      "prompt_tokens": 1332,
+      "completion_tokens": 1021,
+      "model_attempts": 2,
+      "errors": [],
+      "eligible": 15,
+      "correct": 15,
+      "incorrect": 0,
+      "missing": 0
+    },
+    {
+      "file": "HLD-CREDITNOTE-021",
+      "type": "invoice",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 2.913,
+      "read_seconds": 0.008,
+      "model_seconds": 2.657,
+      "read_from": [
+        "text_layer"
+      ],
+      "classified_as": "credit_note",
+      "ai_outcomes": {
+        "filled": 15,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 2,
+        "line_items": 1
+      },
+      "ai_error": null,
+      "tokens": 2406,
+      "prompt_tokens": 1279,
+      "completion_tokens": 1127,
+      "model_attempts": 1,
+      "errors": [],
+      "eligible": 15,
+      "correct": 15,
+      "incorrect": 0,
+      "missing": 0
+    },
+    {
+      "file": "HLD-DEBITNOTE-022",
+      "type": "invoice",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 8.421,
+      "read_seconds": 1.721,
+      "model_seconds": 6.37,
+      "read_from": [
+        "ocr"
+      ],
+      "classified_as": "debit_note",
+      "ai_outcomes": {
+        "filled": 15,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 2,
+        "line_items": 1
+      },
+      "ai_error": null,
+      "tokens": 2136,
+      "prompt_tokens": 1273,
+      "completion_tokens": 863,
+      "model_attempts": 2,
+      "errors": [],
+      "eligible": 15,
+      "correct": 15,
+      "incorrect": 0,
+      "missing": 0
+    },
+    {
+      "file": "HLD-INVOICE-023",
+      "type": "invoice",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 5.642,
+      "read_seconds": 2.15,
+      "model_seconds": 3.177,
+      "read_from": [
+        "ocr"
+      ],
+      "classified_as": "invoice",
+      "ai_outcomes": {
+        "filled": 15,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 5,
+        "line_items": 4
+      },
+      "ai_error": null,
+      "tokens": 2660,
+      "prompt_tokens": 1367,
+      "completion_tokens": 1293,
+      "model_attempts": 1,
+      "errors": [
+        {
+          "field": "supplier_address",
+          "outcome": "INCORRECT",
+          "gold": "No. 39, Jalan Rambai 2/2\nTaman Selasih Indah\n75200 Melaka, Melaka",
+          "predicted": "Taman Selasih Indah No. 39\nJalan Rambai 2/2\n75200 Melaka, Melaka"
+        }
+      ],
+      "eligible": 15,
+      "correct": 14,
+      "incorrect": 1,
+      "missing": 0
+    },
+    {
+      "file": "HLD-CREDITNOTE-024",
+      "type": "invoice",
+      "status": "EXTRACTED",
+      "extraction_status": "ai_attempt_failed_needs_review",
+      "error": null,
+      "seconds": 6.205,
+      "read_seconds": 0.007,
+      "model_seconds": null,
+      "read_from": [
+        "text_layer"
+      ],
+      "classified_as": "unknown",
+      "ai_outcomes": null,
+      "ai_error": "AI_HTTP_ERROR",
+      "tokens": null,
+      "prompt_tokens": null,
+      "completion_tokens": null,
+      "model_attempts": null,
+      "errors": [
+        {
+          "field": "supplier_name",
+          "outcome": "MISSING",
+          "gold": "Saujana Cendana Catering Sdn. Bhd.",
+          "predicted": null
+        },
+        {
+          "field": "supplier_address",
+          "outcome": "MISSING",
+          "gold": "No. 4, Jalan Mawar 1/5\nTaman Serunai Jaya\n88300 Kota Kinabalu, Sabah",
+          "predicted": null
+        },
+        {
+          "field": "supplier_registration_id",
+          "outcome": "MISSING",
+          "gold": "2017018439009",
+          "predicted": null
+        },
+        {
+          "field": "supplier_sst_id",
+          "outcome": "MISSING",
+          "gold": "W57-5618-60955835",
+          "predicted": null
+        },
+        {
+          "field": "supplier_tin",
+          "outcome": "MISSING",
+          "gold": "C4051586496",
+          "predicted": null
+        },
+        {
+          "field": "customer_name",
+          "outcome": "MISSING",
+          "gold": "Saujana Cendana Perabot PLT",
+          "predicted": null
+        },
+        {
+          "field": "customer_address",
+          "outcome": "MISSING",
+          "gold": "No. 21, Jalan Sena 1/3\nTaman Lestari Baru\n88300 Kota Kinabalu, Sabah",
+          "predicted": null
+        },
+        {
+          "field": "invoice_date",
+          "outcome": "MISSING",
+          "gold": "2026-04-14",
+          "predicted": null
+        },
+        {
+          "field": "currency",
+          "outcome": "MISSING",
+          "gold": "MYR",
+          "predicted": null
+        },
+        {
+          "field": "subtotal",
+          "outcome": "MISSING",
+          "gold": "2268.77",
+          "predicted": null
+        },
+        {
+          "field": "tax",
+          "outcome": "MISSING",
+          "gold": "136.13",
+          "predicted": null
+        },
+        {
+          "field": "total",
+          "outcome": "MISSING",
+          "gold": "2404.90",
+          "predicted": null
+        },
+        {
+          "field": "credit_note_number",
+          "outcome": "MISSING",
+          "gold": "CN-2604-3478",
+          "predicted": null
+        },
+        {
+          "field": "original_invoice_number",
+          "outcome": "MISSING",
+          "gold": "INV-2604-6764",
+          "predicted": null
+        },
+        {
+          "field": "note_reason",
+          "outcome": "MISSING",
+          "gold": "Pulangan barang / Goods returned",
+          "predicted": null
+        }
+      ],
+      "eligible": 15,
+      "correct": 0,
+      "incorrect": 0,
+      "missing": 15
+    },
+    {
+      "file": "HLD-DEBITNOTE-025",
+      "type": "invoice",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 4.77,
+      "read_seconds": 1.755,
+      "model_seconds": 2.715,
+      "read_from": [
+        "ocr"
+      ],
+      "classified_as": "debit_note",
+      "ai_outcomes": {
+        "filled": 15,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 2,
+        "line_items": 1
+      },
+      "ai_error": null,
+      "tokens": 2256,
+      "prompt_tokens": 1301,
+      "completion_tokens": 955,
+      "model_attempts": 1,
+      "errors": [
+        {
+          "field": "supplier_address",
+          "outcome": "INCORRECT",
+          "gold": "No. 33, Jalan Sena 9/6\nTaman Angsana Utama\n70200 Seremban, Negeri Sembilan",
+          "predicted": "No. 33\nJalan Sena 9/6 Taman Angsana Utama\n70200 Seremban, Negeri Sembilan"
+        },
+        {
+          "field": "customer_name",
+          "outcome": "INCORRECT",
+          "gold": "Cendana Zamrud Pembinaan Enterprise",
+          "predicted": "Pembinaan Enterprise"
+        },
+        {
+          "field": "customer_address",
+          "outcome": "INCORRECT",
+          "gold": "No. 8, Jalan Sena 7/9\nTaman Indera Utama\n81100 Johor Bahru, Johor",
+          "predicted": "No. 8, Jalan Sena 7/9 Cendana Zamrud\nTaman Indera Utama\n81100 Johor Bahru, Johor"
+        },
+        {
+          "field": "debit_note_number",
+          "outcome": "INCORRECT",
+          "gold": "DN-2602-3364",
+          "predicted": "N&602-3364"
+        },
+        {
+          "field": "original_invoice_number",
+          "outcome": "INCORRECT",
+          "gold": "INV-2602-2415",
+          "predicted": "Ivói@02-2415"
+        },
+        {
+          "field": "note_reason",
+          "outcome": "INCORRECT",
+          "gold": "Caj pemasangan / Installation charge",
+          "predicted": "Caj pemasangan / Installaton charge"
+        }
+      ],
+      "eligible": 15,
+      "correct": 9,
+      "incorrect": 6,
+      "missing": 0
+    },
+    {
+      "file": "HLD-CREDITNOTE-027",
+      "type": "invoice",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 4.719,
+      "read_seconds": 1.724,
+      "model_seconds": 2.739,
+      "read_from": [
+        "ocr"
+      ],
+      "classified_as": "credit_note",
+      "ai_outcomes": {
+        "filled": 15,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 2,
+        "line_items": 3
+      },
+      "ai_error": null,
+      "tokens": 2332,
+      "prompt_tokens": 1320,
+      "completion_tokens": 1012,
+      "model_attempts": 1,
+      "errors": [],
+      "eligible": 15,
+      "correct": 15,
+      "incorrect": 0,
+      "missing": 0
+    },
+    {
+      "file": "HLD-INVOICE-032",
+      "type": "invoice",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 6.762,
+      "read_seconds": 2.472,
+      "model_seconds": 3.899,
+      "read_from": [
+        "ocr"
+      ],
+      "classified_as": "invoice",
+      "ai_outcomes": {
+        "filled": 14,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 6,
+        "line_items": 10
+      },
+      "ai_error": null,
+      "tokens": 3195,
+      "prompt_tokens": 1577,
+      "completion_tokens": 1618,
+      "model_attempts": 1,
+      "errors": [
+        {
+          "field": "total",
+          "outcome": "MISSING",
+          "gold": "8392.26",
+          "predicted": null
+        }
+      ],
+      "eligible": 15,
+      "correct": 14,
+      "incorrect": 0,
+      "missing": 1
+    },
+    {
+      "file": "HLD-INVOICE-033",
+      "type": "invoice",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 6.344,
+      "read_seconds": 0.011,
+      "model_seconds": 6.061,
+      "read_from": [
+        "text_layer"
+      ],
+      "classified_as": "invoice",
+      "ai_outcomes": {
+        "filled": 16,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 4,
+        "line_items": 9
+      },
+      "ai_error": null,
+      "tokens": 3246,
+      "prompt_tokens": 1603,
+      "completion_tokens": 1643,
+      "model_attempts": 1,
+      "errors": [],
+      "eligible": 16,
+      "correct": 16,
+      "incorrect": 0,
+      "missing": 0
+    },
+    {
+      "file": "HLD-DEBITNOTE-037",
+      "type": "invoice",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 5.794,
+      "read_seconds": 1.463,
+      "model_seconds": 4.076,
+      "read_from": [
+        "ocr"
+      ],
+      "classified_as": "debit_note",
+      "ai_outcomes": {
+        "filled": 15,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 2,
+        "line_items": 1
+      },
+      "ai_error": null,
+      "tokens": 2396,
+      "prompt_tokens": 1280,
+      "completion_tokens": 1116,
+      "model_attempts": 1,
+      "errors": [
+        {
+          "field": "note_reason",
+          "outcome": "INCORRECT",
+          "gold": "Caj pemasangan / Installation charge",
+          "predicted": "Caj pemasangan/ Installation charge"
+        }
+      ],
+      "eligible": 15,
+      "correct": 14,
+      "incorrect": 1,
+      "missing": 0
+    },
+    {
+      "file": "HLD-INVOICE-042",
+      "type": "invoice",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 7.863,
+      "read_seconds": 2.142,
+      "model_seconds": 5.441,
+      "read_from": [
+        "ocr"
+      ],
+      "classified_as": "invoice",
+      "ai_outcomes": {
+        "filled": 14,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 6,
+        "line_items": 7
+      },
+      "ai_error": null,
+      "tokens": 2860,
+      "prompt_tokens": 1434,
+      "completion_tokens": 1426,
+      "model_attempts": 1,
+      "errors": [
+        {
+          "field": "supplier_address",
+          "outcome": "INCORRECT",
+          "gold": "No. 77, Jalan Rambai 5/8\nTaman Bistari Baru\n56000 Kuala Lumpur, W.P. Kuala Lumpur",
+          "predicted": "No. 77\nJalan Rambai 5/8 Taman Bistari Baru\n56000 Kuala Lumpur, W.P. Kuala Lumpur"
+        },
+        {
+          "field": "customer_address",
+          "outcome": "INCORRECT",
+          "gold": "No. 66, Jalan Sena 9/8\nTaman Zamrud Jaya\n47301 Petaling Jaya, Selangor",
+          "predicted": "No. 66\nJalan Sena 9/8 Rembulan Lestari Logistik PLT |\nTaman Zamrud Jaya |\n47301 Petaling Jaya, Selangor"
+        },
+        {
+          "field": "total",
+          "outcome": "MISSING",
+          "gold": "19573.74",
+          "predicted": null
+        }
+      ],
+      "eligible": 15,
+      "correct": 12,
+      "incorrect": 2,
+      "missing": 1
+    },
+    {
+      "file": "HLD-INVOICE-049",
+      "type": "invoice",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 4.963,
+      "read_seconds": 1.941,
+      "model_seconds": 2.73,
+      "read_from": [
+        "ocr"
+      ],
+      "classified_as": "invoice",
+      "ai_outcomes": {
+        "filled": 16,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 4,
+        "line_items": 2
+      },
+      "ai_error": null,
+      "tokens": 2321,
+      "prompt_tokens": 1362,
+      "completion_tokens": 959,
+      "model_attempts": 1,
+      "errors": [
+        {
+          "field": "supplier_address",
+          "outcome": "INCORRECT",
+          "gold": "No. 32, Jalan Merbah 5/7\nTaman Angsana Utama\n10450 George Town, Pulau Pinang",
+          "predicted": "No. 32, Jalan Merbah 5/7\nTaman Angsana Utama 10450 George Town\nPulau Pinang"
+        },
+        {
+          "field": "customer_address",
+          "outcome": "INCORRECT",
+          "gold": "No. 12, Jalan Belatuk 11/8\nTaman Serunai Utama\n88300 Kota Kinabalu, Sabah",
+          "predicted": "No. 12, Jalan Belatuk 11/8\n88300 Kota Kinabalu\nSabah Taman Serunai Utama"
+        }
+      ],
+      "eligible": 16,
+      "correct": 14,
+      "incorrect": 2,
+      "missing": 0
+    },
+    {
+      "file": "HLD-INVOICE-052",
+      "type": "invoice",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 8.469,
+      "read_seconds": 2.043,
+      "model_seconds": 6.173,
+      "read_from": [
+        "ocr"
+      ],
+      "classified_as": "invoice",
+      "ai_outcomes": {
+        "filled": 16,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 4,
+        "line_items": 6
+      },
+      "ai_error": null,
+      "tokens": 2523,
+      "prompt_tokens": 1463,
+      "completion_tokens": 1060,
+      "model_attempts": 2,
+      "errors": [
+        {
+          "field": "supplier_address",
+          "outcome": "INCORRECT",
+          "gold": "No. 40, Jalan Pinang 7/4\nTaman Lestari Utama\n70200 Seremban, Negeri Sembilan",
+          "predicted": "No. 40, Jalan Pinang 7/4\nTaman Lestari Utama 70200 Seremban\nNegeri Sembilan"
+        },
+        {
+          "field": "customer_address",
+          "outcome": "INCORRECT",
+          "gold": "No. 24, Jalan Pinang 4/7\nTaman Melur Jaya\n81100 Johor Bahru, Johor",
+          "predicted": "No. 24, Jalan Pinang 4/7\n81100 Johor Bahru\nJohor Taman Melur Jaya"
+        }
+      ],
+      "eligible": 16,
+      "correct": 14,
+      "incorrect": 2,
+      "missing": 0
+    },
+    {
+      "file": "HLD-INVOICE-054",
+      "type": "invoice",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 3.166,
+      "read_seconds": 0.009,
+      "model_seconds": 2.908,
+      "read_from": [
+        "text_layer"
+      ],
+      "classified_as": "invoice",
+      "ai_outcomes": {
+        "filled": 15,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 5,
+        "line_items": 5
+      },
+      "ai_error": null,
+      "tokens": 2766,
+      "prompt_tokens": 1408,
+      "completion_tokens": 1358,
+      "model_attempts": 1,
+      "errors": [],
+      "eligible": 15,
+      "correct": 15,
+      "incorrect": 0,
+      "missing": 0
+    },
+    {
+      "file": "HLD-INVOICE-055",
+      "type": "invoice",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 6.716,
+      "read_seconds": 2.304,
+      "model_seconds": 4.146,
+      "read_from": [
+        "ocr"
+      ],
+      "classified_as": "invoice",
+      "ai_outcomes": {
+        "filled": 14,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 6,
+        "line_items": 11
+      },
+      "ai_error": null,
+      "tokens": 3255,
+      "prompt_tokens": 1569,
+      "completion_tokens": 1686,
+      "model_attempts": 1,
+      "errors": [
+        {
+          "field": "supplier_address",
+          "outcome": "INCORRECT",
+          "gold": "No. 48, Jalan Cempaka 11/1\nTaman Serunai Indah\n75200 Melaka, Melaka",
+          "predicted": "Taman Serunai Indah No. 48\nJalan Cempaka 11/1\n75200 Melaka, Melaka"
+        },
+        {
+          "field": "total",
+          "outcome": "MISSING",
+          "gold": "5359.20",
+          "predicted": null
+        }
+      ],
+      "eligible": 15,
+      "correct": 13,
+      "incorrect": 1,
+      "missing": 1
+    },
+    {
+      "file": "HLD-INVOICE-059",
+      "type": "invoice",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 6.406,
+      "read_seconds": 2.397,
+      "model_seconds": 3.747,
+      "read_from": [
+        "ocr"
+      ],
+      "classified_as": "invoice",
+      "ai_outcomes": {
+        "filled": 15,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 5,
+        "line_items": 8
+      },
+      "ai_error": null,
+      "tokens": 3096,
+      "prompt_tokens": 1541,
+      "completion_tokens": 1555,
+      "model_attempts": 1,
+      "errors": [],
+      "eligible": 15,
+      "correct": 15,
+      "incorrect": 0,
+      "missing": 0
+    },
+    {
+      "file": "HLD-BILL-005",
+      "type": "bill",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 3.448,
+      "read_seconds": 0.008,
+      "model_seconds": 3.177,
+      "read_from": [
+        "text_layer"
+      ],
+      "classified_as": "bill",
+      "ai_outcomes": {
+        "filled": 13,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 0,
+        "line_items": 2
+      },
+      "ai_error": null,
+      "tokens": 2243,
+      "prompt_tokens": 1337,
+      "completion_tokens": 906,
+      "model_attempts": 1,
+      "errors": [],
+      "eligible": 13,
+      "correct": 13,
+      "incorrect": 0,
+      "missing": 0
+    },
+    {
+      "file": "HLD-BILL-010",
+      "type": "bill",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 2.951,
+      "read_seconds": 0.009,
+      "model_seconds": 2.695,
+      "read_from": [
+        "text_layer"
+      ],
+      "classified_as": "bill",
+      "ai_outcomes": {
+        "filled": 13,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 0,
+        "line_items": 2
+      },
+      "ai_error": null,
+      "tokens": 2318,
+      "prompt_tokens": 1390,
+      "completion_tokens": 928,
+      "model_attempts": 1,
+      "errors": [],
+      "eligible": 13,
+      "correct": 13,
+      "incorrect": 0,
+      "missing": 0
+    },
+    {
+      "file": "HLD-BILL-017",
+      "type": "bill",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 5.832,
+      "read_seconds": 0.009,
+      "model_seconds": 5.555,
+      "read_from": [
+        "text_layer"
+      ],
+      "classified_as": "bill",
+      "ai_outcomes": {
+        "filled": 13,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 0,
+        "line_items": 3
+      },
+      "ai_error": null,
+      "tokens": 2313,
+      "prompt_tokens": 1348,
+      "completion_tokens": 965,
+      "model_attempts": 2,
+      "errors": [],
+      "eligible": 13,
+      "correct": 13,
+      "incorrect": 0,
+      "missing": 0
+    },
+    {
+      "file": "HLD-BILL-030",
+      "type": "bill",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 5.124,
+      "read_seconds": 0.008,
+      "model_seconds": 4.81,
+      "read_from": [
+        "text_layer"
+      ],
+      "classified_as": "bill",
+      "ai_outcomes": {
+        "filled": 13,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 0,
+        "line_items": 3
+      },
+      "ai_error": null,
+      "tokens": 2604,
+      "prompt_tokens": 1348,
+      "completion_tokens": 1256,
+      "model_attempts": 1,
+      "errors": [],
+      "eligible": 13,
+      "correct": 13,
+      "incorrect": 0,
+      "missing": 0
+    },
+    {
+      "file": "HLD-BILL-034",
+      "type": "bill",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 16.46,
+      "read_seconds": 1.754,
+      "model_seconds": 14.449,
+      "read_from": [
+        "ocr"
+      ],
+      "classified_as": "bill",
+      "ai_outcomes": {
+        "filled": 12,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 1,
+        "line_items": 2
+      },
+      "ai_error": null,
+      "tokens": 2312,
+      "prompt_tokens": 1330,
+      "completion_tokens": 982,
+      "model_attempts": 2,
+      "errors": [
+        {
+          "field": "provider_address",
+          "outcome": "INCORRECT",
+          "gold": "No. 18, Jalan Rambai 5/9\nTaman Cendana Jaya\n93350 Kuching, Sarawak",
+          "predicted": "No. 18, Jalan Rambai 5/9\nTaman Cendana Jaya\n93350 Kuching. Sarawak"
+        },
+        {
+          "field": "customer_account_number",
+          "outcome": "INCORRECT",
+          "gold": "384448958044",
+          "predicted": "B575754299"
+        },
+        {
+          "field": "bill_number",
+          "outcome": "MISSING",
+          "gold": "B575754299",
+          "predicted": null
+        }
+      ],
+      "eligible": 13,
+      "correct": 10,
+      "incorrect": 2,
+      "missing": 1
+    },
+    {
+      "file": "HLD-BILL-035",
+      "type": "bill",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 5.099,
+      "read_seconds": 1.691,
+      "model_seconds": 3.105,
+      "read_from": [
+        "ocr"
+      ],
+      "classified_as": "bill",
+      "ai_outcomes": {
+        "filled": 12,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 1,
+        "line_items": 2
+      },
+      "ai_error": null,
+      "tokens": 2520,
+      "prompt_tokens": 1336,
+      "completion_tokens": 1184,
+      "model_attempts": 1,
+      "errors": [
+        {
+          "field": "provider_address",
+          "outcome": "INCORRECT",
+          "gold": "No. 62, Jalan Pinang 12/2\nTaman Nirmala Jaya\n47301 Petaling Jaya, Selangor",
+          "predicted": "No. 62\nJalan Pinang 12/2 Taman Nirmala Jaya\n47301 Petaling Jaya, Selangor"
+        },
+        {
+          "field": "bill_number",
+          "outcome": "INCORRECT",
+          "gold": "B133415168",
+          "predicted": "10-06-2026"
+        },
+        {
+          "field": "amount_due",
+          "outcome": "MISSING",
+          "gold": "264.96",
+          "predicted": null
+        }
+      ],
+      "eligible": 13,
+      "correct": 10,
+      "incorrect": 2,
+      "missing": 1
+    },
+    {
+      "file": "HLD-BILL-038",
+      "type": "bill",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 7.523,
+      "read_seconds": 1.794,
+      "model_seconds": 5.447,
+      "read_from": [
+        "ocr"
+      ],
+      "classified_as": "bill",
+      "ai_outcomes": {
+        "filled": 12,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 1,
+        "line_items": 3
+      },
+      "ai_error": null,
+      "tokens": 2671,
+      "prompt_tokens": 1377,
+      "completion_tokens": 1294,
+      "model_attempts": 2,
+      "errors": [
+        {
+          "field": "amount_due",
+          "outcome": "MISSING",
+          "gold": "664.85",
+          "predicted": null
+        }
+      ],
+      "eligible": 13,
+      "correct": 12,
+      "incorrect": 0,
+      "missing": 1
+    },
+    {
+      "file": "HLD-BILL-041",
+      "type": "bill",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 7.517,
+      "read_seconds": 1.889,
+      "model_seconds": 5.384,
+      "read_from": [
+        "ocr"
+      ],
+      "classified_as": "bill",
+      "ai_outcomes": {
+        "filled": 11,
+        "candidate": 0,
+        "discarded": 1,
+        "missing": 1,
+        "line_items": 0
+      },
+      "ai_error": null,
+      "tokens": 2351,
+      "prompt_tokens": 1377,
+      "completion_tokens": 974,
+      "model_attempts": 2,
+      "errors": [
+        {
+          "field": "due_date",
+          "outcome": "MISSING",
+          "gold": "2026-09-24",
+          "predicted": null
+        }
+      ],
+      "eligible": 13,
+      "correct": 12,
+      "incorrect": 0,
+      "missing": 1
+    },
+    {
+      "file": "HLD-BILL-043",
+      "type": "bill",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 6.401,
+      "read_seconds": 0.008,
+      "model_seconds": 6.133,
+      "read_from": [
+        "text_layer"
+      ],
+      "classified_as": "bill",
+      "ai_outcomes": {
+        "filled": 13,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 0,
+        "line_items": 3
+      },
+      "ai_error": null,
+      "tokens": 2623,
+      "prompt_tokens": 1369,
+      "completion_tokens": 1254,
+      "model_attempts": 2,
+      "errors": [],
+      "eligible": 13,
+      "correct": 13,
+      "incorrect": 0,
+      "missing": 0
+    },
+    {
+      "file": "HLD-BILL-045",
+      "type": "bill",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 15.671,
+      "read_seconds": 0.008,
+      "model_seconds": 15.388,
+      "read_from": [
+        "text_layer"
+      ],
+      "classified_as": "bill",
+      "ai_outcomes": {
+        "filled": 13,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 0,
+        "line_items": 2
+      },
+      "ai_error": null,
+      "tokens": 2385,
+      "prompt_tokens": 1421,
+      "completion_tokens": 964,
+      "model_attempts": 2,
+      "errors": [],
+      "eligible": 13,
+      "correct": 13,
+      "incorrect": 0,
+      "missing": 0
+    },
+    {
+      "file": "HLD-BILL-046",
+      "type": "bill",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 5.909,
+      "read_seconds": 2.71,
+      "model_seconds": 2.947,
+      "read_from": [
+        "ocr"
+      ],
+      "classified_as": "bill",
+      "ai_outcomes": {
+        "filled": 13,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 0,
+        "line_items": 3
+      },
+      "ai_error": null,
+      "tokens": 2360,
+      "prompt_tokens": 1382,
+      "completion_tokens": 978,
+      "model_attempts": 1,
+      "errors": [],
+      "eligible": 13,
+      "correct": 13,
+      "incorrect": 0,
+      "missing": 0
+    },
+    {
+      "file": "HLD-BILL-047",
+      "type": "bill",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 5.096,
+      "read_seconds": 1.896,
+      "model_seconds": 2.903,
+      "read_from": [
+        "ocr"
+      ],
+      "classified_as": "bill",
+      "ai_outcomes": {
+        "filled": 12,
+        "candidate": 0,
+        "discarded": 1,
+        "missing": 0,
+        "line_items": 3
+      },
+      "ai_error": null,
+      "tokens": 2374,
+      "prompt_tokens": 1413,
+      "completion_tokens": 961,
+      "model_attempts": 1,
+      "errors": [
+        {
+          "field": "due_date",
+          "outcome": "MISSING",
+          "gold": "2026-03-06",
+          "predicted": null
+        }
+      ],
+      "eligible": 13,
+      "correct": 12,
+      "incorrect": 0,
+      "missing": 1
+    },
+    {
+      "file": "HLD-BILL-048",
+      "type": "bill",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 5.09,
+      "read_seconds": 1.748,
+      "model_seconds": 3.047,
+      "read_from": [
+        "ocr"
+      ],
+      "classified_as": "bill",
+      "ai_outcomes": {
+        "filled": 13,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 0,
+        "line_items": 2
+      },
+      "ai_error": null,
+      "tokens": 2537,
+      "prompt_tokens": 1331,
+      "completion_tokens": 1206,
+      "model_attempts": 1,
+      "errors": [],
+      "eligible": 13,
+      "correct": 13,
+      "incorrect": 0,
+      "missing": 0
+    },
+    {
+      "file": "HLD-BILL-053",
+      "type": "bill",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 3.576,
+      "read_seconds": 0.009,
+      "model_seconds": 3.316,
+      "read_from": [
+        "text_layer"
+      ],
+      "classified_as": "bill",
+      "ai_outcomes": {
+        "filled": 13,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 0,
+        "line_items": 2
+      },
+      "ai_error": null,
+      "tokens": 2605,
+      "prompt_tokens": 1395,
+      "completion_tokens": 1210,
+      "model_attempts": 1,
+      "errors": [],
+      "eligible": 13,
+      "correct": 13,
+      "incorrect": 0,
+      "missing": 0
+    },
+    {
+      "file": "HLD-BILL-056",
+      "type": "bill",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 2.855,
+      "read_seconds": 0.012,
+      "model_seconds": 2.559,
+      "read_from": [
+        "text_layer"
+      ],
+      "classified_as": "bill",
+      "ai_outcomes": {
+        "filled": 13,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 0,
+        "line_items": 3
+      },
+      "ai_error": null,
+      "tokens": 2372,
+      "prompt_tokens": 1404,
+      "completion_tokens": 968,
+      "model_attempts": 1,
+      "errors": [],
+      "eligible": 13,
+      "correct": 13,
+      "incorrect": 0,
+      "missing": 0
+    },
+    {
+      "file": "HLD-BILL-057",
+      "type": "bill",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 2.493,
+      "read_seconds": 0.009,
+      "model_seconds": 2.207,
+      "read_from": [
+        "text_layer"
+      ],
+      "classified_as": "bill",
+      "ai_outcomes": {
+        "filled": 13,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 0,
+        "line_items": 2
+      },
+      "ai_error": null,
+      "tokens": 2238,
+      "prompt_tokens": 1341,
+      "completion_tokens": 897,
+      "model_attempts": 1,
+      "errors": [],
+      "eligible": 13,
+      "correct": 13,
+      "incorrect": 0,
+      "missing": 0
+    },
+    {
+      "file": "HLD-BILL-058",
+      "type": "bill",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 5.63,
+      "read_seconds": 2.336,
+      "model_seconds": 3.023,
+      "read_from": [
+        "ocr"
+      ],
+      "classified_as": "bill",
+      "ai_outcomes": {
+        "filled": 12,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 1,
+        "line_items": 2
+      },
+      "ai_error": null,
+      "tokens": 2535,
+      "prompt_tokens": 1341,
+      "completion_tokens": 1194,
+      "model_attempts": 1,
+      "errors": [
+        {
+          "field": "provider_address",
+          "outcome": "INCORRECT",
+          "gold": "No. 86, Jalan Belatuk 6/2\nTaman Gemilang Jaya\n93350 Kuching, Sarawak",
+          "predicted": "No. 86, Jalan Belatuk 6/2\nTaman Gemilang Jaya\n93350 Kuching. Sarawak"
+        },
+        {
+          "field": "bill_number",
+          "outcome": "MISSING",
+          "gold": "B516576644",
+          "predicted": null
+        }
+      ],
+      "eligible": 13,
+      "correct": 11,
+      "incorrect": 1,
+      "missing": 1
+    },
+    {
+      "file": "HLD-BILL-060",
+      "type": "bill",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 5.044,
+      "read_seconds": 1.672,
+      "model_seconds": 3.094,
+      "read_from": [
+        "ocr"
+      ],
+      "classified_as": "bill",
+      "ai_outcomes": {
+        "filled": 12,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 1,
+        "line_items": 2
+      },
+      "ai_error": null,
+      "tokens": 2542,
+      "prompt_tokens": 1348,
+      "completion_tokens": 1194,
+      "model_attempts": 1,
+      "errors": [],
+      "eligible": 13,
+      "correct": 13,
+      "incorrect": 0,
+      "missing": 0
+    },
+    {
+      "file": "HLD-RECEIPT-002",
+      "type": "receipt",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 5.079,
+      "read_seconds": 1.688,
+      "model_seconds": 3.132,
+      "read_from": [
+        "ocr"
+      ],
+      "classified_as": "receipt",
+      "ai_outcomes": {
+        "filled": 11,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 1,
+        "line_items": 7
+      },
+      "ai_error": null,
+      "tokens": 2568,
+      "prompt_tokens": 1288,
+      "completion_tokens": 1280,
+      "model_attempts": 1,
+      "errors": [],
+      "eligible": 11,
+      "correct": 11,
+      "incorrect": 0,
+      "missing": 0
+    },
+    {
+      "file": "HLD-RECEIPT-003",
+      "type": "receipt",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 9.699,
+      "read_seconds": 1.311,
+      "model_seconds": 8.091,
+      "read_from": [
+        "ocr"
+      ],
+      "classified_as": "receipt",
+      "ai_outcomes": {
+        "filled": 11,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 1,
+        "line_items": 3
+      },
+      "ai_error": null,
+      "tokens": 2265,
+      "prompt_tokens": 1206,
+      "completion_tokens": 1059,
+      "model_attempts": 1,
+      "errors": [],
+      "eligible": 11,
+      "correct": 11,
+      "incorrect": 0,
+      "missing": 0
+    },
+    {
+      "file": "HLD-RECEIPT-004",
+      "type": "receipt",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 3.733,
+      "read_seconds": 0.008,
+      "model_seconds": 3.447,
+      "read_from": [
+        "text_layer"
+      ],
+      "classified_as": "receipt",
+      "ai_outcomes": {
+        "filled": 11,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 1,
+        "line_items": 8
+      },
+      "ai_error": null,
+      "tokens": 2616,
+      "prompt_tokens": 1294,
+      "completion_tokens": 1322,
+      "model_attempts": 1,
+      "errors": [],
+      "eligible": 11,
+      "correct": 11,
+      "incorrect": 0,
+      "missing": 0
+    },
+    {
+      "file": "HLD-RECEIPT-006",
+      "type": "receipt",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 6.465,
+      "read_seconds": 1.407,
+      "model_seconds": 4.798,
+      "read_from": [
+        "ocr"
+      ],
+      "classified_as": "receipt",
+      "ai_outcomes": {
+        "filled": 11,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 1,
+        "line_items": 3
+      },
+      "ai_error": null,
+      "tokens": 2003,
+      "prompt_tokens": 1220,
+      "completion_tokens": 783,
+      "model_attempts": 1,
+      "errors": [],
+      "eligible": 11,
+      "correct": 11,
+      "incorrect": 0,
+      "missing": 0
+    },
+    {
+      "file": "HLD-RECEIPT-007",
+      "type": "receipt",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 4.99,
+      "read_seconds": 1.443,
+      "model_seconds": 3.211,
+      "read_from": [
+        "ocr"
+      ],
+      "classified_as": "receipt",
+      "ai_outcomes": {
+        "filled": 11,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 1,
+        "line_items": 0
+      },
+      "ai_error": null,
+      "tokens": 2584,
+      "prompt_tokens": 1286,
+      "completion_tokens": 1298,
+      "model_attempts": 1,
+      "errors": [],
+      "eligible": 11,
+      "correct": 11,
+      "incorrect": 0,
+      "missing": 0
+    },
+    {
+      "file": "HLD-RECEIPT-008",
+      "type": "receipt",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 8.437,
+      "read_seconds": 1.373,
+      "model_seconds": 6.764,
+      "read_from": [
+        "ocr"
+      ],
+      "classified_as": "receipt",
+      "ai_outcomes": {
+        "filled": 11,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 1,
+        "line_items": 2
+      },
+      "ai_error": null,
+      "tokens": 2220,
+      "prompt_tokens": 1209,
+      "completion_tokens": 1011,
+      "model_attempts": 2,
+      "errors": [],
+      "eligible": 11,
+      "correct": 11,
+      "incorrect": 0,
+      "missing": 0
+    },
+    {
+      "file": "HLD-RECEIPT-014",
+      "type": "receipt",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 5.371,
+      "read_seconds": 1.605,
+      "model_seconds": 3.499,
+      "read_from": [
+        "ocr"
+      ],
+      "classified_as": "receipt",
+      "ai_outcomes": {
+        "filled": 11,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 1,
+        "line_items": 6
+      },
+      "ai_error": null,
+      "tokens": 2524,
+      "prompt_tokens": 1296,
+      "completion_tokens": 1228,
+      "model_attempts": 1,
+      "errors": [],
+      "eligible": 11,
+      "correct": 11,
+      "incorrect": 0,
+      "missing": 0
+    },
+    {
+      "file": "HLD-RECEIPT-020",
+      "type": "receipt",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 3.957,
+      "read_seconds": 1.21,
+      "model_seconds": 2.363,
+      "read_from": [
+        "ocr"
+      ],
+      "classified_as": "receipt",
+      "ai_outcomes": {
+        "filled": 11,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 1,
+        "line_items": 2
+      },
+      "ai_error": null,
+      "tokens": 1973,
+      "prompt_tokens": 1185,
+      "completion_tokens": 788,
+      "model_attempts": 1,
+      "errors": [],
+      "eligible": 11,
+      "correct": 11,
+      "incorrect": 0,
+      "missing": 0
+    },
+    {
+      "file": "HLD-RECEIPT-026",
+      "type": "receipt",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 10.114,
+      "read_seconds": 1.703,
+      "model_seconds": 8.029,
+      "read_from": [
+        "ocr"
+      ],
+      "classified_as": "receipt",
+      "ai_outcomes": {
+        "filled": 11,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 1,
+        "line_items": 7
+      },
+      "ai_error": null,
+      "tokens": 2264,
+      "prompt_tokens": 1316,
+      "completion_tokens": 948,
+      "model_attempts": 1,
+      "errors": [],
+      "eligible": 11,
+      "correct": 11,
+      "incorrect": 0,
+      "missing": 0
+    },
+    {
+      "file": "HLD-RECEIPT-028",
+      "type": "receipt",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 8.391,
+      "read_seconds": 1.384,
+      "model_seconds": 6.734,
+      "read_from": [
+        "ocr"
+      ],
+      "classified_as": "receipt",
+      "ai_outcomes": {
+        "filled": 11,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 1,
+        "line_items": 4
+      },
+      "ai_error": null,
+      "tokens": 2320,
+      "prompt_tokens": 1210,
+      "completion_tokens": 1110,
+      "model_attempts": 1,
+      "errors": [],
+      "eligible": 11,
+      "correct": 11,
+      "incorrect": 0,
+      "missing": 0
+    },
+    {
+      "file": "HLD-RECEIPT-029",
+      "type": "receipt",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 4.91,
+      "read_seconds": 1.797,
+      "model_seconds": 2.848,
+      "read_from": [
+        "ocr"
+      ],
+      "classified_as": "receipt",
+      "ai_outcomes": {
+        "filled": 11,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 1,
+        "line_items": 7
+      },
+      "ai_error": null,
+      "tokens": 2576,
+      "prompt_tokens": 1300,
+      "completion_tokens": 1276,
+      "model_attempts": 1,
+      "errors": [],
+      "eligible": 11,
+      "correct": 11,
+      "incorrect": 0,
+      "missing": 0
+    },
+    {
+      "file": "HLD-RECEIPT-031",
+      "type": "receipt",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 8.407,
+      "read_seconds": 1.518,
+      "model_seconds": 6.631,
+      "read_from": [
+        "ocr"
+      ],
+      "classified_as": "receipt",
+      "ai_outcomes": {
+        "filled": 11,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 1,
+        "line_items": 8
+      },
+      "ai_error": null,
+      "tokens": 2445,
+      "prompt_tokens": 1321,
+      "completion_tokens": 1124,
+      "model_attempts": 1,
+      "errors": [],
+      "eligible": 11,
+      "correct": 11,
+      "incorrect": 0,
+      "missing": 0
+    },
+    {
+      "file": "HLD-RECEIPT-036",
+      "type": "receipt",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 5.089,
+      "read_seconds": 1.444,
+      "model_seconds": 3.361,
+      "read_from": [
+        "ocr"
+      ],
+      "classified_as": "receipt",
+      "ai_outcomes": {
+        "filled": 11,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 1,
+        "line_items": 7
+      },
+      "ai_error": null,
+      "tokens": 2590,
+      "prompt_tokens": 1308,
+      "completion_tokens": 1282,
+      "model_attempts": 1,
+      "errors": [],
+      "eligible": 11,
+      "correct": 11,
+      "incorrect": 0,
+      "missing": 0
+    },
+    {
+      "file": "HLD-RECEIPT-039",
+      "type": "receipt",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 4.429,
+      "read_seconds": 1.281,
+      "model_seconds": 2.833,
+      "read_from": [
+        "ocr"
+      ],
+      "classified_as": "receipt",
+      "ai_outcomes": {
+        "filled": 11,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 1,
+        "line_items": 4
+      },
+      "ai_error": null,
+      "tokens": 2138,
+      "prompt_tokens": 1232,
+      "completion_tokens": 906,
+      "model_attempts": 1,
+      "errors": [],
+      "eligible": 11,
+      "correct": 11,
+      "incorrect": 0,
+      "missing": 0
+    },
+    {
+      "file": "HLD-RECEIPT-040",
+      "type": "receipt",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 3.736,
+      "read_seconds": 0.008,
+      "model_seconds": 3.483,
+      "read_from": [
+        "text_layer"
+      ],
+      "classified_as": "receipt",
+      "ai_outcomes": {
+        "filled": 11,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 1,
+        "line_items": 6
+      },
+      "ai_error": null,
+      "tokens": 2487,
+      "prompt_tokens": 1271,
+      "completion_tokens": 1216,
+      "model_attempts": 1,
+      "errors": [],
+      "eligible": 11,
+      "correct": 11,
+      "incorrect": 0,
+      "missing": 0
+    },
+    {
+      "file": "HLD-RECEIPT-044",
+      "type": "receipt",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 4.874,
+      "read_seconds": 1.455,
+      "model_seconds": 2.967,
+      "read_from": [
+        "ocr"
+      ],
+      "classified_as": "receipt",
+      "ai_outcomes": {
+        "filled": 11,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 1,
+        "line_items": 8
+      },
+      "ai_error": null,
+      "tokens": 2629,
+      "prompt_tokens": 1294,
+      "completion_tokens": 1335,
+      "model_attempts": 1,
+      "errors": [],
+      "eligible": 11,
+      "correct": 11,
+      "incorrect": 0,
+      "missing": 0
+    },
+    {
+      "file": "HLD-RECEIPT-050",
+      "type": "receipt",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 2.844,
+      "read_seconds": 0.009,
+      "model_seconds": 2.568,
+      "read_from": [
+        "text_layer"
+      ],
+      "classified_as": "receipt",
+      "ai_outcomes": {
+        "filled": 11,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 1,
+        "line_items": 7
+      },
+      "ai_error": null,
+      "tokens": 2210,
+      "prompt_tokens": 1274,
+      "completion_tokens": 936,
+      "model_attempts": 1,
+      "errors": [],
+      "eligible": 11,
+      "correct": 11,
+      "incorrect": 0,
+      "missing": 0
+    },
+    {
+      "file": "HLD-RECEIPT-051",
+      "type": "receipt",
+      "status": "EXTRACTED",
+      "extraction_status": "candidate_for_review",
+      "error": null,
+      "seconds": 3.427,
+      "read_seconds": 0.007,
+      "model_seconds": 3.141,
+      "read_from": [
+        "text_layer"
+      ],
+      "classified_as": "receipt",
+      "ai_outcomes": {
+        "filled": 11,
+        "candidate": 0,
+        "discarded": 0,
+        "missing": 1,
+        "line_items": 7
+      },
+      "ai_error": null,
+      "tokens": 2581,
+      "prompt_tokens": 1309,
+      "completion_tokens": 1272,
+      "model_attempts": 1,
+      "errors": [],
+      "eligible": 11,
+      "correct": 11,
+      "incorrect": 0,
+      "missing": 0
+    }
+  ],
+  "dataset": {
+    "label": "Synthetic hold-out set: 60 generated Malaysian invoices, credit/debit notes, utility bills and receipts (no company documents). Hosted settings on 24 Nov 2026: lite OCR plus one text-model call per document; provider chain Groq gpt-oss-120b then Gemini 3.5 Flash-Lite (Groq's daily quota was spent, so Gemini answered 58 documents; 2 failed on a provider HTTP error and count as wrong).",
+    "synthetic": true
+  }
+}
