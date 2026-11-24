@@ -74,7 +74,7 @@ def invoice_references(db, document):
     vendors = db.execute('SELECT id,vendor_name FROM vendors WHERE tenant_id=%s ORDER BY id',
                          (document['tenant_id'],)).fetchall()
     rows = db.execute("""SELECT fp.*, d.id AS reference_document_id, re.raw_json,
-            d.document_code AS reference_document_code, d.created_at AS reference_uploaded_at,
+            d.document_code AS reference_document_code, d.uploaded_at AS reference_uploaded_at,
             (SELECT r.record_code FROM standardised_records r WHERE r.document_id=d.id AND r.tenant_id=d.tenant_id
              ORDER BY r.revision_number DESC LIMIT 1) AS reference_record_code
         FROM documents d JOIN raw_extractions re ON re.document_id=d.id AND re.is_current=true

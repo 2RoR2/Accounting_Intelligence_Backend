@@ -591,3 +591,23 @@ class TaxInclusiveTotalTests(unittest.TestCase):
 
     def test_change_that_does_not_fit_the_payment_fails(self):
         self.assertIn('RCP-005', codes(self.receipt(subtotal='160.17', total='169.80', total_including_tax='169.78', rounding='0.02', tendered_amount='200.00', change_given='20.00')))
+
+
+class ReferenceQuerySchemaTests(unittest.TestCase):
+    """The fake database above answers any column. Check the duplicate reference read against the real schema."""
+
+    def test_every_documents_and_records_column_it_reads_exists(self):
+        import inspect
+        import re
+        from pathlib import Path
+        from validation.documents import references
+        schema = (Path(__file__).resolve().parents[3] / 'database' / 'PostgreSQL Database schema.sql').read_text(encoding='utf-8')
+
+        def columns(table):
+            body = re.search(rf'CREATE TABLE {table} \((.*?)\n\);', schema, re.S).group(1)
+            return {line.split()[0] for line in body.splitlines() if line.strip() and not line.strip().startswith(('--', 'CONSTRAINT', 'UNIQUE', 'CHECK', 'PRIMARY', 'FOREIGN'))}
+        source = inspect.getsource(references.invoice_references)
+        for alias, table in (('d', 'documents'), ('r', 'standardised_records')):
+            used = set(re.findall(rf'\b{alias}\.([a-z_]+)', source))
+            self.assertTrue(used, table)
+            self.assertEqual(used - columns(table), set(), f'{table} has no such column')
