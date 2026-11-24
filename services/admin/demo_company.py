@@ -338,7 +338,7 @@ def document_states(db, tenant_id):
     """Counts the demo needs: document status, and the accountant's three piles.
 
     needs fixing = an open exception (or status exception); to review = a current validation finding
-    that blocks approval or asks for review; ready to approve = extracted with neither. Failed and
+    that blocks approval or asks for review; ready to submit = extracted with neither. Failed and
     still-waiting documents are counted on their own.
     """
     statuses = {r["status"]: r["n"] for r in db.execute(
