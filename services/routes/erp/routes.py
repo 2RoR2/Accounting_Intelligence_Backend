@@ -1,6 +1,6 @@
 """ERP API route registrations."""
 
-from . import attachments, catalog, contacts, documents, sharing
+from . import attachments, catalog, checks, contacts, documents, sharing
 
 
 def register(router, handlers):
@@ -23,6 +23,7 @@ def register(router, handlers):
     router.add_api_route(entry, catalog.delete_catalog, methods=["DELETE"], tags=["ERP Catalog"])
 
     contacts.register(router)
+    checks.register(router)  # before documents: POST {type}/checks must not be read as a document id
     documents.register(router)
     sharing.register(router)
     attachments.register(router)
