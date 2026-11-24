@@ -53,6 +53,7 @@ def database():
     try:
         migrations = [(ROOT / f"database/migrations/{name}.sql").read_text(encoding="utf-8") for name in (
             "20261125_bank_recorded_document", "20261126_bank_recorded_document_void",
+            "20261206_bank_payment_document_match",  # replaces the 26 Nov bank guard, so it runs after it
             "20261127_vendor_default_expense_account",
         )]
         schema = (ROOT / "database/PostgreSQL Database schema.sql").read_text(encoding="utf-8-sig")

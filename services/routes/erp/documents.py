@@ -709,7 +709,9 @@ def _check_note(db, user, doc):
 def _void(db, user, doc, reason):
     if doc["status"] == "ready" and user["role"] not in POST_ROLES:
         raise HTTPException(403, "Only a company admin can void a ready document.")
-    if doc["document_type"] in {"money-in", "money-out"}:
+    # Money documents created from a bank line, and vouchers/receipts matched to one, release that line when voided.
+    releases_bank_line = doc["document_type"] in {"money-in", "money-out", "payment", "purchase-payment"}
+    if releases_bank_line:
         # Lock the bank evidence before taking the journal/period locks.
         db.execute("""SELECT id FROM bank_transactions WHERE tenant_id=%s AND recorded_document_id=%s
             ORDER BY id FOR UPDATE""", (user["tenant_id"], doc["id"]))
@@ -747,7 +749,7 @@ def _void(db, user, doc, reason):
     updated = db.execute("""UPDATE erp_document_headers SET status='void',voided_at=now(),void_reason=%s,reversal_journal_id=%s,
             updated_by=%s,updated_at=now() WHERE id=%s AND tenant_id=%s RETURNING *""",
                       (reason, reversal, user["id"], doc["id"], user["tenant_id"])).fetchone()
-    if doc["document_type"] in {"money-in", "money-out"}:
+    if releases_bank_line:
         reopened = db.execute("""UPDATE bank_transactions SET status='imported',recorded_document_id=NULL
             WHERE tenant_id=%s AND recorded_document_id=%s RETURNING id""",
             (user["tenant_id"], doc["id"])).fetchall()
