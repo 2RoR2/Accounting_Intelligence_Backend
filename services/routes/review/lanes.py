@@ -22,7 +22,9 @@ from fastapi import HTTPException, Request
 from pydantic import BaseModel, Field
 
 from main import ReviewDecisionInput, ReviewInput, connect, require_workspace_user
-from services.review.readiness import (STAGE_STATUSES, assess_documents, lane_for, reason, summary_values)
+from services.review.readiness import (STAGE_STATUSES, _value, assess_documents, field_is_verified, lane_for, reason,
+                                       summary_values)
+from services.review.risk import rank, risk, spot_check
 from services.routes.documents import routes as document_routes
 
 logger = logging.getLogger(__name__)
@@ -68,11 +70,15 @@ class BulkApproveInput(BulkReviewInput):
 
 def _lane_item(document, reasons, fields):
     status = document['status']
+    # Fields with a value a person has not confirmed (Please check / Suggested): the risk order counts them.
+    unverified = sum(1 for row in fields if _value(row) is not None and not field_is_verified(row))
     return {'id': str(document['id']), 'code': document.get('document_code'), 'name': document.get('original_filename'),
             'kind': (document.get('kind') or '').upper(), 'category': (document.get('category') or '').upper(),
             'status': status.upper(), 'contentRevision': document['content_revision'],
             'nextAction': 'approve' if status in STAGE_STATUSES['approve'] else 'submit',
-            **summary_values(document, fields), 'reasons': reasons}
+            **summary_values(document, fields), 'reasons': reasons, 'risk': risk(reasons, unverified),
+            # Only a ready document can be picked: the others need a person's look anyway.
+            'spotCheck': not reasons and spot_check(document['id'], document['content_revision'])}
 
 
 def review_lanes(request: Request, stage: str | None = None):
@@ -94,7 +100,10 @@ def review_lanes(request: Request, stage: str | None = None):
     for document in documents:
         found = reasons[str(document['id'])]
         lanes[lane_for(found)].append(_lane_item(document, found, fields.get(str(document['id']), [])))
+    # Most likely wrong first, with the reasons; a random spot-check heads the ready lane (roadmap P1-lite).
+    lanes = {lane: rank(items) for lane, items in lanes.items()}
     return {'stage': stage, 'policy': {'readyLaneRequiresKnownSupplier': policy},
+            'order': 'risk', 'spotCheckRate': '1 in 20 ready documents',
             'counts': {lane: len(items) for lane, items in lanes.items()}, 'lanes': lanes}
 
 
