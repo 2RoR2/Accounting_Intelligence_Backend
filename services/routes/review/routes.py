@@ -93,3 +93,5 @@ def register(router, handlers):
     router.add_api_route('/api/workload', list_workload, methods=['GET'])
     from .lanes import register as register_lanes  # Review lanes and bulk submit / approve (B5a).
     register_lanes(router)
+    from .posting_preview import register as register_posting_preview  # Proposed journal before approval (P10).
+    register_posting_preview(router)
