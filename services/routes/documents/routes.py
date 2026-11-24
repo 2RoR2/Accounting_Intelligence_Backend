@@ -113,7 +113,7 @@ from validation.matching.vendor_matching import find_vendor_match
 from database.object_storage.object_store import local_storage_root, document_key, safe_component
 from validation.documents.document_validation import validation_outcome
 from validation.documents.references import accepted_reviews, REVIEW_ACTION
-from services.extraction.contracts.accounting_contract import effective_value, json_safe
+from services.extraction.contracts.accounting_contract import FIELD_KEYS, VERSION as CONTRACT_VERSION, effective_value, json_safe
 from services.extraction.persistence.auto_kind import read_kind, stored_kind_or_auto
 from services.extraction.persistence.kind_choice import CHOOSABLE_KINDS, CHOOSABLE_STATUSES, choose_kind, chosen_classification
 from services.extraction.contracts.currency_review import build_currency_review, decision_details
@@ -142,6 +142,11 @@ CORRECTABLE_FIELDS = CORRECTABLE_MONEY_FIELDS | frozenset({
     # The printed bill number: the reader's key for bills, and the empty field a type choice adds.
     'bill_number',
 })
+# Fields a person may add when the reader stored none (24 Nov demo bug a): payment terms and the due date matter for
+# every bill, invoice and note, but the reader only looks for terms on invoices. Correcting one of these creates the
+# empty row on the current extraction first; the value is still the person's own, audited like any correction.
+ADDABLE_ON_CORRECTION = {'payment_terms': 'Payment Terms', 'due': 'Due Date', 'due_date': 'Due Date',
+                         'bill_number': 'Bill Number'}
 
 def list_documents(
     request: Request,
@@ -872,6 +877,23 @@ def correct_extracted_field(document_id: str, field_key: str, data: FieldCorrect
             decision = decision_details(_currency_review(db, user['tenant_id'], document_id, stored), data.value, current.get('current_value') if current else None)
         db.execute("SELECT set_config('app.user_id',%s,true), set_config('app.status_reason',%s,true)",
                    (str(user['id']), 'Extracted field corrected'))
+        if field_key in ADDABLE_ON_CORRECTION:
+            extraction = db.execute("SELECT id FROM raw_extractions WHERE document_id=%s AND is_current=true",
+                                    (document_id,)).fetchone()
+            if extraction:
+                # Use whichever alias is already stored ('due' and 'due_date' are one field), so no second row appears.
+                aliases = list(dict.fromkeys([field_key, FIELD_KEYS.get(field_key, field_key)]))
+                existing = db.execute("""SELECT field_key FROM field_predictions WHERE extraction_id=%s AND field_key = ANY(%s)
+                    ORDER BY field_key=%s DESC LIMIT 1""", (extraction['id'], aliases, field_key)).fetchone()
+                if existing:
+                    field_key = existing['field_key']
+                else:
+                    field_key = aliases[-1]  # the contract key, as the reader stores it
+                    db.execute("""INSERT INTO field_predictions (extraction_id, document_id, field_key, field_label, extraction_state,
+                            resolution, extraction_method, schema_version)
+                        VALUES (%s,%s,%s,%s,'missing','unresolved_missing','MANUAL_CORRECTION',%s)
+                        ON CONFLICT (extraction_id, field_key) DO NOTHING""",
+                        (extraction['id'], document_id, field_key, ADDABLE_ON_CORRECTION[field_key], CONTRACT_VERSION))
         # Repeat tenant, visibility and revision guards in the write itself.
         # Preserve resolution/raw/provenance; the existing trigger appends history.
         row = db.execute(f"""UPDATE field_predictions AS fp

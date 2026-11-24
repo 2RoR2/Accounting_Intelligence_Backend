@@ -158,7 +158,12 @@ def independent_arithmetic(invoice, items, fields, reached):
         else:
             checks.append({'rule': 'EX-004', 'result': 'PASS', 'checkStatus': 'CHECKED', 'required': False,
                            'message': 'Line amounts add up to the pre-tax amount, compared in the amounts as printed.'})
-    if subtotal is None or tax is None or total is None:
+    if tax is not None and total is not None and total > 0 and tax > total + AMOUNT_TOLERANCE:
+        # Printed values compared as printed (no tax is calculated): tax above its own total means they were swapped.
+        errors.append({'code': 'EX-005', 'field': 'tax_amount', 'severity': EXCEPTION_SEVERITY['EX-005'],
+                       'message': f'The printed tax {tax} is larger than the printed total {total}. '
+                                  'Check that tax and total were not swapped.'})
+    elif subtotal is None or tax is None or total is None:
         not_checked('EX-005', 'Total check needs a pre-tax amount, tax and total.')
     else:
         expected = subtotal + tax - (discount or Decimal('0')) + adjustments

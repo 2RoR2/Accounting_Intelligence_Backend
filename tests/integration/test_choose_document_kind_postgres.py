@@ -306,3 +306,35 @@ def test_a_bill_chosen_for_an_unread_document_takes_its_printed_number(workspace
     # The bill number alone satisfies "a bill reference or account number is required".
     assert not [e for e in errors if e['field'] == 'reference'], errors
     assert not [e for e in errors if e['field'] == 'document_type'], errors
+
+
+def test_payment_terms_and_due_date_can_be_added_to_a_bill_the_reader_left_without_them(workspace, tmp_path):
+    """24 Nov demo bug a: the reader only looks for terms on invoices, so a bill had no field to correct (404)."""
+    connect, people = workspace
+    owner = people['owner']
+    document_id = unread_document(connect, owner, tmp_path)
+    revision = choose(document_id, owner, 'bill', stored(connect, document_id)[0]['content_revision']).json()['contentRevision']
+    assert 'payment_terms' not in stored(connect, document_id)[2]
+
+    terms = call('PATCH', f'/api/documents/{document_id}/extraction/payment_terms', owner,
+                 json={'value': 'Net 30 days', 'expectedContentRevision': revision})
+    assert terms.status_code == 200, terms.text
+    assert terms.json()['key'] == 'payment_terms' and terms.json()['value'] == 'Net 30 days'
+    revision = terms.json()['contentRevision']
+    # The API's 'due_date' and the stored 'due' are one field: correcting it twice never leaves two rows.
+    for value in ('2026-12-01', '2026-12-05'):
+        due = call('PATCH', f'/api/documents/{document_id}/extraction/due_date', owner,
+                   json={'value': value, 'expectedContentRevision': revision})
+        assert due.status_code == 200, due.text
+        revision = due.json()['contentRevision']
+    with connect() as db:
+        rows = db.execute("""SELECT fp.field_key, fp.current_value, fp.corrected_by FROM field_predictions fp
+            JOIN raw_extractions re ON re.id=fp.extraction_id AND re.is_current
+            WHERE fp.document_id=%s AND fp.field_key IN ('payment_terms','due','due_date')""", (document_id,)).fetchall()
+    by_key = {row['field_key']: row for row in rows}
+    assert set(by_key) == {'payment_terms', 'due'}, by_key
+    assert by_key['due']['current_value'] == '2026-12-05' and by_key['payment_terms']['corrected_by'] == owner['id']
+    # Another company's accountant still cannot reach the document.
+    outside = call('PATCH', f'/api/documents/{document_id}/extraction/payment_terms', people['outsider'],
+                   json={'value': 'Net 7', 'expectedContentRevision': revision})
+    assert outside.status_code == 404

@@ -17,24 +17,28 @@ logger = logging.getLogger(__name__)
 
 
 def _usable_document_identifier(fields: list[dict[str, Any]], kind: str) -> str | None:
-    """Return the identifier that should become the processed filename."""
+    """Return the identifier that should become the processed filename.
+
+    Keys are tried in order of preference, so the document's own printed number wins over a secondary reference:
+    a bill stores its printed number in `bill_number`, a note in `credit_note_number`/`debit_note_number`."""
     identifier_keys = {
-        "invoice": {"invoice", "invoice_number"},
-        "credit_note": {"invoice", "invoice_number", "reference", "reference_number"},
-        "debit_note": {"invoice", "invoice_number", "reference", "reference_number"},
-        "bill": {"reference", "reference_number", "bill_reference", "invoice", "invoice_number"},
-        "receipt": {"receipt", "receipt_number", "reference", "reference_number"},
-    }.get(kind, set())
+        "invoice": ("invoice_number", "invoice"),
+        "credit_note": ("credit_note_number", "invoice_number", "invoice", "reference_number", "reference"),
+        "debit_note": ("debit_note_number", "invoice_number", "invoice", "reference_number", "reference"),
+        "bill": ("bill_number", "bill_reference", "invoice_number", "invoice", "reference_number", "reference"),
+        "receipt": ("receipt_number", "receipt", "reference_number", "reference"),
+    }.get(kind, ())
     placeholders = {"invoice", "invoice number", "invoice no", "reference", "receipt", "n/a", "na", "none", "null", "unknown", "-"}
-    for field in fields:
-        if field.get("field_key") not in identifier_keys:
-            continue
-        value = field.get("current_value") or field.get("normalized_value")
-        if value is None:
-            continue
-        value = str(value).strip()
-        if value and value.casefold() not in placeholders and any(ch.isalnum() for ch in value):
-            return value
+    for key in identifier_keys:
+        for field in fields:
+            if field.get("field_key") != key:
+                continue
+            value = field.get("current_value") or field.get("normalized_value")
+            if value is None:
+                continue
+            value = str(value).strip()
+            if value and value.casefold() not in placeholders and any(ch.isalnum() for ch in value):
+                return value
     return None
 
 

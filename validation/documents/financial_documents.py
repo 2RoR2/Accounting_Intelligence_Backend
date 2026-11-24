@@ -270,10 +270,14 @@ def evaluate_financial_document(kind, extraction, fields, items):
         errors.append({'code': f'{prefix}-{rule}', 'field': field,
                        'message': message, 'severity': severity})
 
-    def check(rule, message, *, available=True, required=True):
-        checks.append({'rule': f'{prefix}-{rule}', 'result': 'PASS' if available else 'WARNING',
-                       'checkStatus': 'CHECKED' if available else 'NOT_CHECKED',
-                       'required': required, 'message': message})
+    def check(rule, message, *, available=True, required=True, field=None):
+        entry = {'rule': f'{prefix}-{rule}', 'result': 'PASS' if available else 'WARNING',
+                 'checkStatus': 'CHECKED' if available else 'NOT_CHECKED',
+                 'required': required, 'message': message}
+        if field and not available:
+            # A check that could not run names the field to look at, so the review page can point the person to it.
+            entry['field'] = field
+        checks.append(entry)
 
     def not_applicable(rule, message):
         checks.append({'rule': f'{prefix}-{rule}', 'result': 'NOT_APPLICABLE', 'checkStatus': 'NOT_APPLICABLE',
@@ -328,6 +332,12 @@ def evaluate_financial_document(kind, extraction, fields, items):
         value = values.get(key)
         if value is not None:
             amounts[key] = Decimal(value)
+    # Plausibility of the printed figures, compared as printed (no tax is calculated): a tax amount larger than the
+    # total it belongs to means the two were most likely read into each other's place (e.g. tax 206.00, total 20.60).
+    if amounts.get('tax') is not None and amounts.get('total') is not None and (
+            amounts['total'] > 0 and amounts['tax'] > amounts['total'] + AMOUNT_TOLERANCE):
+        issue('TAX_PLAUSIBLE', 'tax', f'The printed tax {amounts["tax"]} is larger than the printed total {amounts["total"]}. '
+              'Check that tax and total were not swapped.', 'high')
     # Returns/credits need an explicit policy. A signed amount is not itself a
     # malformed decimal; preserve it and mark that accounting scope unchecked.
     if kind == 'receipt':
@@ -432,14 +442,14 @@ def evaluate_financial_document(kind, extraction, fields, items):
     elif non_itemized:
         not_applicable('SUBTOTAL', 'The document prints no item rows to compare with a subtotal.')
     elif kind in {'receipt', 'credit_note', 'debit_note'}:
-        check('SUBTOTAL', 'Line amounts and explicit subtotal are required for this comparison.', available=False)
+        check('SUBTOTAL', 'Line amounts and explicit subtotal are required for this comparison.', available=False, field='subtotal')
 
     if kind == 'bill':
         state, message = bill_amount_due(values)
         if state == 'FAILED':
             issue('AMOUNT_DUE', 'amount_due', message, 'high')
         else:
-            check('AMOUNT_DUE', message, available=state == 'CHECKED')
+            check('AMOUNT_DUE', message, available=state == 'CHECKED', field='amount_due')
     else:
         # No zero is invented for absent tax/subtotal. An explicit discount, if
         # present in the current contract, participates separately in the math.
@@ -499,7 +509,7 @@ def evaluate_financial_document(kind, extraction, fields, items):
             else:
                 check('TOTAL', 'Evidenced subtotal + tax (less explicit discount when present) agrees with total.')
         else:
-            check('TOTAL', 'Explicit subtotal, tax and total are required; missing amounts remain null.', available=False)
+            check('TOTAL', 'Explicit subtotal, tax and total are required; missing amounts remain null.', available=False, field='total')
 
     if kind in {'credit_note', 'debit_note'}:
         check('NOTE_LINK', 'Related invoice/reference is evidenced or the note number is present.', required=True)
