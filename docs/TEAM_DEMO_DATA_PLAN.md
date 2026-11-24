@@ -1,6 +1,7 @@
 # Team demo data plan (draft for approval)
 
-Status: **Phase 1 plan, waiting for Jonathan's approval.** Nothing below has been built or applied yet.
+Status: **Phase 1 plan, v2 (Jonathan's answers of 24 Nov folded in, see §6).** Waiting for a final go on Phase 2.
+Nothing below has been built or applied yet.
 Written 24 Nov 2026 on branch `claude/team-demo-data-31ccd9`. The base is backend `features` at 5ca59c3.
 
 Goal: every teammate (Rachel, Angeline, Aina, Aleeya, Jonathan) can use and test every part of AccordAI with enough
@@ -114,31 +115,46 @@ approve companies, seat limits and MFA recovery.
 | Code | Company | Trade | Place | Bank (fictional) | Printed tax |
 |---|---|---|---|---|---|
 | KNT | Ketapang Nibong Trading Sdn. Bhd. (exists) | building-material trading | Kuching, Sarawak | Public Bank ••9901 | SST 10% / 5% on goods, 8% on services |
-| TKK | Teratai Kopi & Katering Sdn. Bhd. | café and corporate catering | Kuching, Sarawak | "Current account ••4402" | 6% service tax on F&B |
-| EHB | Enggang Hardware & Building Supply Sdn. Bhd. | hardware, construction materials, equipment rental | Miri, Sarawak | "Current account ••7715" | SST 10% on goods, 8% on rental |
-| CDA | Cendana Advisory Sdn. Bhd. | accounting and business advisory (professional services) | Kota Kinabalu, Sabah | "Current account ••3360" | 8% service tax |
+| TKK | Teratai Kopi & Katering Sdn. Bhd. | café and corporate catering | Kuching, Sarawak | Maybank Current Account ••4402 | 6% service tax on F&B |
+| EHB | Enggang Hardware & Building Supply Sdn. Bhd. | hardware, construction materials, equipment rental | Miri, Sarawak | RHB Current Account ••7715 | SST 10% on goods, 8% on rental |
+| CDA | Cendana Advisory Sdn. Bhd. | accounting and business advisory (professional services) | Kota Kinabalu, Sabah | CIMB Current Account ••3360 | 8% service tax |
 
 Names follow the KNT style: a Malaysian tree or bird name and a "Contoh" street address. The SSM numbers, TINs and
 SST numbers are invented in KNT's fictional ranges. Emails end in `.test`, and every rendered page prints
-"SYNTHETIC SAMPLE". Only KNT names a real bank, because its existing books already do. The new companies use a
-generic account label, as `company_pack.py` does today.
+"SYNTHETIC SAMPLE".
+
+**Banks (decided 24 Nov):** each company names a real Malaysian bank in its bank-account label and statement file
+name, as KNT does with Public Bank. Only the account numbers are invented. The statement CSVs keep the generic
+layouts from `company_pack.py`. We do not copy any bank's logo, letterhead or statement design, so nothing could pass
+for a real bank record.
 
 ### 2.2 Who holds which role
 
 Each teammate gets at least one **local admin** login, so they can test approving, posting, locking and user
 management, and is an **accountant** in at least two companies.
 
+**Maker-checker rule (v2):** within one company, nobody both prepares and approves. Accountants prepare and submit;
+local admins approve, post and lock periods. That is how the code already separates the roles (§1.4). v1 had Aleeya as
+both an accountant and an admin of CDA, which broke the rule, so v2 moves her admin seat to EHB.
+
 | Person | KNT | TKK (Kuching café) | EHB (Miri hardware) | CDA (KK advisory) |
 |---|---|---|---|---|
-| Jonathan | accountant (exists) + "Jonathan Company Admin" local admin (exists) | accountant | accountant | — |
+| Jonathan | accountant (exists) + "Jonathan Company Admin" (exists) | accountant | accountant | — |
 | Rachel | accountant (exists) | **local admin** | accountant | accountant |
 | Angeline | accountant (exists) | accountant | **local admin** | — |
 | Aina | accountant (exists) | — | accountant | **local admin** |
-| Aleeya | accountant (exists) | accountant | — | accountant + **second local admin** |
-| SAIC pai@/rabia@/brian@ | accountant (exist) | — | — | — |
+| Aleeya | accountant (exists) | accountant | **second local admin** | accountant |
+| SAIC pai@/rabia@/brian@ | accountant (exist), Inbox set of their own | — | — | — |
 | demo@accordai.local | local admin (exists) | — | — | — |
 
-Seats: TKK 4, EHB 4, CDA 4 (limit 10 each). KNT is unchanged.
+| Company | Admins | Accountants |
+|---|---|---|
+| TKK | 1 | 3 |
+| EHB | 2 | 3 |
+| CDA | 1 | 2 |
+
+Seat limit 10 per company; KNT is unchanged. KNT is the one exception to the rule: Jonathan already has both an
+accountant and an admin login there. In KNT demos, his admin login approves only what *other* accountants submitted.
 
 ### 2.3 One email per company: plus-addresses
 
@@ -377,3 +393,112 @@ it needs the bucket variables in the shell that runs it. Without them it can sti
 8. **Fix G1 (invite with no activation email)** as a separate PR? It would let local admins invite people for real,
    instead of using the "set Active, then Forgot password" workaround.
 9. **Hosted timing:** when is a quiet window to snapshot and apply, given that a rollback discards later activity?
+
+---
+
+## 6. Decisions and proposals after Jonathan's answers (24 Nov)
+
+### 6.1 Banks and roles
+Decided:
+- Real Malaysian bank names with invented account numbers (§2.1).
+- The maker-checker role table (§2.2).
+
+### 6.2 Plus-addresses: yes, the code still arrives
+- All five teammates' UAT logins are Gmail addresses (see the uat hand-over note).
+- Gmail delivers `name+tkk@gmail.com` to the normal `name@gmail.com` inbox. Gmail ignores everything after `+`.
+- The app accepts `+` in an email (`main.py:176-177`).
+- Brevo sends to the full address.
+
+Before any account is created, each person sends one email from their phone to `name+test@gmail.com` and checks that
+it arrives. This takes 30 seconds and needs no system. The SAIC accountants keep their single KNT login and are not
+affected.
+
+### 6.3 SAIC accountants (proposal)
+- They stay **KNT accountants only**, with nothing in the new companies until they ask after the meeting.
+- Each gets a **starter Inbox set of 6**: one or two per lane, including one exception. Their first sign-in then shows
+  real work, not an empty page.
+- They sign in through Forgot password with their SAIC email, which is already proven on uat.
+- A one-page "first sign-in" guide goes with it.
+
+### 6.4 "Enough to run the whole system": coverage, not a count
+Keep about 12 documents per accountant. Each set must cover a checklist, and `tally` verifies that every lane is
+present:
+- the 5 lanes;
+- the 3 exception types;
+- a credit note and a debit note;
+- one approved and posted document;
+- one document that is bank-matched.
+
+`docs/demo/TEAM_TEST_SCRIPT.md` gives a run-through per role:
+- **Accountant:** review → fix exception → submit; type a sales invoice and a credit note; match a bank line;
+  statement of account; search and trace.
+- **Local admin:** approve or return; post; post a bank payment; complete the reconciliation; close and reopen
+  September; assign work; invite a user.
+
+### 6.5 AI capacity (Q6): facts and proposal
+Facts:
+- With `AI_EXTRACTION=text`, **every** upload calls the model (`services/extraction/lite/pipeline.py:139-150`). The
+  rule reader only runs as a fallback (`:156-166`).
+- A document costs about 2.4–2.6K tokens (`docs/ACCURACY_LOG.md:49`, `:98-100`).
+- One free Groq key at 200K tokens a day reads about 80 documents a day, at about 3 per minute (8K tokens per
+  minute).
+
+Ideas, best first:
+1. **Rules first for known suppliers.** Once a supplier has a few approved documents, try the rule reader with the
+   existing verification first, and call the model only when a required field is missing or the totals do not tie.
+   Repeat suppliers make up most of an SME's volume, so most documents would cost 0 tokens. This is also a strong
+   demo story: "AI only for new layouts; it learns from approvals."
+2. **Provider chain.** It is already supported (`AI_PROVIDERS`, `services/extraction/ai/text_llm.py:9-13`): Groq,
+   then Gemini Flash-Lite, then another free provider. Each has its own free daily quota.
+3. **A fair daily budget per company and a "waiting for AI capacity" queue** instead of failing, with a quota gauge on
+   the dashboard and catch-up overnight. Three accountants in one company can then never starve another company.
+4. **Fewer tokens per document:** a shorter prompt, sending only the header and totals rows, no reasoning tokens. The
+   saving is an estimate until measured.
+5. **Production:** each client company brings its own API key, or uses a paid tier. At about 2.5K tokens per document
+   the cost per document is very small, but check the providers' current prices first. This is paid usage, so it
+   needs your approval.
+
+Not recommended: opening many free accounts to multiply the quota. That goes against the providers' terms.
+
+For team testing now:
+- The seeded data spends 0 tokens.
+- Live uploads are limited to each person's 6-file pack, with one upload slot per teammate per day.
+- Ideas 1–4 are their own task (a separate session and PR).
+
+### 6.6 Inbox files on hosted (Q7)
+What the files are and why it matters:
+- Each Inbox document keeps its original PDF or JPG so the preview pane can show it.
+- Locally the files sit in `storage/`. On hosted they must go to the S3 bucket, because Render's disk is wiped on
+  every deploy.
+- If `S3_BUCKET` is not set on Render, even live uploads lose their files at the next deploy. This needs checking
+  before the demo.
+- Uploading through the interface is not the answer, because it re-runs extraction and spends quota.
+
+Proposal:
+- `team-inbox --apply` writes each file straight to the bucket through the app's object store. It reads the bucket
+  keys from a private env file on Jonathan's machine (read-only, never printed).
+- The same step uploads the 14 KNT files that are still waiting.
+- This needs Rachel to confirm that `S3_BUCKET` is set on Render and to share the bucket keys privately, or to run
+  that one command herself.
+- Fallback: the records work without the files; only the preview shows the file as unavailable.
+
+### 6.7 Invite link (Q8): a separate PR
+1. **Local admin invites an accountant:** create a single-use activation token and email the link through Brevo. The
+   page (`src/app/(public)/activate/page.tsx`) and the endpoint (`services/routes/security/routes.py:359`) already
+   exist. "Resend" issues a new token and the old one stops working.
+2. **Super admin (Group 14) approves a company:** the same email goes to the new local admin.
+3. **Super admin "add user to company"** with a role (local admin or accountant), for SAIC and future clients.
+4. If email delivery fails, the admin sees a copy-once link.
+5. Tests cover expiry, reuse, the wrong company and seat limits.
+
+Once this lands, `team-accounts` can use the same invite path instead of the "active with no password" step.
+
+### 6.8 Timeline (Q9, proposal)
+| When | What |
+|---|---|
+| 24–25 Nov (SAIC meeting tomorrow) | **No writes to uat.** It stays exactly as it is for the meeting. |
+| 25–27 Nov | Phase 2 built and proven locally; PR into `features`. Invite-link PR in parallel. |
+| Sat 28 Nov, evening | Tell the team, take a Neon snapshot of uat, apply TKK, EHB, CDA, accounts, Inbox sets and the KNT split; tally; smoke check. |
+| Sun 29 Nov | Everyone sets their passwords (Forgot password), admins enrol TOTP, and each person runs `TEAM_TEST_SCRIPT.md`. |
+| Until the final demo | Testing on uat; bug fixes deploy as code only (no data resets). |
+| 2 days before the final demo | A second snapshot, `uat-pre-final-demo`, so a demo run can be reset in minutes. |
