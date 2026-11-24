@@ -168,9 +168,11 @@ PURCHASES   Purchase order ──► Supplier DO, recorded as a Goods received n
 |---|---|---|---|
 | **(a) Typed outgoing DO** | Sidebar **Sales › Delivery orders** (between Quotations and Invoices). Create it from a **quotation** (deliver first, invoice later), from an **issued invoice** (invoice first), or with New. The PDF gets the delivery address and the **Received by** block. Status: Draft → **Issued** (printed) → **Delivered** (signed copy uploaded with the existing attachments panel) → Invoiced. **Never posts.** | Most of it exists, so it is cheap; KNT's seeded invoices already reference a "D.O. No."; it answers Jonathan's question with a visible UAT feature | **M** (sidebar, transfer buttons, PDF block, delivery address, Delivered status) |
 | **(b) Captured incoming supplier DO / GRN** | Inbox: a new extraction type **Supplier DO**, reviewed like a bill but with **no amounts required**, becomes a **Goods received** record (the `goods-received` type exists). On a bill, a "Match" panel shows the PO, the DO/GRN and the bill side by side (**three-way match**): quantity per item (received vs billed), price (ordered vs billed), and flags such as "Billed 12, received 10" | Real control value (no paying for goods not received), built on AccordAI's strength (capture). It needs a new extraction type and a matching UI, and is less useful until POs are used | **M–L** |
-| Sales orders | Keep hidden and available by URL; show them only if SAIC confirms that its clients confirm orders before delivery | Adds a step most micro-SMEs skip (Bukku lets you skip it [K1]) | – |
+| **Sales orders** (decided 25 Nov: **in scope, shown**) | Sidebar **Sales › Sales orders**. Created from an accepted quotation; **Confirm** (admin) freezes it; it is delivered with one or more DOs and then invoiced. **Never posts.** Optional: a quotation can still go straight to a DO or an invoice | Jonathan chose to show them. They record the customer's confirmed order (and PO number) before goods leave. The type, numbering (SO), transfers and API already exist | **S** (sidebar, Confirm label, PDF title "SALES ORDER") |
 
-**Sidebar after (a):** Sales: Quotations · **Delivery orders** · Invoices · Credit notes · Debit notes · Payments received.
+**Sidebar after (a):** Sales: Quotations · **Sales orders** · **Delivery orders** · Invoices · Credit notes · Debit notes · Payments received.
+
+**Clickable prototype:** the visual page (`https://claude.ai/artifact/177xUjCaWQQZRsWaAfC65D`, private until shared) runs this flow on fictional KNT data: quotation → sales order → delivery order (signed copy) → invoice with posting, the live A4 preview, Save draft vs Send/Issue, accountant submit vs admin issue, and the assists A1, A3, A4 (simulated without an LLM), A5, A6 and A7. It is a prototype in one HTML page and does not change the app.
 **After (b):** Purchases: (Purchase orders, if turned on) · **Goods received** · Bills · Expense receipts · Supplier credit notes · Supplier debit notes · Payments made; and Inbox › Upload & capture accepts "Supplier DO".
 
 **Trace:** every DO shows chips "From QT-2026-00012 · Invoiced in IV-2026-00031" (links already returned by the history endpoint, `documents.py:1126`); an invoice shows "Delivered: DO-2026-00007 (signed copy ✓)"; trace search (PR #24) finds a DO number from either side. On purchases: Bill ⇄ GRN ⇄ PO chips plus the match status.
@@ -191,7 +193,7 @@ SC5 admin approval time, plus a new **SC-D "document correct on first print"** (
 | 3 | **Quotation "Valid until"** (form, PDF, default days, expiry badge) | S | SC-D | A QT PDF prints Valid until; the list shows "expires soon" |
 | 4 | **Live preview** (server-rendered unsaved preview, panel and modal) for all printed types | M | SC1, SC-D | Typing updates the paper within ~1 s; no number is taken |
 | 5 | **Attention, delivery address, per-document Terms** (fields + PDF) | S–M | SC-D | Printed on QT/IV/DO |
-| 6 | **DO in the sidebar** + QT→DO, IV→DO, DO→IV buttons + **Received-by block** + "Delivered" with the signed copy | M | SC1 | KNT walk-through: QT → DO (signed copy) → IV, with trace chips both ways |
+| 6 | **Sales orders and DOs in the sidebar** + QT→SO, QT→DO, SO→DO, IV→DO, DO→IV buttons + **Received-by block** + "Delivered" with the signed copy | M | SC1 | KNT walk-through: QT → SO → DO (signed copy) → IV, with trace chips both ways |
 | 7 | Live **duplicate warning** (A5) and **last-price chips** (A1) | S | SC1 | The warning shows before save; copying a repeat order's lines takes ≤ 3 clicks |
 
 ### Next semester
@@ -207,7 +209,7 @@ SC5 admin approval time, plus a new **SC-D "document correct on first print"** (
 | # | Item | Effort |
 |---|---|---|
 | 13 | Partial deliveries (delivered vs ordered quantity, backorders); many DOs → one invoice | L |
-| 14 | Show sales orders and the PO module (if SAIC needs them) | M |
+| 14 | Show the PO module (sales orders move to the next 2 weeks) | M |
 | 15 | Company logo and a form-design picker (Bukku has custom form designs [K3]) | M |
 | 16 | Map e-invoice fields (shipping recipient, buyer SST) for the future MyInvois scope [L1, L2]; **no submission** | M |
 
@@ -215,7 +217,7 @@ SC5 admin approval time, plus a new **SC-D "document correct on first print"** (
 
 ## 6. Decisions for Jonathan / SAIC
 
-1. **Sales orders in scope?** The recommendation is no: keep them hidden (URL only) unless SAIC confirms that its clients confirm orders before delivery.
+1. ~~Sales orders in scope?~~ **Decided 25 Nov (Jonathan): yes, show them** in Sales, between Quotations and Delivery orders (§4.4).
 2. **For the KNT UAT script, DO before or after the invoice?** Both will work; the recommendation is QT → DO → IV.
 3. **Numbering on Save:** keep "the number is taken at the first save" (simple; deleted drafts leave gaps), or give drafts a temporary label and assign the number at Send/Issue (no gaps, which auditors prefer; it touches numbering, so M effort)?
 4. **The DO's "No signature required" line:** replace it with the Received-by block? (The recommendation is yes.)
