@@ -116,7 +116,7 @@ def send_invitation_email(recipient: str, *, name: str, company: str, role: str,
     role_label = ROLE_LABELS.get(role, "user")
     subject = f"You're invited to {company} on AccordAI"
     sign_in = ("You will set up an authenticator app the first time you sign in."
-               if role == "local_admin" else "Each sign-in also asks for a code we email you.")
+               if role == "local_admin" else "Each sign-in also asks for a code emailed to you.")
     text = (f"Hello {name},\n\n"
             f"You have been invited to {company} on AccordAI as {role_label}.\n\n"
             f"Choose your password here (single use, expires {expires}):\n{link}\n\n"

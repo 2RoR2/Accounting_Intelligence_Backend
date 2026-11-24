@@ -24,7 +24,7 @@ PAGE_HEIGHT = 842
 PRODUCER = "Accounting Intelligence"
 NO_SIGNATURE = "This is a computer-generated document. No signature is required."
 # A delivery order is the one printed document the customer signs: its signed copy is the proof of delivery.
-SIGN_AND_RETURN = "Please sign and chop one copy and return it to us."
+SIGN_AND_RETURN = "Please sign and chop one copy and return it to the issuing company."
 RECEIVED_HEADING = "Goods received in good order and condition"
 
 # Adobe AFM advance widths (1/1000 em) for character codes 32..126.
@@ -789,7 +789,7 @@ class _StatementRenderer(_Renderer):
         self.summary()
         self.ageing()
         self.text_section("Notes", "Amounts are as recorded in the books (tax as recorded on each document). "
-                                   "Please tell us about any difference.")
+                                   "Please tell the issuing company about any difference.")
         self.footers()
 
 

@@ -27,7 +27,7 @@ class NameVariantTests(unittest.TestCase):
         self.assertIsNone(check)
         self.assertEqual((error['code'], error['severity'], error['field']), (RULE, 'high', 'customer'))
         self.assertEqual(error['message'], 'This document is addressed to Puncak Tanjung Catering Sdn. Bhd., not '
-                                           "Ketapang Nibong Trading Sdn. Bhd. If it isn't yours, set it aside.")
+                                           "Ketapang Nibong Trading Sdn. Bhd. If it isn't for this company, set it aside.")
         self.assertIn('not Acme Trading. If', run({'customer': 'Puncak Tanjung Catering'}, identity={'name': 'Acme Trading'})[0]['message'])
 
     def test_a_similar_but_different_company_still_fails(self):

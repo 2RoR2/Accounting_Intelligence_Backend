@@ -235,7 +235,7 @@ def score(args):
         'dataset': [
             f"Benchmark module2-third-party-pilot-v1: {total} public documents (15 invoices, 10 bills, 10 receipts), published labels unchanged.",
             'Invoices and bills are synthetic; receipts are real ICDAR2019 SROIE scans. All were used during development, so this is not held-out evidence.',
-            'Suspected label errors are left unchanged and count against us: REC00008 labels TED HENG for printed TEO HENG; REC00001 labels B1750 for '
+            'Suspected label errors are left unchanged and count against the extraction scores: REC00008 labels TED HENG for printed TEO HENG; REC00001 labels B1750 for '
             'postcode 81750; REC00002 labels capitals for a mixed-case merchant name.',
             "Bill numbers: the parser stores a printed 'INVOICE NO.' as bill_reference. The main table scores it as bill_number only when the printed "
             "label confirms that role; 'Earlier baseline' shows the original alias-only scoring. No label was changed.",

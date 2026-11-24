@@ -467,7 +467,7 @@ def month_pack(request: Request, period: str | None = None, format: str | None =
     if not period:
         raise HTTPException(422, "Enter an accounting period code.")
     if format not in (None, "xlsx"):
-        raise HTTPException(422, "Choose xlsx for the month-pack format.")
+        raise HTTPException(422, "Choose xlsx for the Monthly Accounting Pack format.")
     with connect() as db:
         db.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
         row = db.execute("SELECT starts_on,ends_on FROM accounting_periods WHERE tenant_id=%s AND period_code=%s",
@@ -489,7 +489,7 @@ def month_pack(request: Request, period: str | None = None, format: str | None =
             _tax_summary_sheet(_tax_summary(db, tenant, start, end)),
             _exceptions_sheet(db, tenant, start, end),
         ]
-    return _xlsx_export(company, sheets, f"month-pack-{period}.xlsx")
+    return _xlsx_export(company, sheets, f"monthly-accounting-pack-{period}.xlsx")
 
 
 def register(router):
