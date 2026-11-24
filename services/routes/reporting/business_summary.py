@@ -299,7 +299,7 @@ def _summary_sheet(summary, start, end):
     position = month["position"]
     rows += [("Bank balance", account["name"], account["balance"]) for account in position["bank"]["accounts"]]
     rows.append(("Bank balance", "Total", position["bank"]["total"]))
-    for label, key in (("Owed to us (receivables)", "receivables"), ("Owed by us (payables)", "payables")):
+    for label, key in (("Owed to the company (receivables)", "receivables"), ("Owed by the company (payables)", "payables")):
         rows += [(label, "Total outstanding", position[key]["total"]), (label, "Overdue", position[key]["overdue"])]
         if position[key]["unallocated"] != ZERO:
             rows.append((label, "Open items less unallocated payments", position[key]["openItems"]))

@@ -451,7 +451,7 @@ def test_csv_and_month_pack(workspace, monkeypatch):
         patch.setattr(Worksheet, "max_row", property(unexpected_row_scan))
         response = accountant.get(PACK, params={"period": "2026-08"})
     assert response.status_code == 200, response.text
-    assert response.headers["content-disposition"] == 'attachment; filename="month-pack-2026-08.xlsx"'
+    assert response.headers["content-disposition"] == 'attachment; filename="monthly-accounting-pack-2026-08.xlsx"'
     book = load_workbook(BytesIO(response.content), data_only=True)
     assert book.sheetnames == ["Business summary", "Profit and loss", "Balance sheet", "Trial balance", "General ledger",
                                "Receivables ageing", "Payables ageing", "Tax summary", "Open exceptions"]

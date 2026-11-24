@@ -90,7 +90,7 @@ def addressee_check(identity: Optional[Dict[str, Any]], values: Dict[str, Any], 
         return None, None  # A name cannot be judged against a company that has none on its profile.
     return {'code': RULE, 'field': 'customer', 'severity': 'high', 'actual_value': buyer, 'expected_value': company,
             'message': f"This document is addressed to {buyer}, not {company}{'' if company.endswith('.') else '.'} "
-                       "If it isn't yours, set it aside."}, None
+                       "If it isn't for this company, set it aside."}, None
 
 
 def apply_addressee(result: dict, identity: Optional[Dict[str, Any]], values: Dict[str, Any], category: Optional[str]) -> dict:
