@@ -105,7 +105,20 @@ def list_audit(request: Request):
         # Optional: entries for named resources only (a document's id, name or record id). Without
         # it the newest 500 tenant entries are returned, which hides an older document's history.
         resources = [value for value in request.query_params.getlist("resource") if value][:5]
-        if resources:
+        if user["role"] == "accountant":
+            # The Audit trail page is a local admin's (25 Nov admin audit). An accountant reads only their own
+            # actions and the history of documents they own or are assigned (and those documents' records), so
+            # the document page and their activity panel keep working without seeing user management or others' work.
+            rows = db.execute("""SELECT a.* FROM audit_logs a
+                WHERE a.tenant_id=%(tenant)s AND (cardinality(%(resources)s::text[])=0 OR a.resource = ANY(%(resources)s::text[]))
+                  AND (a.user_id=%(me)s OR a.resource IN (
+                        SELECT d.id::text FROM documents d WHERE d.tenant_id=%(tenant)s AND (d.owner_id=%(me)s OR d.assigned_to=%(me)s)
+                        UNION SELECT d.original_filename FROM documents d WHERE d.tenant_id=%(tenant)s AND (d.owner_id=%(me)s OR d.assigned_to=%(me)s)
+                        UNION SELECT r.id::text FROM standardised_records r JOIN documents d ON d.id=r.document_id AND d.tenant_id=r.tenant_id
+                              WHERE r.tenant_id=%(tenant)s AND (d.owner_id=%(me)s OR d.assigned_to=%(me)s)))
+                ORDER BY a.created_at DESC LIMIT 500""",
+                {"tenant": user["tenant_id"], "me": user["id"], "resources": resources}).fetchall()
+        elif resources:
             rows = db.execute("SELECT * FROM audit_logs WHERE (%s IS NULL OR tenant_id=%s) AND resource = ANY(%s) ORDER BY created_at DESC LIMIT 500",
                               (scope, scope, resources)).fetchall()
         else:

@@ -10,6 +10,7 @@ which post through the same rule and the same idempotency keys as the record end
 """
 from __future__ import annotations
 
+from services.set_aside import refuse_set_aside
 import hashlib
 import json
 import logging
@@ -835,6 +836,7 @@ def _scanned_rows(db, tenant_id, document_type, *, search=None, contact=None, da
                   AND NOT EXISTS (SELECT 1 FROM settlement_allocations u WHERE u.tenant_id=a.tenant_id AND u.reverses_allocation_id=a.id)),0) AS allocated
         FROM standardised_records r JOIN documents d ON d.id=r.document_id AND d.tenant_id=r.tenant_id
         WHERE r.tenant_id=%s AND r.is_current AND r.validation_status='passed' AND r.category=%s AND d.kind = ANY(%s)
+            AND d.excluded_at IS NULL
             AND (%s::uuid IS NULL OR (r.category='accounts_payable' AND r.vendor_id=%s::uuid)
                  OR (r.category='accounts_receivable'
                      AND lower(btrim(COALESCE(r.buyer_name,''))) = lower(btrim((SELECT customer_name FROM customers WHERE id=%s::uuid)))))
@@ -1174,11 +1176,12 @@ def document_history(document_type: str, document_id: str, request: Request):
 
 
 def _load_scanned_record(db, tenant_id, record_id, *, lock=False):
-    record = db.execute("""SELECT r.*,d.kind FROM standardised_records r
+    record = db.execute("""SELECT r.*,d.kind,d.excluded_at FROM standardised_records r
         JOIN documents d ON d.id=r.document_id AND d.tenant_id=r.tenant_id
         WHERE r.id=%s AND r.tenant_id=%s""" + (" FOR UPDATE OF r" if lock else ""), (record_id, tenant_id)).fetchone()
     if not record:
         raise HTTPException(404, "Record not found.")
+    refuse_set_aside(record)  # preview, post and bulk post all load the record here
     return record
 
 

@@ -102,7 +102,7 @@ def processing_trends(request: Request, period: str = "week"):
             count(*) FILTER (WHERE j.status='failed') AS failed,
             count(*) FILTER (WHERE EXISTS (SELECT 1 FROM exceptions e WHERE e.document_id=j.document_id AND e.status<>'resolved')) AS exceptions
             FROM pending_jobs j JOIN documents d ON d.id=j.document_id
-            WHERE j.created_at >= now() - (%s || ' days')::interval AND (%s IS NULL OR j.tenant_id=%s)
+            WHERE j.created_at >= now() - (%s || ' days')::interval AND (%s IS NULL OR j.tenant_id=%s) AND d.excluded_at IS NULL
             """ + owner + ' GROUP BY 1 ORDER BY 1',
             [days, scope, scope, *([user['id'], user['id']] if owner else [])]).fetchall()
     return [{"day": r["day"].strftime("%d %b"), "processed": int(r["processed"]), "succeeded": int(r["succeeded"]), "failed": int(r["failed"]), "accuracy": round((int(r["succeeded"]) / int(r["processed"]) * 100) if r["processed"] else 0, 1), "exceptions": int(r["exceptions"])} for r in rows]

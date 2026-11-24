@@ -1,4 +1,5 @@
 from __future__ import annotations
+import json
 from main import *
 from main import _lock_upload_identity, _processing_error, _lock_workspace_document, _require_current_extraction, _authorised_document, _bank_row_values, _bank_transaction_dto, _uuid_or_422, _account_dto, _cost_centre_dto
 
@@ -38,6 +39,10 @@ def save_validation_rules(data: ValidationRulesInput, request: Request):
             VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             ON CONFLICT (tenant_id) DO UPDATE SET require_supplier=EXCLUDED.require_supplier, require_invoice_number=EXCLUDED.require_invoice_number, validate_date=EXCLUDED.validate_date, validate_total=EXCLUDED.validate_total, check_duplicate=EXCLUDED.check_duplicate, confidence_threshold=EXCLUDED.confidence_threshold, require_invoice_number_for_invoice=EXCLUDED.require_invoice_number_for_invoice, require_reference_for_bill=EXCLUDED.require_reference_for_bill, require_receipt_identifier=EXCLUDED.require_receipt_identifier, updated_at=now()""",
             (user["tenant_id"], data.supplier, data.invoice, data.date, data.total, data.duplicate, data.threshold / 100, data.invoiceByType, data.billReferenceByType, data.receiptIdentifierByType))
+        # Check rules decide what blocks approval, so a change is audited (25 Nov admin audit: it was not).
+        db.execute("""INSERT INTO audit_logs(tenant_id,user_id,user_name,role,action,resource,details)
+            VALUES (%s,%s,%s,%s,'validation_rules.updated','validation-rules',%s)""",
+                   (user["tenant_id"], user["id"], user.get("name", "Workspace user"), user["role"], json.dumps(data.model_dump())))
     return data.model_dump()
 
 def assign_exception(exception_id: str, data: ExceptionAssignment, request: Request):

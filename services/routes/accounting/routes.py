@@ -1,4 +1,5 @@
 from __future__ import annotations
+from services.set_aside import refuse_set_aside_records
 import json
 from main import *
 from main import _lock_upload_identity, _processing_error, _lock_workspace_document, _require_current_extraction, _authorised_document, _bank_row_values, _bank_transaction_dto, _uuid_or_422, _account_dto, _cost_centre_dto
@@ -246,6 +247,7 @@ def post_supplier_bill(record_id: str, data: SupplierBillPostingInput, request: 
     with connect() as db:
         record = db.execute("""SELECT id,document_id,category,total_amount,currency,revision_number,is_current,validation_status
             FROM standardised_records WHERE id=%s AND tenant_id=%s FOR UPDATE""", (record_id, user["tenant_id"])).fetchone()
+        refuse_set_aside_records(db, user["tenant_id"], [record_id])
     if not record or not record["is_current"] or record["validation_status"] != "passed":
         raise HTTPException(409, "Only the current validated standardised record can be posted.")
     if record["category"] != "accounts_payable":
@@ -589,6 +591,7 @@ def post_customer_invoice(record_id: str, data: CustomerInvoicePostingInput, req
     with connect() as db:
         record = db.execute("""SELECT id,document_id,category,total_amount,currency,revision_number,is_current,validation_status
             FROM standardised_records WHERE id=%s AND tenant_id=%s FOR UPDATE""", (record_id, user["tenant_id"])).fetchone()
+        refuse_set_aside_records(db, user["tenant_id"], [record_id])
     if not record or not record["is_current"] or record["validation_status"] != "passed":
         raise HTTPException(409, "Only the current validated standardised record can be posted.")
     if record["category"] != "accounts_receivable":
@@ -618,6 +621,7 @@ def post_document_adjustment(record_id: str, data: AdjustmentPostingInput, reque
     with connect() as db:
         record = db.execute("""SELECT id,document_id,currency,revision_number,is_current,validation_status
             FROM standardised_records WHERE id=%s AND tenant_id=%s FOR UPDATE""", (record_id, user["tenant_id"])).fetchone()
+        refuse_set_aside_records(db, user["tenant_id"], [record_id])
     if not record or not record["is_current"] or record["validation_status"] != "passed":
         raise HTTPException(409, "Only the current validated standardised record can be adjusted.")
     payload = JournalInput(
@@ -1061,6 +1065,8 @@ def create_allocation(data: AllocationInput, request: Request):
 
 
 def record_settlement_allocation(db, user, settlement_id, record_id, amount):
+    # Every allocation (match-many, manual allocation, confirmed match) passes here: a set-aside document's record is refused.
+    refuse_set_aside_records(db, user["tenant_id"], [record_id])
     return db.execute("""INSERT INTO settlement_allocations(tenant_id,settlement_id,record_id,amount,created_by)
         VALUES (%s,%s,%s,%s,%s) RETURNING *""", (user["tenant_id"], settlement_id, record_id, amount, user["id"])).fetchone()
 

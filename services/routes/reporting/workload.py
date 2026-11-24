@@ -108,7 +108,7 @@ def collect(db, tenant_id, start=None, end=None):
     """Per-document workload for one company. `start`/`end` filter on the upload date in the company's time zone."""
     zone = db.execute("SELECT timezone FROM workspace_settings WHERE tenant_id=%s LIMIT 1", (tenant_id,)).fetchone()
     zone = (zone or {}).get("timezone") or "Asia/Kuala_Lumpur"
-    where, params = ["d.tenant_id=%s"], [zone, tenant_id]
+    where, params = ["d.tenant_id=%s", "d.excluded_at IS NULL"], [zone, tenant_id]  # set-aside uploads are not workload
     if start:
         where.append("(d.uploaded_at AT TIME ZONE %s)::date >= %s")
         params += [zone, start]
