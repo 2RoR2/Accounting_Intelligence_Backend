@@ -351,7 +351,8 @@ def get_document_detail(document_id: str, request: Request):
         r = db.execute(f"SELECT * FROM documents WHERE id=%s AND (%s IS NULL OR tenant_id=%s){visibility}", params).fetchone()
     if not r:
         raise HTTPException(404, "Document not found.")
-    return {"id": str(r["id"]), "code": r["document_code"], "displayName": r["original_filename"], **readable, "name": r["original_filename"], "tenantId": str(r["tenant_id"]), "ownerId": str(r["owner_id"]), "assignedTo": str(r["assigned_to"]) if r["assigned_to"] else None, **read_kind(r), "category": r["category"].upper(), "status": r["status"].upper(), "mimeType": r["mime_type"], "fileSize": r["file_size_bytes"], "contentRevision": r["content_revision"], "createdAt": str(r["uploaded_at"]), "updatedAt": str(r["updated_at"])}
+    return {"id": str(r["id"]), "code": r["document_code"], "displayName": r["original_filename"], **readable, "name": r["original_filename"], "tenantId": str(r["tenant_id"]), "ownerId": str(r["owner_id"]), "assignedTo": str(r["assigned_to"]) if r["assigned_to"] else None, **read_kind(r), "category": r["category"].upper(), "status": r["status"].upper(), "mimeType": r["mime_type"], "fileSize": r["file_size_bytes"], "contentRevision": r["content_revision"], "createdAt": str(r["uploaded_at"]), "updatedAt": str(r["updated_at"]),
+            "excludedAt": str(r["excluded_at"]) if r.get("excluded_at") else None, "excludedReason": r.get("excluded_reason")}
 
 
 def _readable_detail(db, document_id, user) -> dict:
@@ -454,6 +455,63 @@ def retry_document_processing(document_id: str, request: Request):
     except attempts.AttemptRejected as exc:
         _processing_error(exc,document_id,str(scheduled['id']) if scheduled else None)
     return {'id':str(document_id),**queued}
+
+class ExcludeInput(BaseModel):
+    reason: str = Field(min_length=5, max_length=500)
+
+
+# A wrong upload can be set aside before it is approved: a duplicate, a document of another company, the company's
+# own sales copy, an unreadable photo (audit 24 Nov: the app had no way to do this; delete only works before reading).
+EXCLUDABLE_STATUSES = frozenset({'uploaded', 'failed', 'extracted', 'corrected', 'exception'})
+
+
+def exclude_document(document_id: str, data: ExcludeInput, request: Request):
+    """Leave the document out of every list, count and report, with a reason (kept, audited and reversible)."""
+    user = require_workspace_user(request, {'local_admin', 'accountant'})
+    document_id = str(_uuid_or_422(document_id, 'document id'))
+    ownership = " AND (owner_id=%s OR assigned_to=%s)" if user['role'] == 'accountant' else ""
+    with connect() as db:
+        document = db.execute(f"SELECT * FROM documents WHERE id=%s AND tenant_id=%s{ownership} FOR UPDATE",
+                              [document_id, user['tenant_id'], *([user['id'], user['id']] if ownership else [])]).fetchone()
+        if not document:
+            raise HTTPException(404, 'Document not found.')
+        if document['excluded_at']:
+            return {'documentId': document_id, 'excluded': True, 'reason': document['excluded_reason'], 'idempotent': True}
+        if document['status'] not in EXCLUDABLE_STATUSES:
+            raise HTTPException(409, 'Only a document that is not submitted, approved or being read can be set aside. '
+                                     'Return or reject it first.')
+        if db.execute('SELECT 1 FROM standardised_records WHERE document_id=%s LIMIT 1', (document_id,)).fetchone():
+            raise HTTPException(409, 'This document is saved to records. Request an amendment instead.')
+        db.execute("UPDATE documents SET excluded_at=now(), excluded_reason=%s, updated_at=now() WHERE id=%s AND tenant_id=%s",
+                   (data.reason.strip(), document_id, user['tenant_id']))
+        _document_action(db, user, document_id, 'document.excluded', {'reason': data.reason.strip(), 'status': document['status']})
+    return {'documentId': document_id, 'excluded': True, 'reason': data.reason.strip(), 'idempotent': False}
+
+
+def restore_document(document_id: str, request: Request):
+    """Bring a set-aside document back into the lists (local admin)."""
+    user = require_workspace_user(request, {'local_admin'})
+    document_id = str(_uuid_or_422(document_id, 'document id'))
+    with connect() as db:
+        row = db.execute("""UPDATE documents SET excluded_at=NULL, excluded_reason=NULL, updated_at=now()
+            WHERE id=%s AND tenant_id=%s AND excluded_at IS NOT NULL RETURNING id""", (document_id, user['tenant_id'])).fetchone()
+        if not row:
+            raise HTTPException(404, 'No set-aside document with this id.')
+        _document_action(db, user, document_id, 'document.restored', {})
+    return {'documentId': document_id, 'excluded': False}
+
+
+def list_excluded_documents(request: Request):
+    """Documents set aside, newest first, so a mistake can be found and restored."""
+    user = require_workspace_user(request, {'local_admin', 'accountant'})
+    ownership = " AND (owner_id=%s OR assigned_to=%s)" if user['role'] == 'accountant' else ""
+    with connect() as db:
+        rows = db.execute(f"""SELECT id,document_code,original_filename,kind,status,excluded_at,excluded_reason FROM documents
+            WHERE tenant_id=%s AND excluded_at IS NOT NULL{ownership} ORDER BY excluded_at DESC LIMIT 200""",
+                          [user['tenant_id'], *([user['id'], user['id']] if ownership else [])]).fetchall()
+    return [{'id': str(r['id']), 'code': r['document_code'], 'name': r['original_filename'], 'kind': r['kind'],
+             'status': r['status'].upper(), 'excludedAt': str(r['excluded_at']), 'reason': r['excluded_reason']} for r in rows]
+
 
 def delete_document(document_id: str, request: Request):
     user = require_workspace_user(request, {'local_admin'})
@@ -1645,11 +1703,14 @@ def bulk_document_action(data: BulkActionInput, request: Request):
 
 def register(router, handlers):
     router.add_api_route('/api/documents', list_documents, methods=['GET'])
+    router.add_api_route('/api/documents/excluded', list_excluded_documents, methods=['GET'])
     router.add_api_route('/api/documents/{document_id}', get_document_detail, methods=['GET'])
     router.add_api_route('/api/documents/{document_id}/file', get_document_file, methods=['GET'])
     router.add_api_route('/api/documents/{document_id}/status', update_document_status, methods=['PATCH'])
     router.add_api_route('/api/documents/{document_id}/retry', retry_document_processing, methods=['POST'])
     router.add_api_route('/api/documents/{document_id}', delete_document, methods=['DELETE'])
+    router.add_api_route('/api/documents/{document_id}/exclude', exclude_document, methods=['POST'])
+    router.add_api_route('/api/documents/{document_id}/restore', restore_document, methods=['POST'])
     router.add_api_route('/api/records', list_records, methods=['GET'])
     router.add_api_route('/api/records/metadata', record_metadata, methods=['GET'])
     router.add_api_route('/api/records/{record_id}', get_record, methods=['GET'])

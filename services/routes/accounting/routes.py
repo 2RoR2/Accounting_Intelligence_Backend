@@ -951,6 +951,72 @@ def list_ledger_journals(request: Request):
             WHERE j.tenant_id=%s GROUP BY j.id ORDER BY j.created_at DESC""", (user["tenant_id"],)).fetchall()
     return [{"id": str(r["id"]), "periodId": str(r["period_id"]), "sourceType": r["source_type"], "sourceId": str(r["source_id"]) if r["source_id"] else None, "status": r["status"], "date": str(r["journal_date"]), "description": r["description"], "totalDebit": str(r["total_debit"]), "totalCredit": str(r["total_credit"]), "idempotencyKey": r["idempotency_key"]} for r in rows]
 
+def _journal_source(db, tenant_id, source_type, source_id):
+    """Where a journal came from, in the shape the frontend's trace links open (kind, type, id, number)."""
+    if not source_id:
+        return None
+    if source_type in {"document", "adjustment"}:
+        row = db.execute("SELECT id,kind,document_code,original_filename FROM documents WHERE tenant_id=%s AND id=%s",
+                         (tenant_id, source_id)).fetchone()
+        return row and {"kind": "upload", "type": row["kind"], "id": str(row["id"]),
+                        "number": row["document_code"] or row["original_filename"]}
+    if source_type == "erp_document":
+        row = db.execute("SELECT id,document_type,document_number FROM erp_document_headers WHERE tenant_id=%s AND id=%s",
+                         (tenant_id, source_id)).fetchone()
+        return row and {"kind": "erp", "type": row["document_type"], "id": str(row["id"]), "number": row["document_number"]}
+    if source_type == "settlement":
+        row = db.execute("SELECT id,settlement_ref,source_type,source_id FROM settlements WHERE tenant_id=%s AND id=%s",
+                         (tenant_id, source_id)).fetchone()
+        if not row:
+            return None
+        if row["source_type"] == "bank_import" and row["source_id"]:
+            bank = db.execute("SELECT id,signed_amount_decimal,reference FROM bank_transactions WHERE tenant_id=%s AND id=%s",
+                              (tenant_id, row["source_id"])).fetchone()
+            if bank:
+                return {"kind": "bank", "type": "bank-transaction", "id": str(bank["id"]),
+                        "number": bank["reference"] or row["settlement_ref"], "amount": str(bank["signed_amount_decimal"])}
+        if row["source_type"] == "manual_record" and row["source_id"]:
+            return _journal_source(db, tenant_id, "erp_document", row["source_id"])
+        return {"kind": "settlement", "type": "settlement", "id": str(row["id"]), "number": row["settlement_ref"]}
+    return None
+
+
+def get_ledger_journal(journal_id: str, request: Request):
+    """One journal with its lines (account, debit, credit), where it came from, and what reversed it (audit 24 Nov:
+    the journal list showed totals only, so an accountant could not see which accounts a posting touched)."""
+    user = require_workspace_user(request, {"super_admin", "local_admin", "accountant"})
+    journal_id = _uuid_or_422(journal_id, "journal id")
+    with connect() as db:
+        header = db.execute("""SELECT j.*,u.name AS posted_by_name,original.source_type AS original_source_type,
+                original.source_id AS original_source_id,p.period_code,
+                (SELECT r.id FROM journal_headers r WHERE r.tenant_id=j.tenant_id AND r.reversed_journal_id=j.id
+                    ORDER BY r.created_at LIMIT 1) AS reversed_by
+            FROM journal_headers j
+            LEFT JOIN users u ON u.id=j.posted_by
+            LEFT JOIN journal_headers original ON original.id=j.reversed_journal_id AND original.tenant_id=j.tenant_id
+            LEFT JOIN accounting_periods p ON p.id=j.period_id AND p.tenant_id=j.tenant_id
+            WHERE j.tenant_id=%s AND j.id=%s""", (user["tenant_id"], journal_id)).fetchone()
+        if not header:
+            raise HTTPException(404, "Journal not found.")
+        lines = db.execute("""SELECT l.line_number,a.id AS account_id,a.code,a.name,a.account_type,l.description,l.debit,l.credit
+            FROM journal_lines l JOIN ledger_accounts a ON a.id=l.account_id AND a.tenant_id=l.tenant_id
+            WHERE l.tenant_id=%s AND l.journal_id=%s ORDER BY l.line_number""", (user["tenant_id"], journal_id)).fetchall()
+        reversal = header["source_type"] == "reversal"
+        source = _journal_source(db, user["tenant_id"], header["original_source_type"] if reversal else header["source_type"],
+                                 header["original_source_id"] if reversal else header["source_id"])
+    debit = sum((row["debit"] for row in lines), Decimal("0"))
+    credit = sum((row["credit"] for row in lines), Decimal("0"))
+    return {"id": str(header["id"]), "date": str(header["journal_date"]), "description": header["description"],
+            "status": header["status"], "sourceType": header["source_type"], "periodCode": header["period_code"],
+            "postedBy": header["posted_by_name"], "postedAt": str(header["posted_at"]) if header["posted_at"] else None,
+            "reversesJournalId": str(header["reversed_journal_id"]) if header["reversed_journal_id"] else None,
+            "reversedByJournalId": str(header["reversed_by"]) if header["reversed_by"] else None,
+            "source": source, "totalDebit": str(debit), "totalCredit": str(credit), "balanced": debit == credit,
+            "lines": [{"lineNumber": row["line_number"], "accountId": str(row["account_id"]), "code": row["code"],
+                       "name": row["name"], "accountType": row["account_type"], "description": row["description"],
+                       "debit": str(row["debit"]), "credit": str(row["credit"])} for row in lines]}
+
+
 def list_allocations(request: Request):
     user = require_workspace_user(request, {"super_admin", "local_admin", "accountant"})
     with connect() as db:
@@ -1137,6 +1203,7 @@ def register(router, handlers):
     router.add_api_route('/api/ledger/journals/from-supplier-payment/{transaction_id}', post_supplier_payment, methods=['POST'], status_code=201)
     router.add_api_route('/api/ledger/profit-and-loss', get_profit_and_loss_dashboard, methods=['GET'])
     router.add_api_route('/api/ledger/journals', list_ledger_journals, methods=['GET'])
+    router.add_api_route('/api/ledger/journals/{journal_id}', get_ledger_journal, methods=['GET'])
     router.add_api_route('/api/ledger/allocations', list_allocations, methods=['GET'])
     router.add_api_route('/api/chart-of-accounts', list_chart_of_accounts, methods=['GET'])
     router.add_api_route('/api/coa/accounts', list_chart_of_accounts, methods=['GET'])

@@ -102,3 +102,61 @@ def test_bank_line_matches_the_payment_voucher_that_recorded_it(company):
     assert voucher not in {row["documentId"] for row in ok(request("GET", f"{BANK}/{second}/recorded-documents"))}
     assert request("POST", f"{BANK}/{second}/match-document", json={"documentId": voucher}).status_code == 409
     assert request("POST", f"{BANK}/{line}/match-document", json={"documentId": voucher}).status_code == 409
+
+
+def test_journal_detail_shows_lines_and_its_source(company):
+    connect, _, _, accounts, request = company
+    fee = insert_bank_line(company, amount="2.50")
+    expense = ok(request("POST", f"{BANK}/{fee}/record-expense", "accountant",
+                         json={"ledgerAccountId": str(accounts["5000"]), "description": "Monthly fee"}), 201)
+    detail = ok(request("GET", f"/api/ledger/journals/{expense['journalId']}", "accountant"))
+    assert detail["balanced"] and detail["totalDebit"] == detail["totalCredit"] == "2.50"
+    assert [(line["code"], line["debit"], line["credit"]) for line in detail["lines"]] == [
+        ("5000", "2.50", "0.00"), ("1010", "0.00", "2.50")]
+    assert detail["source"]["kind"] == "erp" and detail["source"]["number"] == expense["documentNumber"]
+    assert detail["periodCode"] == "2026-08" and detail["reversedByJournalId"] is None
+    assert request("GET", f"/api/ledger/journals/{uuid4()}").status_code == 404
+
+
+def test_contact_balances_come_from_the_open_items(company):
+    connect, tenant, users, _, request = company
+    from tests.integration.test_uat_d5_d7_postgres import insert_record
+    with connect() as db:
+        vendor = db.execute("SELECT id FROM vendors WHERE tenant_id=%s", (tenant,)).fetchone()["id"]
+        insert_record(db, users, total="150.00", supplier_name="Triple Six Point Enterprise 666")
+        insert_record(db, users, total="40.00", supplier_name="Somebody Not In Contacts")
+    balances = ok(request("GET", "/api/erp/contacts/balances", "accountant", params={"asOf": "2026-12-31"}))
+    row, = [item for item in balances["contacts"] if item["contactId"] == str(vendor)]
+    assert row["payable"] == "150.00" and row["receivable"] == "0" and row["openItems"] == 1
+    assert row["overdue"] == "150.00"  # dated 12 Aug with no due date: overdue at the end of December
+    assert {"contactName": "Somebody Not In Contacts", "side": "payable", "outstanding": "40.00"} in balances["unmatched"]
+    assert request("GET", "/api/erp/contacts/balances", params={"asOf": "31/12/2026"}).status_code == 422
+
+
+def test_a_wrong_upload_is_set_aside_with_a_reason_and_restored(company):
+    connect, _, _, _, request = company
+    doc = review_document(company)
+    document = doc["documentId"]
+    assert request("POST", f"/api/documents/{document}/exclude", "accountant", json={"reason": "no"}).status_code == 422
+    set_aside = ok(request("POST", f"/api/documents/{document}/exclude", "accountant", json={"reason": "Duplicate photo of RC-1"}))
+    assert set_aside["excluded"] and not set_aside["idempotent"]
+    assert ok(request("POST", f"/api/documents/{document}/exclude", "accountant", json={"reason": "Duplicate photo of RC-1"}))["idempotent"]
+    assert document not in {row["id"] for row in ok(request("GET", "/api/documents", "accountant"))}
+    assert [row["reason"] for row in ok(request("GET", "/api/documents/excluded", "accountant"))] == ["Duplicate photo of RC-1"]
+    detail = ok(request("GET", f"/api/documents/{document}", "accountant"))
+    assert detail["excludedAt"] and detail["excludedReason"] == "Duplicate photo of RC-1"
+    # Only a local admin restores, and the document is back in the list.
+    assert request("POST", f"/api/documents/{document}/restore", "accountant").status_code == 403
+    ok(request("POST", f"/api/documents/{document}/restore"))
+    assert document in {row["id"] for row in ok(request("GET", "/api/documents", "accountant"))}
+    # A colleague who neither owns nor is assigned the document cannot set it aside.
+    assert request("POST", f"/api/documents/{document}/exclude", "colleague", json={"reason": "Not mine at all"}).status_code == 404
+
+
+def test_a_submitted_document_cannot_be_set_aside(company):
+    _, _, _, _, request = company
+    doc = review_document(company)
+    ok(request("POST", f"/api/documents/{doc['documentId']}/review", "accountant",
+               json={"decision": "submitted", "note": "ready", "expectedContentRevision": doc["expectedContentRevision"]}))
+    refused = request("POST", f"/api/documents/{doc['documentId']}/exclude", "accountant", json={"reason": "Changed my mind"})
+    assert refused.status_code == 409 and "Return or reject it first" in refused.json()["detail"]

@@ -200,6 +200,54 @@ def _contact_code(db, tenant_id, kind, name, wanted, *, exclude_id=None):
     return code
 
 
+def contact_balances(request: Request, asOf: str | None = None):
+    """What each customer owes us and what we owe each supplier, from the same open items as the ageing reports
+    (posted books, MYR). Audit 24 Nov: the contact list had no balance, so nobody could see who to chase or pay.
+
+    Open items carry a contact name, so they are matched to contacts by normalised name, as the ageing reports do;
+    items whose name matches no contact are returned under `unmatched` instead of being dropped.
+    """
+    from datetime import date, datetime
+    from decimal import Decimal
+    from zoneinfo import ZoneInfo
+    from services.routes.reporting.financial import _ageing
+    from validation.matching.vendor_matching import normalize_vendor_name
+
+    user = erp_user(request, READ_ROLES)
+    try:
+        end = date.fromisoformat(asOf) if asOf else datetime.now(ZoneInfo("Asia/Kuala_Lumpur")).date()
+    except ValueError as exc:
+        raise HTTPException(422, "asOf must be a YYYY-MM-DD date.") from exc
+    balances, unmatched = {}, []
+    with connect() as db:
+        db.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        for side, kind, field in (("receivables", "customer", "receivable"), ("payables", "supplier", "payable")):
+            table, column = TABLES[kind]
+            names = {}
+            for row in db.execute(f"SELECT id,{column} AS name FROM {table} WHERE tenant_id=%s", (user["tenant_id"],)).fetchall():
+                names.setdefault(normalize_vendor_name(row["name"] or ""), str(row["id"]))
+            for item in _ageing(db, user["tenant_id"], end, side)["rows"]:
+                contact_id = names.get(normalize_vendor_name(item["contactName"] or ""))
+                amount = item["outstanding"]
+                if not contact_id:
+                    unmatched.append({"contactName": item["contactName"], "side": field, "outstanding": str(amount)})
+                    continue
+                entry = balances.setdefault(contact_id, {"contactId": contact_id, "kind": kind, "receivable": Decimal("0"),
+                                                         "payable": Decimal("0"), "overdue": Decimal("0"), "openItems": 0,
+                                                         "oldestDue": None})
+                entry[field] += amount
+                entry["openItems"] += 1
+                due = item["dueDate"] or item["documentDate"]
+                if item["bucket"] != "current":
+                    entry["overdue"] += amount
+                if due and (entry["oldestDue"] is None or due < entry["oldestDue"]):
+                    entry["oldestDue"] = due
+    rows = [{**entry, "receivable": str(entry["receivable"]), "payable": str(entry["payable"]),
+             "overdue": str(entry["overdue"]), "oldestDue": str(entry["oldestDue"]) if entry["oldestDue"] else None}
+            for entry in balances.values()]
+    return {"asOf": str(end), "currency": "MYR", "contacts": rows, "unmatched": unmatched}
+
+
 def get_contact(contact_id: str, request: Request):
     user = erp_user(request, READ_ROLES)
     with connect() as db:
@@ -280,6 +328,8 @@ def contact_history(contact_id: str, request: Request):
 def register(router):
     router.add_api_route('/api/erp/contacts', list_contacts, methods=['GET'], tags=['ERP Contacts'])
     router.add_api_route('/api/erp/contacts', create_contact, methods=['POST'], status_code=201, tags=['ERP Contacts'])
+    # Before /{contact_id}, or 'balances' would be read as a contact id.
+    router.add_api_route('/api/erp/contacts/balances', contact_balances, methods=['GET'], tags=['ERP Contacts'])
     router.add_api_route('/api/erp/contacts/{contact_id}', get_contact, methods=['GET'], tags=['ERP Contacts'])
     router.add_api_route('/api/erp/contacts/{contact_id}', update_contact, methods=['PUT'], tags=['ERP Contacts'])
     router.add_api_route('/api/erp/contacts/{contact_id}', delete_contact, methods=['DELETE'], tags=['ERP Contacts'])
