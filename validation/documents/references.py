@@ -11,6 +11,7 @@ from validation.matching.vendor_matching import normalize_vendor_name
 
 logger = logging.getLogger(__name__)
 REVIEW_ACTION = 'validation.review_accepted'
+DATE_KEYS = {'date', 'invoice_date'}
 
 
 def read_or_unavailable(db, read, unavailable=None):
@@ -72,12 +73,15 @@ def accepted_reviews(db, document):
 def invoice_references(db, document):
     vendors = db.execute('SELECT id,vendor_name FROM vendors WHERE tenant_id=%s ORDER BY id',
                          (document['tenant_id'],)).fetchall()
-    rows = db.execute("""SELECT fp.*, d.id AS reference_document_id, re.raw_json
+    rows = db.execute("""SELECT fp.*, d.id AS reference_document_id, re.raw_json,
+            d.document_code AS reference_document_code, d.uploaded_at AS reference_uploaded_at,
+            (SELECT r.record_code FROM standardised_records r WHERE r.document_id=d.id AND r.tenant_id=d.tenant_id
+             ORDER BY r.revision_number DESC LIMIT 1) AS reference_record_code
         FROM documents d JOIN raw_extractions re ON re.document_id=d.id AND re.is_current=true
         JOIN field_predictions fp ON fp.document_id=d.id AND fp.extraction_id=re.id
         WHERE d.tenant_id=%s AND d.id<>%s AND d.kind='invoice'
           AND d.status NOT IN ('uploaded','queued','processing','failed')
-          AND fp.field_key IN ('supplier','supplier_name','vendor_name','seller','invoice','invoice_number')
+          AND fp.field_key IN ('supplier','supplier_name','vendor_name','seller','invoice','invoice_number','date','invoice_date')
         ORDER BY d.id,fp.field_key""", (document['tenant_id'], document['id'])).fetchall()
     # A person's type choice for the current reading counts like a classification (kind_choice),
     # so a document confirmed as an invoice is a duplicate reference like a detected one.
@@ -99,13 +103,23 @@ def invoice_references(db, document):
         grouped[str(row['reference_document_id'])].append(row)
     invoices = []
     for document_id, fields in grouped.items():
+        dated = [row for row in fields if row['field_key'] in DATE_KEYS]
         try:
-            values = record_values(fields)
+            values = record_values([row for row in fields if row['field_key'] not in DATE_KEYS])
         except ValueError:
             # An unresolved/invalid reference cannot establish a duplicate fact.
             continue
+        try:
+            # Only names the other document in the message; a bad date never drops the reference.
+            invoice_date = record_values(dated).get('date') if dated else None
+        except ValueError:
+            invoice_date = None
+        first = fields[0]
         invoices.append({'document_id': document_id, 'source_file': document_id,
-                         'vendor_name': values.get('supplier'), 'invoice_number': values.get('invoice')})
+                         'vendor_name': values.get('supplier'), 'invoice_number': values.get('invoice'),
+                         'document_code': first.get('reference_document_code'),
+                         'record_code': first.get('reference_record_code'),
+                         'invoice_date': invoice_date, 'uploaded_at': first.get('reference_uploaded_at')})
     return vendors, invoices
 
 

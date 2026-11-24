@@ -1,3 +1,4 @@
+from datetime import date
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
@@ -20,6 +21,29 @@ EXCEPTION_SEVERITY = {
     "EX-009": "high",
     "EX-010": "high",
 }
+
+
+def duplicate_not_run_message(missing_labels: List[str]) -> str:
+    """'Duplicate check can't run yet: fill the supplier and invoice number.' Names only what is missing."""
+    return f"Duplicate check can't run yet: fill the {' and '.join(missing_labels)}."
+
+
+def _readable_date(value) -> Optional[str]:
+    text = str(value or '')[:10]
+    try:
+        parsed = date.fromisoformat(text)
+    except ValueError:
+        return text or None
+    return f'{parsed.day} {parsed.strftime("%b %Y")}'
+
+
+def duplicate_message(number, existing: Dict[str, Any]) -> str:
+    """'Possible duplicate of PI-2611-04 (INVOICE_100003, record 10012, 20 Nov 2026).' Only what is known is named."""
+    parts = [existing.get('document_code') or None,
+             f"record {existing['record_code']}" if existing.get('record_code') else None,
+             _readable_date(existing.get('invoice_date') or existing.get('uploaded_at'))]
+    named = ', '.join(part for part in parts if part)
+    return f'Possible duplicate of {number}' + (f' ({named})' if named else '') + '. Compare the two before approving.'
 
 
 def validate_invoice_document(
@@ -177,39 +201,43 @@ def validate_invoice_document(
     # ---------------------------------------------------------
     # Compare the target to each reference. A duplicate pair elsewhere in the
     # reference history says nothing about this invoice.
-    duplicates = []
-    duplicate_key_ready = all(isinstance(invoice_data.get(key), str) and invoice_data[key].strip()
-                              for key in ('vendor_name','invoice_number'))
+    # Three states, never mixed up (25 Nov): it could not run (say what to fill), it found a match (name it), or
+    # it passed. A check that did not run never reads as "possible duplicate".
+    matches = []
+    missing = [(key, label) for key, label in (('vendor_name', 'supplier'), ('invoice_number', 'invoice number'))
+               if not (isinstance(invoice_data.get(key), str) and invoice_data[key].strip())]
     if policy.get('check_duplicate') is False:
         checks.append({'rule': 'EX-007', 'result': 'NOT_APPLICABLE', 'checkStatus': 'NOT_APPLICABLE', 'required': False,
                        'message': "This company's validation settings do not include a duplicate check."})
+    elif missing:
+        # Said before the history: with no number there is nothing to compare, whatever the history holds.
+        checks.append({'rule': 'EX-007', 'result': 'WARNING', 'checkStatus': 'NOT_CHECKED', 'required': True,
+                       'field': missing[-1][0], 'missing_fields': [key for key, _ in missing],
+                       'message': duplicate_not_run_message([label for _, label in missing])})
     elif existing_invoices is None:
         checks.append({'rule': 'EX-007', 'result': 'WARNING', 'checkStatus': 'NOT_CHECKED', 'required': True,
-                       'message': 'Invoice history could not be read, so duplicates cannot be ruled out.'})
-    elif not duplicate_key_ready:
-        checks.append({'rule': 'EX-007', 'result': 'WARNING', 'checkStatus': 'NOT_CHECKED', 'required': True,
-                       'message': 'A duplicate check needs both a supplier and an invoice number.'})
+                       'message': "Duplicate check can't run yet: invoice history could not be read. Run the checks again."})
     else:
         for existing in existing_invoices:
             if invoice_data.get('document_id') and existing.get('document_id') == invoice_data['document_id']:
                 continue
-            duplicates.extend(find_duplicate_invoices([existing, invoice_data]))
-        if not duplicates:
+            if find_duplicate_invoices([existing, invoice_data]):
+                matches.append(existing)
+        if not matches:
             checks.append({'rule': 'EX-007', 'result': 'PASS', 'checkStatus': 'CHECKED', 'required': True,
                            'message': (f'Checked against {len(existing_invoices)} other invoices for this company; no match.'
                                        if existing_invoices else 'History was read and this company has no other invoices yet, so there is nothing to duplicate.')})
 
-    for duplicate in duplicates:
+    for existing in matches:
         errors.append({
-            "code": duplicate["code"],
-            "severity": EXCEPTION_SEVERITY[duplicate["code"]],
+            "code": "EX-007",
+            "severity": EXCEPTION_SEVERITY["EX-007"],
             "field": "invoice_number",
-            "message": (
-                f"Duplicate invoice detected for "
-                f"{duplicate['vendor_name']} / "
-                f"{duplicate['invoice_number']}"
-            ),
-            "duplicate_of": duplicate["duplicate_of"],
+            "message": duplicate_message(invoice_data.get('invoice_number'), existing),
+            "duplicate_of": existing.get('document_id') or existing.get('source_file'),
+            # Stored with the result, so the review page can link to the other document.
+            "actual_value": invoice_data.get('invoice_number'),
+            "expected_value": existing.get('document_id') or existing.get('source_file'),
         })
 
     # ---------------------------------------------------------
