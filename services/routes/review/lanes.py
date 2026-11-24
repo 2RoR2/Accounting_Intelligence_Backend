@@ -246,6 +246,7 @@ def bulk_approve(data: BulkApproveInput, request: Request):
 
 
 def register(router):
+    from services.routes.idempotency import idempotent  # Idempotency-Key retries
     router.add_api_route('/api/review/lanes', review_lanes, methods=['GET'])
-    router.add_api_route('/api/review/bulk-submit', bulk_submit, methods=['POST'])
-    router.add_api_route('/api/review/bulk-approve', bulk_approve, methods=['POST'])
+    router.add_api_route('/api/review/bulk-submit', idempotent(bulk_submit), methods=['POST'])
+    router.add_api_route('/api/review/bulk-approve', idempotent(bulk_approve), methods=['POST'])
