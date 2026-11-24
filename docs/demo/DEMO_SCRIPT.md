@@ -140,8 +140,9 @@ Close with the accountant's side: "everything above was typed once, matched once
 
 | Symptom | Fallback |
 |---|---|
-| **Document says "Needs fixing" / "AI unavailable" / takes about 40 seconds** | The AI provider's daily or per-minute token limit is used up (Groq on_demand: 200,000 tokens a day, 8,000 a minute; about 2,500 per document). Do not retry in a loop. Open the document, **Choose the type**, type the fields from `expected_values.json`, add the lines, Save and revalidate, then submit. It is also a good way to show the manual path. |
-| Extraction slow but running | Show an already-extracted document from pre-upload (step 5 of "Before you start") and keep talking about the review screen. |
+| **AI rate-limited: a document says "Needs fixing" / "AI unavailable" or takes about 40 seconds** (primary fallback) | **Open an already-extracted document** (one from the 12:30 pre-upload, or any seeded Inbox document marked "Read, to check") and carry on the script from the review screen. The AI provider's daily or per-minute token limit is used up (Groq on_demand: 200,000 tokens a day, 8,000 a minute; about 2,500 per document); do not retry in a loop. |
+| No already-extracted document is available | Open the stuck document, **Choose the type**, type the fields from `expected_values.json`, add the lines, Save and revalidate, then submit. This is the manual path and it works; say so. |
+| Extraction slow but running | Show an already-extracted document (step 5 of "Before you start") and keep talking about the review screen. |
 | Same file "already uploaded" | Open the existing document from **All documents**. |
 | Receipt will not submit ("Check against the document: date") | Retype the date as 2026-11-21 and revalidate; resubmit. |
 | Render service asleep (first click hangs) | Wait 60 seconds, refresh; this is why you wake it up at 12:50. |
