@@ -60,6 +60,8 @@ TRANSFERS = {"quotation": {"sales-order", "delivery-order", "invoice"}, "sales-o
              "bill": {"purchase-credit-note", "purchase-debit-note", "purchase-payment"},
              "purchase-debit-note": {"purchase-credit-note", "purchase-payment"}}
 MONEY_ONLY = {"payment", "refund", "purchase-payment", "purchase-refund", "bank-transfer"}
+# Documents a bank statement line can point at: recorded from the line (money in/out), or reconciled against it.
+BANK_LINE_TYPES = {"money-in", "money-out", "payment", "refund", "purchase-payment", "purchase-refund"}
 # Open items carry a due date (the frontend's hasOutstanding).
 OUTSTANDING_TYPES = {"invoice", "bill", "debit-note", "purchase-debit-note"}
 
@@ -709,7 +711,7 @@ def _check_note(db, user, doc):
 def _void(db, user, doc, reason):
     if doc["status"] == "ready" and user["role"] not in POST_ROLES:
         raise HTTPException(403, "Only a company admin can void a ready document.")
-    if doc["document_type"] in {"money-in", "money-out"}:
+    if doc["document_type"] in BANK_LINE_TYPES:
         # Lock the bank evidence before taking the journal/period locks.
         db.execute("""SELECT id FROM bank_transactions WHERE tenant_id=%s AND recorded_document_id=%s
             ORDER BY id FOR UPDATE""", (user["tenant_id"], doc["id"]))
@@ -747,10 +749,14 @@ def _void(db, user, doc, reason):
     updated = db.execute("""UPDATE erp_document_headers SET status='void',voided_at=now(),void_reason=%s,reversal_journal_id=%s,
             updated_by=%s,updated_at=now() WHERE id=%s AND tenant_id=%s RETURNING *""",
                       (reason, reversal, user["id"], doc["id"], user["tenant_id"])).fetchone()
-    if doc["document_type"] in {"money-in", "money-out"}:
+    if doc["document_type"] in BANK_LINE_TYPES:
         reopened = db.execute("""UPDATE bank_transactions SET status='imported',recorded_document_id=NULL
             WHERE tenant_id=%s AND recorded_document_id=%s RETURNING id""",
             (user["tenant_id"], doc["id"])).fetchall()
+        # A bank line reconciled against this payment is no longer reconciled.
+        db.execute("""UPDATE bank_document_reconciliations SET undone_at=now(),undone_by=%s,undo_reason=%s
+            WHERE tenant_id=%s AND document_id=%s AND undone_at IS NULL""",
+            (user["id"], f"Voided {doc['document_number']}", user["tenant_id"], doc["id"]))
         for bank in reopened:
             audit(db, user, "bank.recorded_document_voided", bank["id"], {"documentId": str(doc["id"])})
     if db.execute("SELECT 1 FROM erp_document_files WHERE tenant_id=%s AND document_id=%s LIMIT 1",

@@ -13,6 +13,8 @@ REQUIRED_COLUMNS = {
     "line_item_corrections": {"document_id": "uuid"},
     "standardised_records": {"document_id": "uuid", "is_current": "bool"},
     "bank_transactions": {"recorded_document_id": "uuid"},
+    # P3-lite (20261206_bank_document_reconciliation.sql): a bank line reconciled against a posted payment.
+    "bank_document_reconciliations": {"bank_transaction_id": "uuid", "document_id": "uuid", "undone_at": "timestamptz"},
     # Plan L1 (20261122_erp_module.sql): the sales/purchases module and the shared contact columns.
     "vendors": {"is_active": "bool", "fields": "jsonb", "default_expense_account_id": "uuid"},
     "customers": {"is_active": "bool", "fields": "jsonb"},
