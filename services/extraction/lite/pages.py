@@ -350,6 +350,40 @@ def load_pages(path):
             'versions': engine_versions(), 'seconds': round(time.perf_counter() - started, 3)}
 
 
+def _x_span(row):
+    xs = [p[0] for p in row['box_polygon_pixels']]
+    return min(xs), max(xs)
+
+
+def _y_span(row):
+    ys = [p[1] for p in row['box_polygon_pixels']]
+    return min(ys), max(ys)
+
+
+def _stacked(row, others):
+    """True when `row` is a separate printed line stacked close to a row of the line.
+
+    Text on one visual line never overlaps sideways, so two rows that share horizontal
+    space and sit at clearly different heights are two lines (a large company name above
+    its address). Rows at the same height that overlap are one line read twice by OCR
+    as overlapping fragments ("... No.: DN-26" + "e No.: DN-2603-8414") and stay together:
+    on the tuning set such fragments are offset by at most 0.13 of a row height, stacked
+    lines by at least 0.23.
+    """
+    left, right = _x_span(row)
+    top, bottom = _y_span(row)
+    for other in others:
+        other_left, other_right = _x_span(other)
+        overlap = min(right, other_right) - max(left, other_left)
+        if overlap <= 0.3 * max(1, min(right - left, other_right - other_left)):
+            continue
+        other_top, other_bottom = _y_span(other)
+        height = max(1, min(bottom - top, other_bottom - other_top))
+        if abs((top + bottom) / 2 - (other_top + other_bottom) / 2) > 0.2 * height:
+            return True
+    return False
+
+
 def page_lines(page):
     """Group one page's rows into visual lines (lists of rows, left to right)."""
     lines = []
@@ -359,7 +393,7 @@ def page_lines(page):
         top, bottom = min(ys), max(ys)
         centre, height = (top + bottom) / 2, bottom - top
         for line in lines:
-            if abs(line['centre'] - centre) <= 0.5 * min(line['height'], height):
+            if abs(line['centre'] - centre) <= 0.5 * min(line['height'], height) and not _stacked(row, line['rows']):
                 line['rows'].append(row)
                 line['centre'] = sum((min(p[1] for p in r['box_polygon_pixels'])
                                       + max(p[1] for p in r['box_polygon_pixels'])) / 2
@@ -370,6 +404,18 @@ def page_lines(page):
             lines.append({'centre': centre, 'height': height, 'rows': [row]})
     lines.sort(key=lambda line: line['centre'])
     return [sorted(line['rows'], key=lambda r: min(p[0] for p in r['box_polygon_pixels'])) for line in lines]
+
+
+def _repeated_join(first, second):
+    """Length of the longest end of `first` that `second` starts with (at least 4 characters).
+
+    OCR sometimes reads one printed value as two overlapping fragments, for example
+    "Debit Note No.: DN-26" and "e No.: DN-2603-8414"; the repeated part is printed once.
+    """
+    for size in range(min(len(first), len(second)) - 1, 3, -1):
+        if first.endswith(second[:size]):
+            return size
+    return 0
 
 
 def layout_text(document):
@@ -391,10 +437,15 @@ def layout_text(document):
                 xs = [p[0] for p in row['box_polygon_pixels']]
                 left, right = min(xs), max(xs)
                 character = (right - left) / max(1, len(row['text']))
+                text = row['text']
                 if previous_right is not None:
-                    parts.append(' | ' if left - previous_right > 2.5 * character else ' ')
-                parts.append(row['text'])
-                previous_right = right
+                    shared = _repeated_join(parts[-1], text) if left < previous_right else 0
+                    if shared:
+                        text = text[shared:]  # One text read twice by OCR as overlapping fragments.
+                    else:
+                        parts.append(' | ' if left - previous_right > 2.5 * character else ' ')
+                parts.append(text)
+                previous_right = max(right, previous_right or right)
             text_lines.append(''.join(parts))
             line_rows.append(rows)
     return '\n'.join(text_lines), line_rows

@@ -379,7 +379,7 @@ def test_provider_retries_rate_limits_then_falls_back():
         opener=FakeOpener(completion('{"document_type": "receipt"}')))
     answer, record = text_llm.complete_json('s', 'u', providers=[first, second])
     assert answer == {'document_type': 'receipt'} and record['provider'] == 'openrouter'
-    assert record['failed_before'] == [{'provider': 'gemini', 'error': 'AI_RATE_LIMITED'}]
+    assert record['failed_before'] == [{'provider': 'gemini', 'error': 'AI_RATE_LIMITED', 'status': 429}]
 
 
 @pytest.mark.parametrize('status,code', [(400, 'AI_BAD_REQUEST'), (401, 'AI_AUTH_REJECTED'), (402, 'AI_BILLING_REQUIRED'),

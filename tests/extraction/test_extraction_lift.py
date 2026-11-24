@@ -172,3 +172,101 @@ def test_bill_number_and_printed_period_separators(monkeypatch):
     fields = structure.structure_document(document(rows), providers=[FakeProvider(answer)])['fields']
     assert fields['bill_number']['value'] == 'B895256466'
     assert fields['billing_period']['value'] == '01/07/2026 - 31-07-2026'
+
+
+# --- transient server errors -------------------------------------------------
+
+def test_server_errors_have_their_own_retry_budget_and_report_the_status():
+    overloaded = lambda: HTTPError('https://x', 503, 'Service Unavailable', {}, io.BytesIO(b''))
+    waits = []
+    # Hosted keeps AI_MAX_RETRIES=1 for short rate-limit waits; an overloaded provider still gets 2 retries.
+    environ = {**CUSTOM, 'AI_MAX_RETRIES': '1'}
+    opener = FakeOpener(overloaded(), overloaded(), completion('{"document_type": "invoice"}'))
+    provider = text_llm.TextModelProvider('custom', first=True, environ=environ, opener=opener, sleep=waits.append)
+    answer, record = provider.complete_json('s', 'u')
+    assert answer == {'document_type': 'invoice'} and record['attempts'] == 3 and waits == [1.5, 3.0]
+    failing = text_llm.TextModelProvider('custom', first=True, environ={**environ, 'AI_SERVER_RETRIES': '0'},
+                                         opener=FakeOpener(overloaded()), sleep=waits.append)
+    with pytest.raises(text_llm.TextModelError) as caught:
+        text_llm.complete_json('s', 'u', providers=[failing])
+    assert caught.value.code == 'AI_PROVIDER_SERVER_ERROR'
+    assert caught.value.failures == [{'provider': 'custom', 'error': 'AI_PROVIDER_SERVER_ERROR', 'status': 503}]
+
+
+# --- invoice total from the printed grand-total line --------------------------
+
+def invoice_answer(**overrides):
+    from tests.extraction.test_lite_extraction import good_answer
+    return good_answer(total_amount={'value': None, 'raw': None}, **overrides)
+
+
+def grand_total_rows(total='RM 135.00'):
+    from tests.extraction.test_lite_extraction import invoice_rows
+    rows = [r for r in invoice_rows() if r['text'] not in {'Total', 'RM 135.00'}]
+    return rows + [row(len(rows), 'Jumlah Besar / Grand Total (RM)', 60, 580), row(len(rows) + 1, total, 950, 580)]
+
+
+def test_missing_total_is_read_from_the_printed_grand_total_line(monkeypatch):
+    monkeypatch.delenv('AI_PREFILL', raising=False)
+    result = structure.structure_document(document(grand_total_rows()), providers=[FakeProvider(invoice_answer())])
+    total = result['fields']['total_amount']
+    assert total['value'] == '135.00' and total['candidates'][0]['source_check'] == 'printed_on_grand_total_line'
+    assert any(i['code'] == 'VALUE_FROM_PRINTED_FIGURES' and i['field'] == 'total_amount' for i in result['issues'])
+
+
+def test_grand_total_that_disagrees_with_printed_subtotal_and_tax_is_not_used(monkeypatch):
+    monkeypatch.delenv('AI_PREFILL', raising=False)
+    rows = grand_total_rows('RM 999.00')
+    fields = structure.structure_document(document(rows), providers=[FakeProvider(invoice_answer())])['fields']
+    assert fields['total_amount']['state'] == 'missing'
+
+
+# --- layout: stacked rows are separate lines ----------------------------------
+
+def test_stacked_rows_are_not_merged_into_one_line():
+    from services.extraction.lite import pages
+    # A tall company name and the address line under it overlap vertically in coarse OCR boxes.
+    name = {'order': 0, 'page': 1, 'text': 'Bayu Embun Printing Sdn. Bhd.', 'engine_score': 0.9,
+            'box_polygon_pixels': [[62, 30], [420, 30], [420, 70], [62, 70]]}
+    address = {'order': 1, 'page': 1, 'text': 'No. 40, Jalan Tembusu 12/7', 'engine_score': 0.9,
+               'box_polygon_pixels': [[60, 46], [380, 46], [380, 70], [60, 70]]}
+    heading = {'order': 2, 'page': 1, 'text': 'TAX INVOICE', 'engine_score': 0.9,
+               'box_polygon_pixels': [[800, 36], [960, 36], [960, 64], [800, 64]]}
+    lines = pages.page_lines({'rows': [address, name, heading]})
+    assert [[r['text'] for r in line] for line in lines] == [
+        ['Bayu Embun Printing Sdn. Bhd.', 'TAX INVOICE'], ['No. 40, Jalan Tembusu 12/7']]
+
+
+def test_an_answer_that_is_not_json_is_asked_once_more_then_falls_back():
+    opener = FakeOpener(completion('Here are the fields: ...'), completion('{"document_type": "invoice"}'))
+    provider = text_llm.TextModelProvider('custom', first=True, environ=CUSTOM, opener=opener)
+    answer, record = text_llm.complete_json('s', 'u', providers=[provider])
+    assert answer == {'document_type': 'invoice'} and len(opener.requests) == 2
+    assert record['failed_before'] == [{'provider': 'custom', 'error': 'AI_RESPONSE_NOT_JSON'}]
+    twice = FakeOpener(completion('no'), completion('still no'))
+    provider = text_llm.TextModelProvider('custom', first=True, environ=CUSTOM, opener=twice)
+    with pytest.raises(text_llm.TextModelError) as caught:
+        text_llm.complete_json('s', 'u', providers=[provider])
+    assert caught.value.code == 'AI_RESPONSE_NOT_JSON' and len(twice.requests) == 2
+
+
+def test_overlapping_ocr_fragments_at_one_height_stay_on_one_line():
+    from services.extraction.lite import pages
+    label = {'order': 0, 'page': 1, 'text': 'Debit Note No.: DN-26', 'engine_score': 0.9,
+             'box_polygon_pixels': [[600, 300], [900, 300], [900, 324], [600, 324]]}
+    rest = {'order': 1, 'page': 1, 'text': 'e No.: DN-2603-8414', 'engine_score': 0.9,
+            'box_polygon_pixels': [[790, 300], [1050, 300], [1050, 324], [790, 324]]}
+    assert [[r['text'] for r in line] for line in pages.page_lines({'rows': [rest, label]})] == [
+        ['Debit Note No.: DN-26', 'e No.: DN-2603-8414']]
+
+
+def test_overlapping_fragments_are_read_once_in_the_model_text():
+    from services.extraction.lite import pages
+    label = row(0, 'Debit Note No.: DN-26', 600, 300, width=300)
+    rest = row(1, 'e No.: DN-2603-8414', 790, 300, width=260)
+    apart = row(2, 'Date: 14-03-2026', 1200, 300, width=200)
+    text, lines = pages.layout_text(document([label, rest, apart]))
+    assert text == 'Debit Note No.: DN-2603-8414 | Date: 14-03-2026'
+    assert [r['text'] for r in lines[0]] == ['Debit Note No.: DN-26', 'e No.: DN-2603-8414', 'Date: 14-03-2026']
+    # A fragment is never dropped whole, and short or absent overlaps are not merged.
+    assert pages._repeated_join('Total', 'Total') == 0 and pages._repeated_join('INV-1', 'abc') == 0
