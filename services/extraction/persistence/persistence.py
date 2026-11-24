@@ -17,25 +17,35 @@ logger = logging.getLogger(__name__)
 
 
 def _usable_document_identifier(fields: list[dict[str, Any]], kind: str) -> str | None:
-    """Return the identifier that should become the processed filename."""
-    identifier_keys = {
-        "invoice": {"invoice", "invoice_number"},
-        "credit_note": {"invoice", "invoice_number", "reference", "reference_number"},
-        "debit_note": {"invoice", "invoice_number", "reference", "reference_number"},
-        "bill": {"reference", "reference_number", "bill_reference", "invoice", "invoice_number"},
-        "receipt": {"receipt", "receipt_number", "reference", "reference_number"},
-    }.get(kind, set())
-    placeholders = {"invoice", "invoice number", "invoice no", "reference", "receipt", "n/a", "na", "none", "null", "unknown", "-"}
-    for field in fields:
-        if field.get("field_key") not in identifier_keys:
-            continue
-        value = field.get("current_value") or field.get("normalized_value")
-        if value is None:
-            continue
-        value = str(value).strip()
-        if value and value.casefold() not in placeholders and any(ch.isalnum() for ch in value):
-            return value
+    """Return the identifier that should become the processed filename.
+
+    Keys are tried in order: the document's own number first. Bills store their printed number as
+    `bill_number`, which was missing here, so a bill whose number was read was named ..._NONUMBER.
+    """
+    identifier_keys = IDENTIFIER_KEYS.get(kind, ())
+    placeholders = {"invoice", "invoice number", "invoice no", "reference", "receipt", "bill", "bill no", "n/a", "na",
+                    "none", "null", "unknown", "-"}
+    for key in identifier_keys:
+        for field in fields:
+            if field.get("field_key") != key:
+                continue
+            value = field.get("current_value") or field.get("normalized_value")
+            if value is None:
+                continue
+            value = str(value).strip()
+            if value and value.casefold() not in placeholders and any(ch.isalnum() for ch in value):
+                return value
     return None
+
+
+# The document's own number, by stored kind, most specific key first.
+IDENTIFIER_KEYS: dict[str, tuple[str, ...]] = {
+    "invoice": ("invoice", "invoice_number"),
+    "credit_note": ("reference", "reference_number", "invoice", "invoice_number"),
+    "debit_note": ("reference", "reference_number", "invoice", "invoice_number"),
+    "bill": ("bill_number", "bill_reference", "reference", "reference_number", "invoice", "invoice_number"),
+    "receipt": ("receipt", "receipt_number", "reference", "reference_number"),
+}
 
 
 def _field_value(fields: list[dict[str, Any]], *keys: str) -> str | None:

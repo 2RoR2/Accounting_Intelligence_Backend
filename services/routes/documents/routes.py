@@ -143,6 +143,57 @@ CORRECTABLE_FIELDS = CORRECTABLE_MONEY_FIELDS | frozenset({
     'bill_number',
 })
 
+def _identifier_order() -> str:
+    """SQL rank of identifier keys for the outer document `d`: its own number key first (see IDENTIFIER_KEYS)."""
+    from services.extraction.persistence.persistence import IDENTIFIER_KEYS
+    fallback = ("invoice", "invoice_number", "reference", "reference_number", "bill_number", "bill_reference",
+                "receipt", "receipt_number")
+    array = lambda keys: "ARRAY[" + ",".join(f"'{key}'" for key in keys) + "]"
+    whens = " ".join(f"WHEN '{kind}' THEN {array(keys)}" for kind, keys in IDENTIFIER_KEYS.items())
+    return f"array_position(CASE d.kind {whens} ELSE {array(fallback)} END, field_key::text)"
+
+
+IDENTIFIER_ORDER = _identifier_order()
+
+
+# Fields a reviewer may add when the reader did not store them (bug a, 24 Nov demo): the empty row is created with
+# the correction, under its canonical key, so terms, a due date or a PO number can always be typed in.
+ADDABLE_FIELDS = frozenset({
+    'due', 'payment_terms', 'purchase_order_number', 'received_date', 'reference', 'invoice', 'bill_number',
+    'receipt_number', 'payment_reference', 'subtotal', 'tax', 'discount', 'total', 'date', 'currency',
+    'supplier', 'customer',
+}) & CORRECTABLE_FIELDS
+
+
+def _add_missing_field(db, document_id, field_key, user):
+    """Create the empty field row for the current extraction, unless the field (or an alias of it) is stored.
+
+    Returns True when a row was added. Refuses (409) when another stored key already means the same thing, so a
+    document never holds two values for one field (validation would treat that as a conflict).
+    """
+    from services.extraction.contracts.accounting_contract import FIELD_KEYS, VERSION
+    stored = db.execute("""SELECT fp.field_key FROM field_predictions fp JOIN raw_extractions re
+        ON re.id=fp.extraction_id AND re.is_current=true WHERE fp.document_id=%s""", (document_id,)).fetchall()
+    keys = {row['field_key'] for row in stored}
+    if field_key in keys:
+        return False
+    canonical = FIELD_KEYS.get(field_key, field_key)
+    alias = next((key for key in keys if FIELD_KEYS.get(key, key) == canonical), None)
+    if alias:
+        raise HTTPException(409, f"This document already stores this field as '{alias}'. Correct that field instead.")
+    if field_key not in ADDABLE_FIELDS:
+        raise HTTPException(404, "Extraction field not found.")
+    extraction = db.execute("SELECT id FROM raw_extractions WHERE document_id=%s AND is_current=true", (document_id,)).fetchone()
+    if not extraction:
+        raise HTTPException(409, "The document has no current reading. Read it again first.")
+    db.execute("""INSERT INTO field_predictions (extraction_id, document_id, field_key, field_label, extraction_state,
+               resolution, extraction_method, schema_version)
+           VALUES (%s,%s,%s,%s,'missing','unresolved_missing','MANUAL_CORRECTION',%s)
+           ON CONFLICT (extraction_id, field_key) DO NOTHING""",
+               (extraction['id'], document_id, field_key, field_key.replace('_', ' ').title(), VERSION))
+    return True
+
+
 def list_documents(
     request: Request,
     q: str | None = None,
@@ -252,7 +303,9 @@ def list_documents(
                 FROM field_predictions
                 WHERE document_id=d.id
                   AND field_key IN ('invoice', 'invoice_number', 'reference', 'reference_number', 'bill_number', 'bill_reference', 'receipt', 'receipt_number')
-                ORDER BY created_at DESC
+                  AND NULLIF(btrim(COALESCE(current_value, normalized_value, raw_value)), '') IS NOT NULL
+                -- An empty identifier row must not hide the printed number; the document's own number key wins.
+                ORDER BY {IDENTIFIER_ORDER}, created_at DESC
                 LIMIT 1
             ) identifier_field ON true
             WHERE {' AND '.join(clauses)}
@@ -312,7 +365,9 @@ def _readable_detail(db, document_id, user) -> dict:
                         WHERE document_id=d.id AND field_key='customer' ORDER BY created_at DESC LIMIT 1)) AS buyer_name,
                     COALESCE(sr.invoice_number,sr.reference_number,(SELECT COALESCE(current_value,normalized_value,raw_value)
                         FROM field_predictions WHERE document_id=d.id AND field_key IN ('invoice','invoice_number','reference',
-                        'reference_number','bill_number','bill_reference','receipt','receipt_number') ORDER BY created_at DESC LIMIT 1))
+                        'reference_number','bill_number','bill_reference','receipt','receipt_number')
+                        AND NULLIF(btrim(COALESCE(current_value,normalized_value,raw_value)),'') IS NOT NULL
+                        ORDER BY """ + IDENTIFIER_ORDER + """, created_at DESC LIMIT 1))
                         AS detected_identifier,
                     COALESCE(sr.invoice_date::text,(SELECT COALESCE(current_value,normalized_value) FROM field_predictions
                         WHERE document_id=d.id AND field_key='date' ORDER BY created_at DESC LIMIT 1)) AS document_date_value
@@ -872,6 +927,7 @@ def correct_extracted_field(document_id: str, field_key: str, data: FieldCorrect
             decision = decision_details(_currency_review(db, user['tenant_id'], document_id, stored), data.value, current.get('current_value') if current else None)
         db.execute("SELECT set_config('app.user_id',%s,true), set_config('app.status_reason',%s,true)",
                    (str(user['id']), 'Extracted field corrected'))
+        added = _add_missing_field(db, document_id, field_key, user)
         # Repeat tenant, visibility and revision guards in the write itself.
         # Preserve resolution/raw/provenance; the existing trigger appends history.
         row = db.execute(f"""UPDATE field_predictions AS fp
@@ -899,7 +955,7 @@ def correct_extracted_field(document_id: str, field_key: str, data: FieldCorrect
         _notify_tenant_users(db, user['tenant_id'], user['id'], 'Document field corrected',
                              f"{document.get('document_code', 'A document')} was corrected and needs review.", f"documents/{document_id}")
     return {"key": row["field_key"], "value": row["current_value"], "correctedBy": str(row["corrected_by"]),
-            "contentRevision": revision['content_revision']}
+            "contentRevision": revision['content_revision'], "added": added}
 
 AI_ASSIST_ACTION = 'ai_assist.result'
 AI_ASSIST_DECISION = 'ai_assist.decision'
@@ -1201,14 +1257,30 @@ def save_document_draft(document_id: str, request: Request):
     if not row: raise HTTPException(404, "Document cannot be saved as a draft.")
     return {"documentId": str(row["id"]), "status": row["status"].upper(), "savedAt": str(row["updated_at"])}
 
+def approval_blockers(result, external=()) -> str:
+    """Name what blocks submission or approval, in plain words, so the screen can say why (bug b, 24 Nov demo)."""
+    parts = []
+    for error in result.get('errors') or []:
+        where = f" ({error.get('field')})" if error.get('field') else ""
+        parts.append(f"{error.get('code')}{where}: {error.get('message') or 'needs fixing'}")
+    if not result.get('coverage_complete'):
+        open_checks = [c.get('rule') for c in result.get('checks') or []
+                       if c.get('required', True) and c.get('checkStatus') not in {'CHECKED', 'NOT_APPLICABLE'}]
+        parts.append("Checks not run yet: " + (", ".join(str(rule) for rule in open_checks[:5]) or "type-specific checks") + ".")
+    for row in external or []:
+        parts.append(f"Open exception {row.get('type')}: {row.get('message') or 'resolve it on the Exceptions page'}")
+    return "Blocking: " + "; ".join(parts[:6]) if parts else ""
+
+
 def _require_approvable_document(db, document, user):
     from validation.documents.document_validation import evaluate_document, load_current
     _, extraction, fields, items = load_current(db, str(document['id']), user)
     result = evaluate_document(document, extraction, fields, items, db)
-    external = db.execute("SELECT id FROM exceptions WHERE document_id=%s AND tenant_id=%s AND type NOT LIKE 'VALIDATION:%%' AND status<>'resolved' LIMIT 1",
-                          (document['id'], document['tenant_id'])).fetchone()
+    external = db.execute("SELECT id,type,message FROM exceptions WHERE document_id=%s AND tenant_id=%s AND type NOT LIKE 'VALIDATION:%%' AND status<>'resolved' LIMIT 3",
+                          (document['id'], document['tenant_id'])).fetchall()
     if result['errors'] or not result.get('coverage_complete') or external:
-        raise HTTPException(422, 'Resolve the current validation findings and revalidate before submission or approval.')
+        raise HTTPException(422, 'Resolve the current validation findings and revalidate before submission or approval. '
+                            + approval_blockers(result, external))
     stored = db.execute("""SELECT count(*) AS total, count(*) FILTER (WHERE status='failed' OR prevents_approval OR (status='not_checked' AND requires_review)) AS failures
         FROM validation_results WHERE document_id=%s AND tenant_id=%s AND content_revision=%s""",
         (document['id'], document['tenant_id'], document['content_revision'])).fetchone()
