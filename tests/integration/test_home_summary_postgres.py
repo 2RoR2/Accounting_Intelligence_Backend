@@ -238,8 +238,9 @@ def test_bills_and_invoices_use_the_unpaid_amount_as_decimal_strings(company):
     # the 150.00 bill whose payment was undone is unpaid again.
     assert (overdue['count'], overdue['amount'], overdue['otherCurrencyCount']) == (2, '950.25', 0)
     assert (receivable['count'], receivable['amount']) == (1, '1200.00')
-    # 11 approved records; the invoice (document journal) and the credit note (adjustment journal) are posted.
-    assert tiles['journalsToPost'] == {'available': True, 'scope': 'company', 'count': 9, 'draftJournals': 1,
+    # 11 approved records; the invoice (document journal) and the credit note (adjustment journal) are posted,
+    # and the approved receipt is kept as a record that does not post from the list: 11 - 2 - 1 = 8 wait to be posted.
+    assert tiles['journalsToPost'] == {'available': True, 'scope': 'company', 'count': 8, 'draftJournals': 1,
                                        'link': {'page': 'records', 'query': 'posting=to-post'}}
 
 
