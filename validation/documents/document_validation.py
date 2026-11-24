@@ -16,6 +16,7 @@ from validation.documents.financial_documents import (
     tax_status, tax_status_check,
 )
 from validation.documents.profiles import validate_profile
+from validation.documents.addressee import RULE as ADDRESSEE_RULE, apply_addressee
 from validation.matching.vendor_matching import find_vendor_match
 
 
@@ -44,6 +45,7 @@ CAUSE_LABELS = {
     'CLASSIFICATION_MISMATCH': 'Document type unresolved',
     'POLICY_REQUIREMENT': 'Business rule requires review',
     'MODEL_DISAGREEMENT': 'A second reading disagrees',
+    'NOT_ADDRESSED_TO_COMPANY': 'Addressed to another company',
 }
 
 
@@ -54,6 +56,8 @@ def exception_cause(code, field=None, message=''):
         return 'CLASSIFICATION_MISMATCH'
     if code == MODEL_DISAGREEMENT_RULE:
         return 'MODEL_DISAGREEMENT'
+    if code == ADDRESSEE_RULE:
+        return 'NOT_ADDRESSED_TO_COMPANY'
     if field == 'category' or code == 'PROFILE-001':
         return 'POLICY_REQUIREMENT'
     if code in {'EX-003', 'EX-004', 'EX-005', 'EX-006', 'AMOUNT-PLAUSIBLE'} or code.startswith('BR-CO') or code.endswith(('-LINE_MATH', '-SUBTOTAL', '-TOTAL', '-DATES', '-SIGN')):
@@ -351,6 +355,14 @@ def evaluate_invoice(document, extraction, fields, items, db=None):
             'review_required': True, 'accounting_approval_performed': False}
 
 
+def _identity(db, document):
+    """This company's name, SSM and TIN, or None when there is no database or it could not be read."""
+    if db is None or not document.get('tenant_id'):
+        return None
+    from services.company_identity import company_identity
+    return read_or_unavailable(db, lambda: company_identity(db, document['tenant_id']))
+
+
 def evaluate_document(document, extraction, fields, items, db=None):
     """Route effective values by source-verified kind, preserving invoice rules."""
     raw = extraction.get('raw_json') or {}
@@ -364,6 +376,7 @@ def evaluate_document(document, extraction, fields, items, db=None):
         profile = validate_profile(kind, values, items)
         result['errors'].extend(profile['errors']); result['checks'].extend(profile['checks'])
         result['errors'].extend(model_disagreements(fields))
+        apply_addressee(result, _identity(db, document), values, document.get('category'))
         result['errors'] = _with_causes(consolidate_errors(result['errors']))
         result['coverage_complete'] = coverage_complete(result['checks'])
         result['validation_passed'] = not result['errors']
@@ -410,10 +423,11 @@ def evaluate_document(document, extraction, fields, items, db=None):
                               ('EX-010', 'The anomaly check compares invoices only.')):
             result['checks'].append({'rule': rule, 'result': NOT_APPLICABLE_MARK, 'checkStatus': NOT_APPLICABLE_MARK,
                                      'required': False, 'message': message})
-        result['coverage_complete'] = coverage_complete(result['checks'])
-        result['validation_passed'] = not result['errors']
         result['vendor_match'] = {key: vendor_match.get(key) for key in
             ('status', 'vendor_id', 'vendor_name', 'similarity', 'score_method')}
+        apply_addressee(result, _identity(db, document), values, document.get('category'))
+        result['coverage_complete'] = coverage_complete(result['checks'])
+        result['validation_passed'] = not result['errors']
         _with_causes(result['errors'])
         return result
     # No invoice number/vendor/line requirements are imposed on receipts/bills.

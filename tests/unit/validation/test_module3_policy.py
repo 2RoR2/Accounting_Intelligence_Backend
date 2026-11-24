@@ -37,10 +37,11 @@ class FakeDb:
 
     def execute(self, sql, params=()):
         self.queries.append((sql, params))
-        for word, table in (('FROM validation_rules', 'validation_rules'), ('FROM vendors', 'vendors'), ('FROM customers', 'customers'),
+        # The reference read names each document's record in a sub-select, so it is matched before standardised_records.
+        for word, table in (('FROM documents d JOIN raw_extractions', 'references'),
+                            ('FROM validation_rules', 'validation_rules'), ('FROM vendors', 'vendors'), ('FROM customers', 'customers'),
                             ('FROM audit_logs', 'audit_logs'), ('FROM purchase_order_lines', 'purchase_order_lines'),
-                            ('FROM purchase_orders', 'purchase_orders'), ('FROM standardised_records', 'history'),
-                            ('FROM documents d JOIN raw_extractions', 'references')):
+                            ('FROM purchase_orders', 'purchase_orders'), ('FROM standardised_records', 'history')):
             if word in sql:
                 rows = self.tables[table]
                 if rows is Exception:
@@ -101,7 +102,49 @@ class DuplicateRuleTests(unittest.TestCase):
     def test_missing_identity_is_not_checked(self):
         check = by_rule(run(invoice_fields(invoice=None), db=FakeDb(vendors=[vendor()])), 'EX-007')[0]
         self.assertEqual((check['checkStatus'], check['required']), ('NOT_CHECKED', True))
-        self.assertIn('supplier and an invoice number', check['message'])
+        # It did not run, so it must not read as a possible duplicate (25 Nov): it says what to fill, and where.
+        self.assertEqual(check['message'], "Duplicate check can't run yet: fill the invoice number.")
+        self.assertEqual(check['field'], 'invoice_number')
+        self.assertNotIn('possible duplicate', check['message'].lower())
+
+    def test_missing_supplier_and_number_names_both(self):
+        check = by_rule(run(invoice_fields(invoice=None, supplier=None), db=FakeDb(vendors=[vendor()])), 'EX-007')[0]
+        self.assertEqual(check['message'], "Duplicate check can't run yet: fill the supplier and invoice number.")
+        self.assertEqual(check['missing_fields'], ['vendor_name', 'invoice_number'])
+
+    def test_missing_number_is_said_even_when_history_cannot_be_read(self):
+        check = by_rule(run(invoice_fields(invoice=None), db=FakeDb(vendors=Exception, references=Exception)), 'EX-007')[0]
+        self.assertIn('fill the invoice number', check['message'])
+
+    def test_a_match_names_the_other_document(self):
+        def reference(key, value):
+            return {**field(key, value), 'reference_document_id': 'doc-9', 'extraction_id': 'ex-9', 'raw_json': {},
+                    'reference_document_code': 'INVOICE_100003', 'reference_record_code': '10012',
+                    'reference_uploaded_at': '2026-11-21 08:00:00+08'}
+        db = FakeDb(vendors=[vendor()], references=[reference('supplier', 'Acme Sdn Bhd'), reference('invoice', 'INV-1'),
+                                                    reference('date', '2026-11-20')])
+        result = run(db=db)
+        error = next(e for e in result['errors'] if e['code'] == 'EX-007')
+        self.assertEqual(error['message'], 'Possible duplicate of INV-1 (INVOICE_100003, record 10012, 20 Nov 2026). '
+                                           'Compare the two before approving.')
+        self.assertEqual((error['duplicate_of'], error['expected_value'], error['actual_value']), ('doc-9', 'doc-9', 'INV-1'))
+        self.assertEqual(by_rule(result, 'EX-007'), [])
+
+    def test_a_different_number_passes_with_no_finding(self):
+        def reference(key, value):
+            return {**field(key, value), 'reference_document_id': 'doc-9', 'extraction_id': 'ex-9', 'raw_json': {}}
+        result = run(db=FakeDb(vendors=[vendor()], references=[reference('supplier', 'Acme Sdn Bhd'), reference('invoice', 'INV-2')]))
+        self.assertFalse([e for e in result['errors'] if e['code'] == 'EX-007'])
+        self.assertEqual(by_rule(result, 'EX-007')[0]['checkStatus'], 'CHECKED')
+
+    def test_an_unreadable_date_on_the_other_document_does_not_hide_the_match(self):
+        def reference(key, value, state=None):
+            return {**field(key, value, state), 'reference_document_id': 'doc-9', 'extraction_id': 'ex-9', 'raw_json': {},
+                    'reference_document_code': 'INVOICE_100003', 'reference_uploaded_at': '2026-11-21'}
+        db = FakeDb(vendors=[vendor()], references=[reference('supplier', 'Acme Sdn Bhd'), reference('invoice', 'INV-1'),
+                                                    reference('date', '31/31/2026')])
+        error = next(e for e in run(db=db)['errors'] if e['code'] == 'EX-007')
+        self.assertIn('INVOICE_100003, 21 Nov 2026', error['message'])
 
     def test_tenant_policy_can_turn_it_off(self):
         db = FakeDb(vendors=[vendor()], validation_rules=[{'check_duplicate': False, 'require_po_for_ap': False}])
@@ -548,3 +591,23 @@ class TaxInclusiveTotalTests(unittest.TestCase):
 
     def test_change_that_does_not_fit_the_payment_fails(self):
         self.assertIn('RCP-005', codes(self.receipt(subtotal='160.17', total='169.80', total_including_tax='169.78', rounding='0.02', tendered_amount='200.00', change_given='20.00')))
+
+
+class ReferenceQuerySchemaTests(unittest.TestCase):
+    """The fake database above answers any column. Check the duplicate reference read against the real schema."""
+
+    def test_every_documents_and_records_column_it_reads_exists(self):
+        import inspect
+        import re
+        from pathlib import Path
+        from validation.documents import references
+        schema = (Path(__file__).resolve().parents[3] / 'database' / 'PostgreSQL Database schema.sql').read_text(encoding='utf-8')
+
+        def columns(table):
+            body = re.search(rf'CREATE TABLE {table} \((.*?)\n\);', schema, re.S).group(1)
+            return {line.split()[0] for line in body.splitlines() if line.strip() and not line.strip().startswith(('--', 'CONSTRAINT', 'UNIQUE', 'CHECK', 'PRIMARY', 'FOREIGN'))}
+        source = inspect.getsource(references.invoice_references)
+        for alias, table in (('d', 'documents'), ('r', 'standardised_records')):
+            used = set(re.findall(rf'\b{alias}\.([a-z_]+)', source))
+            self.assertTrue(used, table)
+            self.assertEqual(used - columns(table), set(), f'{table} has no such column')
