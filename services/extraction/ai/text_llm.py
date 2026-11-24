@@ -200,7 +200,7 @@ class TextModelProvider:
                 status = error.code
                 retry_after = error.headers.get('Retry-After') if error.headers else None
                 error.close()
-                if status in RETRYABLE_STATUS and attempts <= self.max_retries:
+                if status in RETRYABLE_STATUS and attempts <= self.max_retries and not exhausted_limit(status, retry_after):
                     self._sleep(retry_delay(status, retry_after, attempts))
                     continue
                 code = {400: 'AI_BAD_REQUEST', 401: 'AI_AUTH_REJECTED', 402: 'AI_BILLING_REQUIRED',
@@ -231,6 +231,26 @@ class TextModelProvider:
                         'completion_tokens': usage.get('completion_tokens')}
 
 
+RATE_LIMIT_MAX_WAIT_SECONDS = 60.0
+
+
+def _hinted_seconds(retry_after):
+    try:
+        hinted = float(retry_after) if retry_after else 0.0
+    except ValueError:
+        hinted = 0.0
+    return hinted if math.isfinite(hinted) and hinted > 0 else 0.0
+
+
+def exhausted_limit(status, retry_after):
+    """True for a 429 whose Retry-After is beyond a minute: a daily (or longer) quota is spent.
+
+    Waiting cannot help within one document, so the call fails at once and the next
+    configured provider (AI_PROVIDERS) is tried instead of holding the job for minutes.
+    """
+    return status == 429 and _hinted_seconds(retry_after) > RATE_LIMIT_MAX_WAIT_SECONDS
+
+
 def retry_delay(status, retry_after, attempt):
     """Seconds to wait before retry number `attempt` (1-based).
 
@@ -238,11 +258,7 @@ def retry_delay(status, retry_after, attempt):
     rate-limited call honours Retry-After up to 60 s and otherwise backs off
     5, 10, 20 s; server errors back off 1.5, 3, 6 s (both capped).
     """
-    try:
-        hinted = float(retry_after) if retry_after else 0.0
-    except ValueError:
-        hinted = 0.0
-    hinted = hinted if math.isfinite(hinted) and hinted > 0 else 0.0
+    hinted = _hinted_seconds(retry_after)
     if status == 429:
         return min(60.0, max(hinted, 5.0 * 2 ** (attempt - 1)))
     return min(20.0, max(hinted, 1.5 * 2 ** (attempt - 1)))

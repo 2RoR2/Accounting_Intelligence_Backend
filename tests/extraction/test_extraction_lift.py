@@ -54,6 +54,17 @@ def test_rate_limited_call_waits_and_succeeds_on_a_later_attempt():
     assert answer == {'document_type': 'bill'} and record['attempts'] == 3 and waits == [7.0, 10.0]
 
 
+def test_spent_daily_quota_fails_at_once_so_the_next_provider_is_tried():
+    spent = lambda: HTTPError('https://x', 429, 'Too Many Requests', {'Retry-After': '900'}, io.BytesIO(b''))
+    waits = []
+    provider = text_llm.TextModelProvider('custom', first=True, environ=CUSTOM, opener=FakeOpener(spent()),
+                                          sleep=waits.append)
+    with pytest.raises(text_llm.TextModelError) as caught:
+        provider.complete_json('s', 'u')
+    assert caught.value.code == 'AI_RATE_LIMITED' and waits == []
+    assert not text_llm.exhausted_limit(429, '60') and not text_llm.exhausted_limit(503, '900')
+
+
 def test_benchmark_continues_after_a_rate_limit():
     import importlib.util
     from pathlib import Path
