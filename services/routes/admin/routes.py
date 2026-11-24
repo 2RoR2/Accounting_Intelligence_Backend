@@ -62,8 +62,8 @@ def _user_audit(db, actor, tenant_id, action, target, details=None):
     """One audit row per user-management action (25 Nov admin audit: none were recorded). Never a password or link."""
     db.execute("""INSERT INTO audit_logs(tenant_id,user_id,user_name,role,action,resource,details)
         VALUES (%s,%s,%s,%s,%s,%s,%s)""", (tenant_id, actor["id"], actor.get("name", "Workspace user"), actor["role"], action,
-                                          str(target["id"]), json.dumps({"name": target["name"], "email": target["email"],
-                                                                         "role": target["role"], **(details or {})}, default=str)))
+                                          str(target["id"]), json.dumps({"name": target.get("name"), "email": target.get("email"),
+                                                                         "role": target.get("role"), **(details or {})}, default=str)))
 
 
 def _deliver_invitation(user_row, token, expires_at, company):
@@ -184,7 +184,7 @@ def update_user_credentials(user_id: str, data: AdminCredentialsInput, request: 
         else:
             row = db.execute("UPDATE users SET name=%s WHERE id=%s RETURNING *", (data.name, user_id)).fetchone()
         _user_audit(db, user, user["tenant_id"], "user.updated", row,
-                    {"previousName": target["name"], "temporaryPasswordSet": bool(data.password)})
+                    {"previousName": target.get("name"), "temporaryPasswordSet": bool(data.password)})
     return api_user(row)
 
 def resend_invitation(user_id: str, request: Request):

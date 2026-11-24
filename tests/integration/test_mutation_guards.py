@@ -23,7 +23,8 @@ class MutationDatabase(ContractDatabase):
         self.fail_line_audit = False
         for name, definition in [('document_code', "TEXT DEFAULT 'INVOICE-SYN'"), ('original_filename', "TEXT DEFAULT 'SYN.pdf'"),
                                  ('mime_type', "TEXT DEFAULT 'application/pdf'"), ('file_size_bytes', 'INTEGER DEFAULT 1'),
-                                 ('storage_path', "TEXT DEFAULT 'synthetic/no-source-file'"), ('file_hash_sha256', "TEXT DEFAULT 'synthetic-hash'")]:
+                                 ('storage_path', "TEXT DEFAULT 'synthetic/no-source-file'"), ('file_hash_sha256', "TEXT DEFAULT 'synthetic-hash'"),
+                                 ('excluded_at', 'TEXT')]:  # set aside (excluded_at) is read by every correction
             self.db.execute('ALTER TABLE documents ADD COLUMN '+name+' '+definition)
         for name in ('id','submission_id','reviewed_by','note','reviewed_at'):
             self.db.execute('ALTER TABLE review_decisions ADD COLUMN '+name+' TEXT')

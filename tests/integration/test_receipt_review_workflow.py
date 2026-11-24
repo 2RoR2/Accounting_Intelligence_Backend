@@ -36,7 +36,7 @@ def workspace():
     try:
         with connect() as db:
             db.execute('''
-              CREATE TABLE documents(id uuid PRIMARY KEY,tenant_id uuid,owner_id uuid,assigned_to uuid,kind text,category text,status text,content_revision int,page_count int,document_code text,updated_at timestamptz);
+              CREATE TABLE documents(id uuid PRIMARY KEY,tenant_id uuid,owner_id uuid,assigned_to uuid,kind text,category text,status text,content_revision int,page_count int,document_code text,updated_at timestamptz,excluded_at timestamptz);
               CREATE TABLE raw_extractions(id uuid PRIMARY KEY,document_id uuid,raw_json jsonb,is_current bool,run_number int);
               CREATE TABLE field_predictions(id uuid DEFAULT gen_random_uuid(),document_id uuid,extraction_id uuid,field_key text,field_label text,current_value text,normalized_value text,raw_value text,extraction_state text,resolution text,evidence jsonb,candidates jsonb,corrected_by uuid,corrected_at timestamptz);
               CREATE TABLE line_items(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),document_id uuid,extraction_id uuid,line_number int,description text,quantity numeric(14,3),unit_price numeric(14,4),amount numeric(14,2),field_states jsonb,evidence jsonb,candidates jsonb, UNIQUE(extraction_id,line_number));
