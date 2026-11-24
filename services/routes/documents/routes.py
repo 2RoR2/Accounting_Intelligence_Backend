@@ -868,6 +868,11 @@ def get_document_extraction(document_id: str, request: Request):
         line_corrections = db.execute("""SELECT line_item_id,field_key,old_value,new_value,corrected_by,corrected_at
             FROM line_item_corrections WHERE document_id=%s ORDER BY corrected_at DESC""", (document_id,)).fetchall()
         currency_review = _currency_review(db, user['tenant_id'], document_id, fields)
+        names = _user_names(db, user['tenant_id'], [row.get('corrected_by') for row in [*fields, *line_corrections]])
+    field_rows = [prediction_dto(row) for row in fields]
+    for row in field_rows:
+        # Who corrected it, by name: "Invoice number: typed by Jonathan, 25 Nov" (25 Nov review findings).
+        row['correctedByName'] = names.get(row['correctedBy']) if row.get('correctedBy') else None
     return {
         "documentId": document_id,
         "contentRevision": doc['content_revision'],
@@ -879,12 +884,21 @@ def get_document_extraction(document_id: str, request: Request):
         "kindDecision": json_safe(kind_decision) if kind_decision else None,
         "raw": extraction["raw_json"] if extraction else {},
         "warnings": extraction_guidance(extraction["raw_json"] if extraction else {}, items),
-        "fields": [prediction_dto(row) for row in fields],
+        "fields": field_rows,
         "lineItems": [line_dto(row, corrections=line_corrections) for row in items],
-        "lineCorrections": [{key: str(value) if value is not None else None for key, value in row.items()}
+        "lineCorrections": [{**{key: str(value) if value is not None else None for key, value in row.items()},
+                             'corrected_by_name': names.get(str(row['corrected_by'])) if row.get('corrected_by') else None}
                             for row in line_corrections],
         "currencyReview": currency_review,
     }
+
+def _user_names(db, tenant_id, ids) -> dict:
+    """User id -> name for the people who corrected fields, within this company only."""
+    wanted = sorted({str(value) for value in ids if value is not None})
+    if not wanted:
+        return {}
+    rows = db.execute('SELECT id,name FROM users WHERE tenant_id=%s AND id::text = ANY(%s)', (tenant_id, wanted)).fetchall()
+    return {str(row['id']): row['name'] for row in rows}
 
 def get_document_reviews(document_id: str, request: Request):
     user = _authorised_document(request, document_id)
@@ -910,7 +924,9 @@ def get_document_validation(document_id: str, request: Request):
                 'documentType': e['document_type'], 'result': read_status(e), 'checkStatus': read_status(e),
                 'field': e['field_key'], 'actualValue': e['actual_value'], 'expectedValue': e['expected_value'],
                 'difference': e['difference'], 'preventsApproval': e['prevents_approval'],
-                'requiresReview': e['requires_review'], 'message': e['message'], 'createdAt': str(e['created_at'])}
+                'requiresReview': e['requires_review'], 'message': e['message'], 'createdAt': str(e['created_at']),
+                # A duplicate found names the other document; the review page links to it.
+                **({'duplicate_of': e['expected_value']} if e['rule_id'] == 'EX-007' and e['status'] == 'failed' and e['expected_value'] else {})}
               for e in stored_results]
     if not results:
         results = [{**e, 'rule': e['code'], 'result': 'FAIL' if e.get('severity', 'high') == 'high' else 'WARNING',
