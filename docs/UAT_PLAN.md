@@ -578,6 +578,54 @@ Tester role: ____________________  Order: Tester 1 / 2 / 3 / 4
 - Where the system's effort-study module is used, its results export (`accordai-effort-study.csv`).
 - Final figures: the Evaluation page (SC2 tile), section 4 of this plan, and the technical report.
 
+### 6.6 UAT workload study (what the system records)
+
+This adds the workload figures from section 6 of `docs/COMPETITOR_AND_AI_ROADMAP.md` (backend PR #50) to the
+timed study above. The Workload panel on the Evaluation page (`GET /api/reports/workload`) reads them from records
+the system already keeps. It never estimates a figure: anything without a record shows as "Not measured".
+
+**Material.**
+- Two matched sets of 20 synthetic KNT documents (Set A, Set B): the same mix of invoices, bills, receipts, credit or
+  debit notes and phone photos. Today's KNT pack holds 14 scanned purchase documents, so both 20-document sets still
+  have to be generated before the session (open item).
+- One 30-line KNT bank statement. Time it on the timing sheet. Bank work is not yet counted in the Workload panel.
+
+**Participants.** At least 2 SAIC accountants. The project team does not count. Record participant ids
+(P01, P02, ...), never names, on every sheet and in the effort-study module.
+
+**Design.** Counterbalanced AB/BA, the same rule the effort-study module uses:
+
+| Participant id | First block | Second block |
+|---|---|---|
+| Odd (P01, P03, ...) | Set A, manual | Set B, AccordAI |
+| Even (P02, P04, ...) | Set A, AccordAI | Set B, manual |
+
+"Manual" means typing into AccordAI's typed forms with AI off, on the same screens, so the comparison is fair.
+
+**Recording.**
+- In-app timers and counters only. No screen recording without consent.
+- Run each participant's AccordAI block in a fresh copy of the KNT company, or note the block's start and end dates
+  and use the panel's date filter. The panel groups figures by company and upload date, not by participant.
+- Note the n and document codes per block, plus every failed, abandoned or excluded document with the reason.
+
+**What to read from the Workload panel (AccordAI block).**
+
+| Figure | Definition |
+|---|---|
+| Touches per document | Field edits + line-item changes + type choices + decisions (submit, approve, return, finding accepted, AI suggestion or currency decision). Median, range, n |
+| Corrected fields per document | Distinct fields with a human correction (`corrected_by` set). Median, range, n, and the most-corrected field keys |
+| First-pass exception rate | Documents whose status just before the first human touch was "exception", over documents with a system result. Documents still processing or failed are listed as excluded (supporting evidence for SC4) |
+| Ready without any correction | Approved documents with no field edit, line-item change or type choice, over approved documents |
+| Review time | Active seconds from the optional review opened/closed event. Shows "Not measured" until the review page sends it (follow-up) |
+
+**Reporting.**
+- Report the median and range of each figure, the n, and every exclusion with its reason.
+- Do not extrapolate beyond the tested sets. If a criterion is not met, say so.
+- SC2 (at least 70% less manual entry) is taken only from the effort study (sections 6.2 to 6.4, or the effort-study
+  module). It counts as valid only with at least 2 paired participants covering both orders.
+- The panel shows that result next to the touch figures. Touches have no manual baseline, so they are never turned
+  into a percentage reduction.
+
 ## 7. Defect log
 
 Defect IDs run UAT-001, UAT-002 and so on. Status values: Open, In progress, Fixed, Retest passed, Won't fix, Deferred.
