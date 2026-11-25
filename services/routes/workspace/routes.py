@@ -119,11 +119,58 @@ def list_audit(request: Request):
                 ORDER BY a.created_at DESC LIMIT 500""",
                 {"tenant": user["tenant_id"], "me": user["id"], "resources": resources}).fetchall()
         elif resources:
-            rows = db.execute("SELECT * FROM audit_logs WHERE (%s IS NULL OR tenant_id=%s) AND resource = ANY(%s) ORDER BY created_at DESC LIMIT 500",
+            rows = db.execute("SELECT * FROM audit_logs WHERE (%s::uuid IS NULL OR tenant_id=%s::uuid) AND resource = ANY(%s) ORDER BY created_at DESC LIMIT 500",
                               (scope, scope, resources)).fetchall()
         else:
-            rows = db.execute("SELECT * FROM audit_logs WHERE (%s IS NULL OR tenant_id=%s) ORDER BY created_at DESC LIMIT 500", (scope, scope)).fetchall()
+            rows = db.execute("SELECT * FROM audit_logs WHERE (%s::uuid IS NULL OR tenant_id=%s::uuid) ORDER BY created_at DESC LIMIT 500", (scope, scope)).fetchall()
     return [{"id": str(r["id"]), "tenantId": str(r["tenant_id"]) if r["tenant_id"] else None, "user": r["user_name"], "role": r["role"].upper(), "action": r["action"], "resource": r["resource"], "details": r["details"], "timestamp": str(r["created_at"])} for r in rows]
+
+
+def list_ai_audit(request: Request):
+    """Return safe AI-call metadata only; never expose prompts or extracted text."""
+    user = require_workspace_user(request, {"super_admin", "local_admin"})
+    scope = tenant_scope(user)
+    with connect() as db:
+        rows = db.execute("""
+            SELECT re.id, re.created_at, d.document_code,
+                   re.raw_json->'provenance'->'ai' AS ai
+            FROM raw_extractions re
+            JOIN documents d ON d.id=re.document_id
+            WHERE (%s::uuid IS NULL OR d.tenant_id=%s::uuid)
+              AND re.raw_json ? 'provenance'
+              AND re.raw_json->'provenance' ? 'ai'
+            ORDER BY re.created_at DESC LIMIT 500
+        """, (scope, scope)).fetchall()
+    output = []
+    for row in rows:
+        ai = row["ai"] if isinstance(row["ai"], dict) else {}
+        error = ai.get("error")
+        security = ai.get("security") if isinstance(ai.get("security"), dict) else {}
+        if error:
+            outcome = str(error)
+        elif ai.get("mode") == "off":
+            outcome = "disabled"
+        elif ai.get("output_schema_validated"):
+            outcome = "completed"
+        else:
+            outcome = "review_required"
+        output.append({
+            "id": str(row["id"]),
+            "timestamp": str(row["created_at"]),
+            "documentCode": row["document_code"],
+            "provider": ai.get("provider"),
+            "model": ai.get("model"),
+            "seconds": ai.get("seconds"),
+            "promptTokens": ai.get("prompt_tokens"),
+            "completionTokens": ai.get("completion_tokens"),
+            "outcome": outcome,
+            "imageSent": bool(ai.get("image_sent")),
+            "promptSha256": ai.get("prompt_sha256"),
+            "maskedIdentifiers": ai.get("masked_identifiers") or {},
+            "schemaValid": bool(ai.get("output_schema_validated")),
+            "injectionDetected": bool(security.get("prompt_injection_detected")),
+        })
+    return output
 
 def get_workspace_settings(request: Request):
     user = require_workspace_user(request)
@@ -198,6 +245,30 @@ def create_supplier(data: NamedInput, request: Request):
         _create_contact_guard(db, user, 'vendors', 'vendor_name', data.name, 'contact.supplier_created')
         row = db.execute("INSERT INTO vendors(tenant_id,vendor_name) VALUES (%s,%s) RETURNING *", (user["tenant_id"], data.name.strip())).fetchone()
     return {"id": str(row["id"]), "name": row["vendor_name"]}
+
+def list_supplier_memory(request: Request):
+    user = require_workspace_user(request, {"local_admin", "accountant"})
+    with connect() as db:
+        rows = db.execute("""SELECT m.id,m.observed_name,m.vendor_id,v.vendor_name,m.approved_count,
+                m.status,m.source_document_id,m.last_approved_at
+            FROM ai_supplier_memory m JOIN vendors v ON v.id=m.vendor_id AND v.tenant_id=m.tenant_id
+            WHERE m.tenant_id=%s ORDER BY m.last_approved_at DESC""", (user['tenant_id'],)).fetchall()
+    return [{"id": str(r['id']), "observedName": r['observed_name'], "vendorId": str(r['vendor_id']),
+             "vendorName": r['vendor_name'], "approvedCount": r['approved_count'], "status": r['status'],
+             "sourceDocumentId": str(r['source_document_id']) if r['source_document_id'] else None,
+             "lastApprovedAt": str(r['last_approved_at'])} for r in rows]
+
+def revoke_supplier_memory(memory_id: str, request: Request):
+    user = require_workspace_user(request, {"local_admin"})
+    with connect() as db:
+        row = db.execute("""UPDATE ai_supplier_memory SET status='revoked'
+            WHERE id=%s AND tenant_id=%s RETURNING id""", (memory_id, user['tenant_id'])).fetchone()
+        if not row:
+            raise HTTPException(404, "Supplier memory rule not found.")
+        db.execute("""INSERT INTO audit_logs(tenant_id,user_id,user_name,role,action,resource,details)
+            VALUES (%s,%s,%s,%s,'ai.supplier_memory_revoked',%s,'Supplier memory rule revoked.')""",
+            (user['tenant_id'], user['id'], user.get('name', 'Workspace user'), user['role'], str(memory_id)))
+    return {"id": str(row['id']), "status": "revoked"}
 
 def list_document_tags(request: Request):
     user = require_workspace_user(request)
@@ -292,6 +363,7 @@ def list_custom_fields(request: Request):
 def register(router, handlers):
     router.add_api_route('/api/workspace/navigation', workspace_navigation, methods=['GET'])
     router.add_api_route('/api/audit', list_audit, methods=['GET'])
+    router.add_api_route('/api/ai-audit', list_ai_audit, methods=['GET'])
     router.add_api_route('/api/settings', get_workspace_settings, methods=['GET'])
     router.add_api_route('/api/settings', save_workspace_settings, methods=['PUT'])
     router.add_api_route('/api/settings/company-profile', company_profile, methods=['GET'])
@@ -299,6 +371,8 @@ def register(router, handlers):
     router.add_api_route('/api/health', health, methods=['GET'])
     router.add_api_route('/api/suppliers', list_suppliers, methods=['GET'])
     router.add_api_route('/api/suppliers', create_supplier, methods=['POST'], status_code=201)
+    router.add_api_route('/api/supplier-memory', list_supplier_memory, methods=['GET'])
+    router.add_api_route('/api/supplier-memory/{memory_id}', revoke_supplier_memory, methods=['DELETE'])
     router.add_api_route('/api/document-tags', list_document_tags, methods=['GET'])
     router.add_api_route('/api/document-tags', create_document_tag, methods=['POST'], status_code=201)
     router.add_api_route('/api/document-tags/{tag_id}', delete_document_tag, methods=['DELETE'])

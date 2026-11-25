@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import time
+from datetime import date
 from copy import deepcopy
 from pathlib import Path
 from uuid import uuid4
@@ -26,6 +27,27 @@ VERSION = 'lite-extraction/0.1'
 STRUCTURAL_CODES = {'UNSUPPORTED_EXTRACTION_FORMAT', 'SOURCE_SIZE_LIMIT', 'SOURCE_FORMAT_MISMATCH',
                     'IMAGE_PIXEL_LIMIT', 'INVALID_OR_UNSAFE_IMAGE', 'INVALID_OR_UNREADABLE_PDF',
                     'OCR_NO_TEXT', 'OCR_RESULT_LIMIT'}
+
+
+def _enforce_ai_daily_limit(tenant_id):
+    """Reserve one AI attempt for this tenant/day when the feature is enabled."""
+    if not tenant_id:
+        return
+    try:
+        maximum = int(os.getenv('AI_DAILY_LIMIT', '500'))
+    except ValueError:
+        raise text_llm.TextModelError('AI_DAILY_LIMIT_INVALID') from None
+    if maximum <= 0:
+        return
+    from main import rate_limit
+    try:
+        rate_limit(f'ai-daily:{tenant_id}:{date.today().isoformat()}', maximum, 86_400,
+                   message='Daily AI processing limit reached. Try again tomorrow.',
+                   code='AI_DAILY_LIMIT_REACHED')
+    except Exception as error:
+        if getattr(error, 'status_code', None) == 429:
+            raise text_llm.TextModelError('AI_DAILY_LIMIT_REACHED') from None
+        raise
 
 
 def _write(path, data):
@@ -109,7 +131,7 @@ def _public_result(document_id, run_name, document, *, classification, fields, l
             'routing': {'decision': routing}, 'provenance': provenance}
 
 
-def execute_lite_extraction(document_id, file_path, project_root=None, *, providers=None):
+def execute_lite_extraction(document_id, file_path, project_root=None, *, providers=None, tenant_id=None):
     """Extract one resolver-authorised document. Never raises; returns execution metadata."""
     base = {'document_id': document_id, 'public_result_path': None, 'service_run_id': None,
             'review_required': True, 'accounting_approval_performed': False}
@@ -140,6 +162,7 @@ def execute_lite_extraction(document_id, file_path, project_root=None, *, provid
         if mode == 'text':
             from services.extraction.lite.structure import structure_document
             try:
+                _enforce_ai_daily_limit(tenant_id)
                 structured = structure_document(document, providers=providers)
                 ai_record = structured['ai']
             except text_llm.TextModelError as error:
@@ -147,8 +170,13 @@ def execute_lite_extraction(document_id, file_path, project_root=None, *, provid
                 logger.warning('Text model unavailable for %s: %s', document_id, error.code)
                 ai_record = {'mode': 'text', 'image_sent': False, 'error': error.code,
                              'failed': list(getattr(error, 'failures', []))}
-                issues.append({'code': 'AI_UNAVAILABLE',
-                               'detail': 'The text model could not be used (' + error.code + '). Review this document manually.'})
+                issue_code = error.code if error.code in {'AI_SCHEMA_INVALID', 'AI_DAILY_LIMIT_REACHED'} else 'AI_UNAVAILABLE'
+                issues.append({'code': issue_code,
+                               'detail': ('The AI response did not pass the schema and was discarded.'
+                                          if issue_code == 'AI_SCHEMA_INVALID' else
+                                          'Daily AI processing is temporarily unavailable; review this document manually.'
+                                          if issue_code == 'AI_DAILY_LIMIT_REACHED' else
+                                          'The text model could not be used (' + error.code + '). Review this document manually.')})
 
         prefill = False
         rule_provenance = None

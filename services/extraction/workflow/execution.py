@@ -182,6 +182,7 @@ def execute_document_extraction(
     allow_vlm_inference: bool = False,
     models_dir: Optional[Path] = None,
     source_access_authorized: bool = False,
+    tenant_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Execute extraction and strict public-result publication for one trusted document.
 
@@ -223,7 +224,7 @@ def execute_document_extraction(
         if extraction_engine() == 'lite':
             if path.suffix.lower() in {'.pdf', '.jpg', '.jpeg', '.png', '.tif', '.tiff'}:
                 from services.extraction.lite.pipeline import execute_lite_extraction
-                return execute_lite_extraction(document_id, path, project_root)
+                return execute_lite_extraction(document_id, path, project_root, tenant_id=tenant_id)
             # Spreadsheets (.xlsx/.csv) are accepted for storage but have no extractor
             # in the lite engine: fail visibly and terminally, never via the Docling path.
             return {

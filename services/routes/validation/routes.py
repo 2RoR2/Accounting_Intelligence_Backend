@@ -19,7 +19,7 @@ def list_exceptions(request: Request):
         # Plan M: documents the tidy-up excluded (own-sales captures, duplicates) raise no exceptions in lists or counts.
         # A document's own exceptions (documentId) stay readable.
         included_filter = "" if document_filter else " AND EXISTS (SELECT 1 FROM documents x WHERE x.id=exceptions.document_id AND x.excluded_at IS NULL)"
-        rows = db.execute(f"SELECT * FROM exceptions WHERE (%s IS NULL OR tenant_id=%s){owner_filter}{document_filter}{included_filter} ORDER BY created_at DESC", params).fetchall()
+        rows = db.execute(f"SELECT * FROM exceptions WHERE (%s::uuid IS NULL OR tenant_id=%s::uuid){owner_filter}{document_filter}{included_filter} ORDER BY created_at DESC", params).fetchall()
     return [{"id": str(r["id"]), "documentId": str(r["document_id"]), "tenantId": str(r["tenant_id"]), "type": r["type"], "severity": r["severity"].upper(), "assignedTo": str(r["assigned_to"]) if r["assigned_to"] else None, "status": r["status"].upper(), "message": r["message"], "note": r["note"] or "", "createdAt": str(r["created_at"]), "resolvedAt": str(r["resolved_at"] or "")} for r in rows]
 
 def get_validation_rules(request: Request):

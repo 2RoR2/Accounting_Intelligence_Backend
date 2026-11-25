@@ -76,6 +76,24 @@ def apply_compatibility_migrations():
     """Apply additive compatibility changes for existing development databases."""
     with connect() as db:
         db.execute("ALTER TABLE review_submissions ADD COLUMN IF NOT EXISTS content_revision INTEGER NOT NULL DEFAULT 1")
+        # Additive AI-security storage for databases created before the
+        # migration runner was introduced. This table never gates extraction;
+        # it only stores approved supplier-learning hints.
+        db.execute("""CREATE TABLE IF NOT EXISTS ai_supplier_memory (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+            observed_name TEXT NOT NULL,
+            normalized_name TEXT NOT NULL,
+            vendor_id UUID NOT NULL REFERENCES vendors(id) ON DELETE CASCADE,
+            approved_count INTEGER NOT NULL DEFAULT 1 CHECK (approved_count > 0),
+            status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','revoked')),
+            source_document_id UUID REFERENCES documents(id) ON DELETE SET NULL,
+            last_approved_by UUID REFERENCES users(id) ON DELETE SET NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            last_approved_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            UNIQUE (tenant_id, normalized_name)
+        )""")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_ai_supplier_memory_vendor ON ai_supplier_memory (tenant_id, vendor_id, status)")
         # Seed data is inserted with explicit document codes, so older
         # databases can have sequences behind the highest existing code.
         # Align each sequence before accepting new uploads to avoid a unique
@@ -158,8 +176,8 @@ app.add_middleware(
     allow_origins=_frontend_origins,
     allow_origin_regex=None if is_production() else r"^https?://(localhost|127\.0\.0\.1|0\.0\.0\.0|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+):(3000|3001|3002)$",
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Accept", "Content-Type", "Origin", "X-Requested-With"],
 )
 SESSION = "ai_session"
 ACCESS = "ai_access"
@@ -186,24 +204,18 @@ def utcnow():
 
 def validate_uploaded_bytes(filename: str, data: bytes):
     """Reject unsupported or obviously corrupt uploads before they enter storage/queues."""
-    suffix = Path(filename or "").suffix.lower()
-    accepted = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".xlsx", ".csv"}
-    if suffix not in accepted:
-        raise HTTPException(422, "Unsupported file type. Accepted formats: PDF, PNG, JPG, TIFF, XLSX, or CSV.")
-    if not data:
-        raise HTTPException(422, "The uploaded file is empty.")
-    signatures = {
-        ".pdf": data.startswith(b"%PDF-"),
-        ".png": data.startswith(b"\x89PNG\r\n\x1a\n"),
-        ".jpg": data.startswith(b"\xff\xd8\xff"),
-        ".jpeg": data.startswith(b"\xff\xd8\xff"),
-        ".tif": data.startswith((b"II*\x00", b"MM\x00*")),
-        ".tiff": data.startswith((b"II*\x00", b"MM\x00*")),
-        ".xlsx": data.startswith(b"PK\x03\x04"),
-        ".csv": True,
-    }
-    if not signatures[suffix]:
-        raise HTTPException(422, "The document could not be opened. Replace it with a valid, readable file.")
+    from security.upload_guard import UploadSecurityError, validate_upload_payload
+    try:
+        validate_upload_payload(filename, data)
+    except UploadSecurityError as exc:
+        messages = {
+            "UPLOAD_FILE_TYPE_UNSUPPORTED": "Unsupported file type. Accepted formats: PDF, PNG, JPG, TIFF, XLSX, or CSV.",
+            "UPLOAD_SIGNATURE_INVALID": "The document could not be opened. Replace it with a valid, readable file.",
+            "UPLOAD_FILE_SIGNATURE_INVALID": "The document could not be opened. Replace it with a valid, readable file.",
+            "UPLOAD_MALWARE_DETECTED": "The uploaded file failed the malware scan.",
+            "UPLOAD_ARCHIVE_PATH_INVALID": "The spreadsheet contains an unsafe archive path.",
+        }
+        raise HTTPException(422, messages.get(exc.code, "The document failed security validation.")) from exc
 
 
 def secret():
@@ -231,6 +243,12 @@ async def protect_requests(request: Request, call_next):
             return JSONResponse({"detail": "Request origin is not allowed."}, status_code=403)
     response = await call_next(request)
     response.headers["Cache-Control"] = "no-store"
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    if is_production():
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
     return response
 
 
@@ -242,7 +260,7 @@ async def unexpected_error(_request: Request, exc: Exception):
     return JSONResponse({"detail": "Account service is unavailable. Check the backend configuration."}, status_code=503)
 
 
-def rate_limit(key: str, maximum: int, seconds: int):
+def rate_limit(key: str, maximum: int, seconds: int, *, message: str | None = None, code: str | None = None):
     # A separate transaction ensures failures cannot roll back the attempt counter.
     with connect() as db:
         row = db.execute("""INSERT INTO auth_rate_limits(key) VALUES (%s)
@@ -253,7 +271,10 @@ def rate_limit(key: str, maximum: int, seconds: int):
                                   THEN now() ELSE auth_rate_limits.window_start END
             RETURNING hits""", (digest(key), seconds, seconds)).fetchone()
     if row["hits"] > maximum:
-        raise HTTPException(429, "Too many attempts. Please wait and try again.")
+        detail = message or "Too many attempts. Please wait and try again."
+        if code:
+            detail = {"code": code, "message": detail}
+        raise HTTPException(429, detail)
 
 
 def issue_session(db, user):

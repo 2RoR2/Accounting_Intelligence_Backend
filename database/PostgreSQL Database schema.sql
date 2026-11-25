@@ -1439,6 +1439,24 @@ CREATE INDEX IF NOT EXISTS idx_backup_runs_status ON backup_runs(status, created
 CREATE INDEX IF NOT EXISTS idx_workload_tenant_assignee ON workload_assignments(tenant_id, assigned_to, completed_at);
 CREATE INDEX IF NOT EXISTS idx_document_status_history_document ON document_status_history(document_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_supplier_matches_document ON supplier_matches(document_id, decision);
+
+-- AI supplier memory: only human-approved corrections may create or update a rule.
+CREATE TABLE IF NOT EXISTS ai_supplier_memory (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    observed_name TEXT NOT NULL,
+    normalized_name TEXT NOT NULL,
+    vendor_id UUID NOT NULL REFERENCES vendors(id) ON DELETE CASCADE,
+    approved_count INTEGER NOT NULL DEFAULT 1 CHECK (approved_count > 0),
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','revoked')),
+    source_document_id UUID REFERENCES documents(id) ON DELETE SET NULL,
+    last_approved_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_approved_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (tenant_id, normalized_name)
+);
+CREATE INDEX IF NOT EXISTS idx_ai_supplier_memory_vendor
+    ON ai_supplier_memory (tenant_id, vendor_id, status);
 CREATE INDEX IF NOT EXISTS idx_customer_matches_document ON customer_matches(document_id, decision);
 CREATE INDEX IF NOT EXISTS idx_customers_tenant ON customers(tenant_id, customer_name);
 CREATE INDEX IF NOT EXISTS idx_line_item_corrections_item ON line_item_corrections(line_item_id, corrected_at);

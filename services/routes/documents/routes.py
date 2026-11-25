@@ -209,7 +209,7 @@ def list_documents(
     from services.routes.home.lanes import DOCUMENT_LANES
     if lane is not None and lane not in DOCUMENT_LANES:
         raise HTTPException(422, "Unknown document list: " + ", ".join(sorted(DOCUMENT_LANES)) + " are supported.")
-    clauses = ["(%s IS NULL OR d.tenant_id=%s)", "d.excluded_at IS NULL"]  # Plan M B1: excluded own-sales captures
+    clauses = ["(%s::uuid IS NULL OR d.tenant_id=%s::uuid)", "d.excluded_at IS NULL"]  # Plan M B1: excluded own-sales captures
     params: list[object] = [scope, scope]
     if user["role"] == "accountant":
         clauses.append("(d.owner_id=%s OR d.assigned_to=%s OR EXISTS (SELECT 1 FROM benchmark_demo_documents bd JOIN benchmark_demo_tenants bt ON bt.tenant_id=bd.tenant_id AND bt.enabled=true WHERE bd.tenant_id=d.tenant_id AND bd.document_id=d.id))")
@@ -377,7 +377,7 @@ def get_document_detail(document_id: str, request: Request):
         if user["role"] == "accountant":
             params.extend([user["id"], user["id"]])
         # The access check stays the last and only query that decides visibility.
-        r = db.execute(f"SELECT * FROM documents WHERE id=%s AND (%s IS NULL OR tenant_id=%s){visibility}", params).fetchone()
+        r = db.execute(f"SELECT * FROM documents WHERE id=%s AND (%s::uuid IS NULL OR tenant_id=%s::uuid){visibility}", params).fetchone()
     if not r:
         raise HTTPException(404, "Document not found.")
     return {"id": str(r["id"]), "code": r["document_code"], "displayName": r["original_filename"], **readable, "name": r["original_filename"], "tenantId": str(r["tenant_id"]), "ownerId": str(r["owner_id"]), "assignedTo": str(r["assigned_to"]) if r["assigned_to"] else None, **read_kind(r), "category": r["category"].upper(), "status": r["status"].upper(), "mimeType": r["mime_type"], "fileSize": r["file_size_bytes"], "contentRevision": r["content_revision"], "createdAt": str(r["uploaded_at"]), "updatedAt": str(r["updated_at"]),
@@ -421,7 +421,7 @@ def get_document_file(document_id: str, request: Request):
         params = [document_id, tenant_scope(user), tenant_scope(user)]
         if user["role"] == "accountant":
             params.extend([user["id"], user["id"]])
-        row = db.execute(f"SELECT storage_path, original_filename FROM documents WHERE id=%s AND (%s IS NULL OR tenant_id=%s){visibility}", params).fetchone()
+        row = db.execute(f"SELECT storage_path, original_filename FROM documents WHERE id=%s AND (%s::uuid IS NULL OR tenant_id=%s::uuid){visibility}", params).fetchone()
     if not row:
         raise HTTPException(404, "Document not found.")
     temporary = None
@@ -593,7 +593,7 @@ def list_records(request: Request, category: str | None = None, due: str | None 
         raise HTTPException(422, "posting=to-post is the only supported posting list.")
     with connect() as db:
         if due or posting:
-            clauses, params = ["(%s IS NULL OR r.tenant_id=%s)"], [scope, scope]
+            clauses, params = ["(%s::uuid IS NULL OR r.tenant_id=%s::uuid)"], [scope, scope]
             if due:
                 base, base_params = open_item_base(category.lower())
                 window, window_params = due_window(due, asOf or company_today(db, user["tenant_id"]))
@@ -605,7 +605,7 @@ def list_records(request: Request, category: str | None = None, due: str | None 
                 JOIN documents d ON d.id=r.document_id AND d.tenant_id=r.tenant_id AND d.excluded_at IS NULL
                 WHERE {' AND '.join(clauses)} ORDER BY r.created_at DESC""", params).fetchall()
         else:
-            rows = db.execute(f"""SELECT r.* FROM standardised_records r WHERE (%s IS NULL OR r.tenant_id=%s)
+            rows = db.execute(f"""SELECT r.* FROM standardised_records r WHERE (%s::uuid IS NULL OR r.tenant_id=%s::uuid)
                 AND {record_not_set_aside('r')} ORDER BY r.created_at DESC""", (scope, scope)).fetchall()
         output = []
         for r in rows:
@@ -641,14 +641,14 @@ def list_records(request: Request, category: str | None = None, due: str | None 
 def record_metadata(request: Request, tenant_id: str | None = None):
     require_workspace_user(request, {"super_admin"})
     with connect() as db:
-        rows = db.execute("SELECT * FROM standardised_records WHERE (%s IS NULL OR tenant_id=%s) ORDER BY created_at DESC", (tenant_id, tenant_id)).fetchall()
+        rows = db.execute("SELECT * FROM standardised_records WHERE (%s::uuid IS NULL OR tenant_id=%s::uuid) ORDER BY created_at DESC", (tenant_id, tenant_id)).fetchall()
     return [{"id": str(r["id"]), "documentId": str(r["document_id"]), "tenantId": str(r["tenant_id"]), "createdAt": str(r["created_at"]), "category": r["category"].upper(), "validation": r["validation_status"].upper(), "status": "COMPLETED"} for r in rows]
 
 def get_record(record_id: str, request: Request):
     user = require_workspace_user(request, {"super_admin", "local_admin", "accountant"})
     scope = tenant_scope(user)
     with connect() as db:
-        row = db.execute("SELECT * FROM standardised_records WHERE (record_code=%s OR id::text=%s) AND (%s IS NULL OR tenant_id=%s)", (record_id, record_id, scope, scope)).fetchone()
+        row = db.execute("SELECT * FROM standardised_records WHERE (record_code=%s OR id::text=%s) AND (%s::uuid IS NULL OR tenant_id=%s::uuid)", (record_id, record_id, scope, scope)).fetchone()
     if not row:
         raise HTTPException(404, "Standardised record not found.")
     with connect() as db:
@@ -675,7 +675,7 @@ def get_record_amendments(record_id: str, request: Request):
     with connect() as db:
         rows = db.execute("""SELECT a.* FROM record_amendments a
             JOIN standardised_records r ON r.id=a.original_record_id
-            WHERE (a.original_record_id=%s OR r.record_code=%s) AND (%s IS NULL OR a.tenant_id=%s)
+            WHERE (a.original_record_id=%s OR r.record_code=%s) AND (%s::uuid IS NULL OR a.tenant_id=%s::uuid)
             ORDER BY a.created_at DESC""", (record_id, record_id, scope, scope)).fetchall()
     return [{"id": str(r["id"]), "recordId": str(r["original_record_id"]), "replacementRecordId": str(r["replacement_record_id"]) if r["replacement_record_id"] else None, "status": r["status"].upper(), "reason": r["reason"], "createdAt": str(r["created_at"]), "approvedAt": str(r["approved_at"]) if r["approved_at"] else None} for r in rows]
 
@@ -690,6 +690,14 @@ def support_view(record_id: str, data: CompanyReviewInput, request: Request):
 
 async def upload_document(request: Request, file: UploadFile = File(...), kind: str = "invoice", category: str = "accounts_payable"):
     user = require_workspace_user(request, {"local_admin", "accountant"})
+    try:
+        upload_limit = int(os.getenv('UPLOAD_RATE_LIMIT', '60'))
+    except ValueError:
+        raise HTTPException(503, 'Upload rate limiting is misconfigured.') from None
+    if upload_limit > 0:
+        rate_limit(f"upload:{user['id']}", upload_limit, 600,
+                   message='Upload limit reached. Try again in a few minutes.',
+                   code='UPLOAD_RATE_LIMITED')
     from services.extraction.persistence.auto_kind import AUTO_KIND, PLACEHOLDER_KIND, pending_document_code
     if kind not in {"invoice", "bill", "receipt", "credit_note", "debit_note", AUTO_KIND} or category not in {"accounts_payable", "accounts_receivable"}:
         raise HTTPException(422, "Invalid document kind or category.")
@@ -852,9 +860,13 @@ def standardise_document(document_id: str, request: Request):
             raise HTTPException(422, "Blocking exceptions must be resolved before standardising this document.")
         vendor_id, vendor_confidence = None, None
         if values.get('supplier'):
+            from security.supplier_memory import lookup as lookup_supplier_memory
             vendors = db.execute("SELECT id,vendor_name FROM vendors WHERE tenant_id=%s ORDER BY id",
                                  (user["tenant_id"],)).fetchall()
-            matched_vendor = find_vendor_match(values['supplier'], vendors) if vendors else None
+            remembered = lookup_supplier_memory(db, user['tenant_id'], values['supplier'])
+            matched_vendor = ({'status': 'ACCEPT', 'vendor_id': remembered['vendor_id'],
+                               'confidence': 1.0} if remembered else
+                              (find_vendor_match(values['supplier'], vendors) if vendors else None))
             if matched_vendor and matched_vendor['status'] == 'ACCEPT':
                 vendor_id, vendor_confidence = matched_vendor['vendor_id'], matched_vendor['confidence']
         row = db.execute("""INSERT INTO standardised_records(document_id,tenant_id,category,vendor_id,vendor_match_confidence,supplier_name,invoice_number,reference_number,buyer_name,invoice_date,due_date,currency,total_amount,subtotal,tax_amount,discount,validation_status,snapshot,created_by)
@@ -866,6 +878,18 @@ def standardise_document(document_id: str, request: Request):
         db.execute("SELECT set_config('app.user_id',%s,true), set_config('app.status_reason',%s,true)", (str(user['id']), 'Approved revision standardised'))
         db.execute("UPDATE documents SET status='completed', updated_at=now() WHERE id=%s", (document_id,))
         _document_action(db, user, document_id, 'document.standardised', {'record_id': str(row['id']), 'content_revision': doc['content_revision']})
+        # Only a corrected supplier value that has just passed the human
+        # standardisation gate can update supplier memory. Raw AI predictions
+        # are never written as learning data.
+        supplier_field = next((field for field in fields if field['field_key'] == 'supplier'), None)
+        if supplier_field and supplier_field.get('corrected_by') and vendor_id:
+            from security.supplier_memory import learn_from_approval
+            memory = learn_from_approval(db, tenant_id=user['tenant_id'], observed_name=values.get('supplier'),
+                                         vendor_id=vendor_id, document_id=document_id, approved_by=user['id'])
+            if memory:
+                _document_action(db, user, document_id, 'ai.supplier_memory_learned',
+                                 {'memory_id': str(memory['id']), 'vendor_id': str(vendor_id),
+                                  'approved_count': memory['approved_count'], 'source': 'human_correction'})
     return {"id": str(row["id"]), "documentId": str(row["document_id"]), "tenantId": str(row["tenant_id"]), "category": row["category"].upper(), "validation": row["validation_status"].upper(), "status": "COMPLETED", "createdAt": str(row["created_at"])}
 
 def get_document_extraction(document_id: str, request: Request):

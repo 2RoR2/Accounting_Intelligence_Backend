@@ -50,6 +50,7 @@ SERVER_ERROR_STATUS = {500, 502, 503, 504}
 UNREADABLE_ANSWER_ERRORS = {'AI_RESPONSE_NOT_JSON', 'AI_RESPONSE_MALFORMED'}
 RETRYABLE_STATUS = {429} | SERVER_ERROR_STATUS
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
+MAX_REQUEST_BYTES = 512 * 1024
 PRESETS = {
     'gemini': {'base': 'https://generativelanguage.googleapis.com/v1beta/openai',
                'model': 'gemini-3.5-flash-lite', 'keys': ('GEMINI_API_KEY', 'GOOGLE_API_KEY'),
@@ -190,6 +191,8 @@ class TextModelProvider:
         if self.response_format == 'json_object':
             body.setdefault('response_format', {'type': 'json_object'})
         data = json.dumps(body, ensure_ascii=False).encode('utf-8')
+        if len(data) > MAX_REQUEST_BYTES:
+            raise TextModelError('AI_REQUEST_TOO_LARGE')
         headers = {'Content-Type': 'application/json', 'Accept': 'application/json',
                    'User-Agent': 'accounting-extraction/1'}
         if self._api_key:

@@ -108,7 +108,7 @@ def list_account_limit_requests(request: Request):
     user = require_workspace_user(request, {"super_admin", "local_admin"})
     scope = tenant_scope(user)
     with connect() as db:
-        rows = db.execute("SELECT * FROM account_limit_requests WHERE (%s IS NULL OR tenant_id=%s) ORDER BY created_at DESC", (scope, scope)).fetchall()
+        rows = db.execute("SELECT * FROM account_limit_requests WHERE (%s::uuid IS NULL OR tenant_id=%s::uuid) ORDER BY created_at DESC", (scope, scope)).fetchall()
     return [{"id": str(r["id"]), "tenantId": str(r["tenant_id"]), "current": r["current_limit"], "requested": r["requested_limit"], "reason": r["reason"], "status": r["status"].upper()} for r in rows]
 
 def create_account_limit_request(data: LimitRequestInput, request: Request):
@@ -135,7 +135,7 @@ def list_users(request: Request, tenant_id: str | None = None):
     user = require_workspace_user(request, {"super_admin", "local_admin", "accountant"})
     scope = tenant_id if user["role"] == "super_admin" and tenant_id else tenant_scope(user)
     with connect() as db:
-        rows = db.execute("SELECT * FROM users WHERE (%s IS NULL OR tenant_id=%s) ORDER BY name", (scope, scope)).fetchall()
+        rows = db.execute("SELECT * FROM users WHERE (%s::uuid IS NULL OR tenant_id=%s::uuid) ORDER BY name", (scope, scope)).fetchall()
     return [api_user(r) for r in rows]
 
 def invite_user(data: InviteInput, request: Request):

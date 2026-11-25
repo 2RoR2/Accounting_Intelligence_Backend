@@ -206,6 +206,15 @@ async def add_file(document_type: str, document_id: str, request: Request, file:
         raise HTTPException(422, "Unsupported file type. Attach a PDF, PNG, JPEG or WebP file, or paste a link.")
     if not is_complete(data, media_type):
         raise HTTPException(422, "This file is incomplete or damaged and cannot be opened. Attach the full file again.")
+    # Attachments are another document ingress path. Reuse the optional
+    # ClamAV boundary so malware scanning cannot be bypassed by uploading to a
+    # typed ERP record instead of the main Inbox.
+    try:
+        from security.upload_guard import UploadSecurityError, scan_for_malware
+        scan_for_malware(data)
+    except UploadSecurityError as exc:
+        message = "The attached file failed the malware scan." if exc.code == "UPLOAD_MALWARE_DETECTED" else "The attachment could not be security-scanned."
+        raise HTTPException(422, message) from exc
     name = clean_name(file.filename, "attachment")
     attachment_id = uuid.uuid4()
     stored, s3_uri, local_file = _store(user, doc["id"], attachment_id, name, data, media_type)

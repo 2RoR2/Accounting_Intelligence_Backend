@@ -33,6 +33,21 @@ This repository contains the FastAPI backend. The companion frontend is in `../A
 
 The workflow is human-in-the-loop. AI candidates are never automatically treated as approved accounting records.
 
+## AI cybersecurity controls
+
+The AI boundary is defensive by default:
+
+- Uploaded document text is untrusted data. Prompt-injection signals are detected, the text is delimited in the model prompt, and suspicious documents cannot prefill accounting values.
+- Hosted text-model requests contain masked OCR text only; images are not sent by the lite text path. Provider endpoints are allowlisted, redirects are disabled, request/response sizes are bounded, and API keys are never logged.
+- Model output is validated against an allowlisted accounting contract before any resolver sees it. Unknown fields, command-like output, oversized values, and malformed line items are rejected.
+- Values must be found in local OCR evidence and are normalised locally. Confidence is deterministic and evidence-based; totals, tax, dates and currency remain subject to accounting validation.
+- Supplier memory is tenant-scoped and learns only from a human-corrected value after standardisation. Rules can be listed and revoked; raw AI predictions never train memory.
+- AI metadata records provider, model, prompt hash, response hash, schema-validation status, masking counts, security findings and human-approval requirements without storing the raw prompt in logs.
+- Uploads have bounded reads, signature checks, image limits, spreadsheet archive traversal/expansion checks and an optional ClamAV fail-closed mode (`UPLOAD_MALWARE_SCAN=required`).
+- API and frontend responses add clickjacking, MIME-sniffing, referrer, permissions and transport protections. CORS methods and headers are explicit.
+
+Production deployment must provide a real secrets manager, encrypted object storage/backups, shared rate-limit storage, ClamAV or an equivalent malware scanner, TLS, and an operational alerting/retention policy. See OWASP Top 10 for LLM Applications and the NIST AI Risk Management Framework for the review checklist. The system still requires authorised human approval before standardisation, posting, reconciliation or export.
+
 ## Lightweight deployment (default)
 
 The default runtime is one FastAPI process with PostgreSQL. No Redis, no separate worker, no Docling or PyTorch, no GPU. The plan, task list and status live in [docs/MASTER_PLAN.md](docs/MASTER_PLAN.md). Step-by-step laptop setup: [docs/LOCALHOST.md](docs/LOCALHOST.md). What changes for teammates who pull this: [docs/UPGRADE_PHASE0.md](docs/UPGRADE_PHASE0.md). Tuning history: [docs/ACCURACY_LOG.md](docs/ACCURACY_LOG.md).

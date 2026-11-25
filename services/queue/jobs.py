@@ -235,6 +235,7 @@ def _execute_claimed(document_id: str, claim) -> Dict[str, Any]:
             parser=_TEST_PARSER,
             allow_vlm_inference=qwen_recovery,
             source_access_authorized=qwen_recovery,
+            tenant_id=str(claim.delivery.tenant_id),
         )
 
         if result.get("execution_status") != "EXTRACTED":

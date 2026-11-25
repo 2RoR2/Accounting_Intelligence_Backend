@@ -419,7 +419,7 @@ def list_bank_imports(request: Request):
     with connect() as db:
         rows = db.execute("""SELECT i.*, count(t.id) AS transaction_count
             FROM bank_imports i LEFT JOIN bank_transactions t ON t.import_id=i.id
-            WHERE (%s IS NULL OR i.tenant_id=%s)
+            WHERE (%s::uuid IS NULL OR i.tenant_id=%s::uuid)
             GROUP BY i.id ORDER BY i.imported_at DESC""", (tenant_scope(user), tenant_scope(user))).fetchall()
     return [{"id": str(r["id"]), "sourceBankAccountRef": r["source_bank_account_ref"],
              "sourceHash": r["source_hash"], "mappingVersion": r["mapping_version"],

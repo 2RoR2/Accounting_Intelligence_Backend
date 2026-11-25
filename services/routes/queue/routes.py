@@ -6,7 +6,7 @@ def list_processing_jobs(request: Request):
     user = require_workspace_user(request)
     scope = tenant_scope(user)
     with connect() as db:
-        rows = db.execute("SELECT * FROM pending_jobs WHERE (%s IS NULL OR tenant_id=%s) ORDER BY created_at DESC", (scope, scope)).fetchall()
+        rows = db.execute("SELECT * FROM pending_jobs WHERE (%s::uuid IS NULL OR tenant_id=%s::uuid) ORDER BY created_at DESC", (scope, scope)).fetchall()
     return [{"id": str(r["id"]), "documentId": str(r["document_id"]), "tenantId": str(r["tenant_id"]), "status": r["status"].upper(), "attempts": r["attempt_count"], "createdAt": str(r["created_at"]), "completedAt": str(r["finished_at"] or "")} for r in rows]
 
 def get_processing_job(job_id: str, request: Request):
@@ -27,7 +27,7 @@ def processing_health(request: Request):
         state = inline.status()
         with connect() as db:
             scope = tenant_scope(user)
-            pending = db.execute("SELECT count(*) AS n FROM pending_jobs WHERE status IN ('pending','processing') AND (%s IS NULL OR tenant_id=%s)", (scope, scope)).fetchone()["n"]
+            pending = db.execute("SELECT count(*) AS n FROM pending_jobs WHERE status IN ('pending','processing') AND (%s::uuid IS NULL OR tenant_id=%s::uuid)", (scope, scope)).fetchone()["n"]
         return {"status": "healthy" if state["supervisor"] else "degraded", "worker": state["supervisor"],
                 "redis": "not_used", "queueBackend": "inline", "workers": state["workers"],
                 "busyWorkers": state["busy"], "pendingJobs": int(pending)}
@@ -48,7 +48,7 @@ def processing_health(request: Request):
         pass
     with connect() as db:
         scope = tenant_scope(user)
-        pending = db.execute("SELECT count(*) AS n FROM pending_jobs WHERE status IN ('pending','processing') AND (%s IS NULL OR tenant_id=%s)", (scope, scope)).fetchone()["n"]
+        pending = db.execute("SELECT count(*) AS n FROM pending_jobs WHERE status IN ('pending','processing') AND (%s::uuid IS NULL OR tenant_id=%s::uuid)", (scope, scope)).fetchone()["n"]
     return {"status": "healthy" if redis_status == "healthy" and worker_online else "degraded", "worker": worker_online, "redis": redis_status, "pendingJobs": int(pending)}
 
 def processing_workers(request: Request):
@@ -65,14 +65,14 @@ def processing_metrics(request: Request):
             count(*) FILTER (WHERE j.status='failed') AS failed,
             coalesce(avg(d.processing_seconds) FILTER (WHERE j.status IN ('succeeded','failed')),0) AS average_seconds
             FROM pending_jobs j LEFT JOIN documents d ON d.id=j.document_id
-            WHERE (%s IS NULL OR j.tenant_id=%s)""", (scope, scope)).fetchone()
+            WHERE (%s::uuid IS NULL OR j.tenant_id=%s::uuid)""", (scope, scope)).fetchone()
         exception_filter = " AND EXISTS (SELECT 1 FROM documents d WHERE d.id=exceptions.document_id AND (d.owner_id=%s OR d.assigned_to=%s))" if user["role"] == "accountant" else ""
         exception_params = [scope, scope]
         if user["role"] == "accountant":
             exception_params.extend([user["id"], user["id"]])
         # Documents the tidy-up excluded (excluded_at) are not counted.
         exception_filter += " AND EXISTS (SELECT 1 FROM documents x WHERE x.id=exceptions.document_id AND x.excluded_at IS NULL)"
-        exceptions = db.execute(f"SELECT count(*) AS n, count(DISTINCT document_id) AS documents FROM exceptions WHERE (%s IS NULL OR tenant_id=%s) AND status <> 'resolved'{exception_filter}", exception_params).fetchone()
+        exceptions = db.execute(f"SELECT count(*) AS n, count(DISTINCT document_id) AS documents FROM exceptions WHERE (%s::uuid IS NULL OR tenant_id=%s::uuid) AND status <> 'resolved'{exception_filter}", exception_params).fetchone()
     processed = int(row["processed"] or 0)
     succeeded = int(row["succeeded"] or 0)
     failed = int(row["failed"] or 0)
@@ -102,7 +102,7 @@ def processing_trends(request: Request, period: str = "week"):
             count(*) FILTER (WHERE j.status='failed') AS failed,
             count(*) FILTER (WHERE EXISTS (SELECT 1 FROM exceptions e WHERE e.document_id=j.document_id AND e.status<>'resolved')) AS exceptions
             FROM pending_jobs j JOIN documents d ON d.id=j.document_id
-            WHERE j.created_at >= now() - (%s || ' days')::interval AND (%s IS NULL OR j.tenant_id=%s) AND d.excluded_at IS NULL
+            WHERE j.created_at >= now() - (%s || ' days')::interval AND (%s::uuid IS NULL OR j.tenant_id=%s::uuid) AND d.excluded_at IS NULL
             """ + owner + ' GROUP BY 1 ORDER BY 1',
             [days, scope, scope, *([user['id'], user['id']] if owner else [])]).fetchall()
     return [{"day": r["day"].strftime("%d %b"), "processed": int(r["processed"]), "succeeded": int(r["succeeded"]), "failed": int(r["failed"]), "accuracy": round((int(r["succeeded"]) / int(r["processed"]) * 100) if r["processed"] else 0, 1), "exceptions": int(r["exceptions"])} for r in rows]

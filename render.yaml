@@ -34,6 +34,13 @@ services:
         sync: false
       - key: FRONTEND_ORIGIN
         sync: false
+      - key: UPLOAD_MALWARE_SCAN
+        # Render does not provide a ClamAV daemon inside this web service.
+        # Keep uploads working here; set this to "required" only after a
+        # reachable ClamAV service/socket is provisioned for the deployment.
+        value: "off"
+      - key: CLAMAV_SOCKET
+        value: "/var/run/clamav/clamd.ctl"
       - key: APP_PUBLIC_URL
         value: ""
       - key: FRONTEND_URL
