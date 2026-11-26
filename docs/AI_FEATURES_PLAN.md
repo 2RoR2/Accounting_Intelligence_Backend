@@ -192,6 +192,10 @@ approval.
 | Alibaba SAS, 2 vCPU / 4 GiB | 2 / 4 GiB | USD 16/month | High | Room for local embeddings + 2 workers + a small local model for "private mode" demos (slow on CPU) | Same |
 | Alibaba SAS, 2 vCPU / 1 GiB promotion | 2 / 1 GiB | USD 9.9/year, one-time, new users only, no coupons | High | A cheap staging box | Check the renewal price; 1 GiB is only 2× Starter |
 | Split: API on Render Starter + extraction worker on a VM | – | Starter + VM | Medium–high (code change above) | OCR load off the API; chat stays fast | Two deployments to keep in step |
+| **Oracle Cloud Always Free**, Ampere A1 (ARM) | 2 OCPU / 12 GB in total per tenancy, per community reports of an Aug 2026 cut from 4 / 24 GB; check the live Oracle page [H3] | Free (card needed to verify identity) | High (self-managed VM, as for SAS) + an **ARM build check** of every wheel | Most RAM for free: OCR + local embeddings + workers | **Idle reclamation**: an Always Free A1 instance whose 95th-percentile CPU, network *and* memory stay under 20% for 7 days may be reclaimed. Our app uses well under 20% of 12 GB, so it could count as idle [H3]. A1 capacity is often unavailable in popular home regions. Over-limit instances are disabled. |
+| Google Cloud Run | up to 4 GiB per container | Free tier: 180,000 vCPU-s, 360,000 GiB-s, 2M requests/month (request-based) [H4] | **Architecture change** | Scales to zero | With request-based billing, **CPU is allocated only while a request is processed**. Our in-process extraction worker and 5 s supervisor run *between* requests, so they would stall. Always-on CPU (instance-based) uses far more than the free allowance. Cold starts reload the OCR models. |
+| Fly.io | small shared VMs | A "Free plan with $5 usage/month" was announced on the Fly forum this week; earlier, new orgs went straight to the $5/month Hobby plan [H5] | High | – | Terms changing; check the official pricing page. A 512 MB–1 GB machine running 24/7 uses most of $5. |
+| AWS | t-family micro VMs | **Changed in July 2025**: new accounts get up to USD 200 credits, and the free plan ends after **6 months** or when the credits run out [H6] | High | A trial | Not a long-term host. The "12 months free t2.micro" offer applies only to accounts opened before 15 Jul 2025. |
 
 **What a bigger server does *not* fix.** The AI features' tightest limit is the **Groq quota** (§2.3): 200K tokens a
 day per model, 8K tokens a minute on the base table. A bigger server does not raise that. Running our own LLM on a
@@ -226,7 +230,15 @@ production use) is also not about server size. **What a bigger server does help:
 2. After the demo, run the §2.4 rehearsal check. Upgrade only on evidence: an OOM event, p95 over 20 s, or a decision
    to build semantic RAG with a local model.
 3. If an upgrade is needed, **Render Standard** is the safe step: one setting, no new ops work.
-4. Alibaba SAS 2–4 GiB is the value step (more RAM per dollar) **if** the team accepts running a server. If so, do
+4. **Oracle Always Free A1** is the only option that is free for the long term with real headroom. It is the best
+   candidate for an *extraction-worker or staging* box after the demo. The team must accept three things:
+   - running the VM;
+   - an ARM build check;
+   - the idle-reclamation rule. An upgrade to a Pay-As-You-Go account would remove that rule, but it puts a card
+     behind any over-limit use, so it **needs Jonathan's approval** and a budget alert.
+
+   Cloud Run, Fly.io and AWS do not fit the current always-on, single-process design for free.
+5. Alibaba SAS 2–4 GiB is the value step (more RAM per dollar) **if** the team accepts running a server. If so, do
    it as next semester's infrastructure task: Docker + Caddy + GitHub Actions + hardening, with Render kept as
    rollback for two weeks.
 
@@ -832,5 +844,9 @@ what the AI does *after* extraction. It works for the accountant, and it never t
 | F2 | BAAI/bge-small-en-v1.5 model card — https://huggingface.co/BAAI/bge-small-en-v1.5 | read |
 | H1 | Render pricing — https://render.com/pricing ; compute plans — https://render.com/docs/compute-plans | search |
 | H2 | Alibaba Cloud SAS billable items — https://www.alibabacloud.com/help/en/simple-application-server/product-overview/billable-items ; SAS plans as shown on https://www.alibabacloud.com/en/product/swas (screenshot, 26 Nov 2026) | search + screenshot |
+| H3 | Oracle Always Free resources — https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm ; reported Aug 2026 A1 limit change — https://community.oracle.com/customerconnect/discussion/970310/oci-always-free-updated-ampere-a1-compute-allocation | search (community report unverified) |
+| H4 | Cloud Run pricing — https://cloud.google.com/run/pricing ; billing settings — https://docs.cloud.google.com/run/docs/configuring/billing-settings | search |
+| H5 | Fly.io forum, "Introducing the Free plan" — https://community.fly.io/t/introducing-the-free-plan/29145 | search (forum) |
+| H6 | AWS, "AWS Free Tier now offers $200 in credits and 6-month free plan" — https://aws.amazon.com/about-aws/whats-new/2025/07/aws-free-tier-credits-month-free-plan/ | search |
 | O1 | OWASP Top 10 for LLM Applications 2025 — https://genai.owasp.org/llm-top-10/ | not fetched (category names from the 2025 list) |
 | R1 | NIST AI Risk Management Framework 1.0 (NIST AI 100-1) — https://www.nist.gov/itl/ai-risk-management-framework | not fetched (core functions Govern, Map, Measure, Manage) |
