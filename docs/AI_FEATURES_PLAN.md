@@ -102,6 +102,84 @@ Every AI feature also has a **deterministic fallback**, so the demo cannot fail 
 Jonathan should confirm the free-plan TPM in the console. If it is 6K or lower, set `AI_ASSIST_MAX_TOOL_RESULT_CHARS`
 lower.
 
+### 2.4 Hosting impact: Render, Neon, Vercel and the current architecture
+
+**Today's shape** (`render.yaml`):
+
+- **One** Render Starter instance (0.5 CPU, 512 MB) runs the API **and** the extraction worker in the same process.
+  - `WEB_CONCURRENCY=1`, `QUEUE_BACKEND=inline`, `INLINE_WORKERS=1`.
+  - PostgreSQL is the queue, and a supervisor thread polls it every 5 s.
+- Measured OCR peak: **329 MB** at 512 MB / 0.5 CPU (comment in `render.yaml`, Linux test).
+- The browser reaches Render through a **Vercel rewrite** (`/api/:path*` → `BACKEND_URL`, frontend `next.config.mjs`).
+- `DB_POOL_SIZE=0`: every `connect()` opens a new Neon connection, about 0.8 s each (`database/connection.py:23`).
+- **All hosted AI calls share one process-wide semaphore**: `AI_MAX_CONCURRENCY=2` (`text_llm.py` `_request_slots`).
+
+**Verdict.** The demo set fits on the current Starter instance with **no new service, no Redis, no new dependency
+and no plan upgrade**:
+
+- F1, F3 and F4 are I/O-bound: one HTTPS call to Groq and a few SQL queries on Neon. They add a few MB per request.
+- F2 is SQL only.
+- The real limits are **the Groq quota (§2.3)**, the **shared AI semaphore**, **DB connection latency** and the
+  **Vercel proxy timeout**. Memory is not among them.
+
+| Feature | Render RAM | Render CPU | Neon | Groq | Change needed |
+|---|---|---|---|---|---|
+| F1 Ask AccordAI | small (prompt ≤ ~30 KB, results capped) | low (JSON + formatting) | 2–4 report queries per question | 2 calls per question | Own semaphore; one DB connection per tool, never held open across a model call; whole turn ≤ 25 s |
+| F2 Fraud Shield | small | low | indexed queries per document | none | Index check on `(tenant_id, vendor/supplier, total_amount)` (exists: `idx_records_amount`, `idx_records_duplicate_lookup`) |
+| F2 same-image dHash (stretch) | ≈0: computed from the page image the OCR worker already holds | <50 ms | one hash column (**needs a migration: Jonathan's approval for UAT**) | none | Compute inside the worker, never by re-rendering on request |
+| F3 AI Inbox | small | low | **highest**: groups + candidates per unmatched bank line | 1 call per draft | Cap at 20 unmatched lines per load; 60 s per-tenant cache (bounded LRU) |
+| F4 insights + commentary | small (one workbook already built in memory for the pack) | low | `_trend` = 6 P&L queries; forecast = 1–2 | 1 call per period | Cache commentary by period and fact-table hash; LRU of at most 200 entries |
+| #13 click-to-source | **0 on the server**: draw the stored bbox over the existing `pdfjs-dist` viewer in the browser | 0 | 1 query | none | Never render page crops on Render |
+| #14 audit hash chain | ≈0 | ≈0 | one extra hash per audit insert; an advisory lock serialises the chain per tenant | none | Migration for a hash column (**approval**) |
+| #15 PDF forgery signals | ≈0 (`pypdfium2` metadata read) | <50 ms | none | none | Run inside the extraction job |
+| #8 prompt caching | 0 | 0 | 0 | **fewer** counted tokens | Static prompt prefix first |
+| #28 night shift | same as the extraction worker | uses idle night CPU | more compute time | uses the quota while nobody is working | Run through the existing supervisor; cap re-reads per night |
+| Semantic RAG, local ONNX (A3) | **+150–250 MB**: 329 MB OCR peak + model goes past 512 MB | high on 0.5 CPU | pgvector | none | **Does not fit Starter.** Needs a larger plan or a separate service: paid, needs Jonathan's approval. Deferred. |
+| Private mode, Ollama (#17) | cannot run on Render | – | – | none | Local or on-premises machine only. Demo it on a laptop. |
+| Training sandbox (#25) | heavy (generates and OCRs a whole company) | heavy | many writes | high | Run offline on a developer machine; never on the hosted service |
+
+**Architecture changes the demo set needs** (all small, all in the session files listed in §7):
+
+1. **Separate AI lanes.** Chat must not queue behind extraction, or a question waits up to the 30 s timeout × retries
+   while a document is being read. BE-A adds an *interactive* semaphore in the additive `text_llm.chat()`
+   (`AI_ASSIST_MAX_CONCURRENCY`, default 2). Retries are shorter for chat (`AI_ASSIST_MAX_RETRIES=1`), and on a 429
+   the chat goes straight to the fallback instead of waiting up to 60 s.
+2. **A deadline per request.** The whole chat turn has a 25 s budget (tools + both model calls). On timeout the
+   deterministic fallback is shown. This keeps requests well inside the Vercel proxy limit for external rewrites.
+   **Check the current limit in the Vercel docs for the team's plan before Tue.**
+3. **Database connections.** With `DB_POOL_SIZE=0`, a 3-tool question pays about 2–3 s in connects. Options:
+   - Set `DB_POOL_SIZE=2` on UAT. The setting already exists. It is an env change on Render, so it needs
+     **Jonathan's approval**.
+   - Or run a question's tools on one connection, then close it **before** the final model call.
+   - A connection or transaction is never held open while waiting on Groq.
+4. **Bounded caches only.** Every in-process cache is an LRU with a size cap and a TTL. `MALLOC_ARENA_MAX=2` is
+   already set. No unbounded dicts.
+5. **No heavy work in request handlers.** Rendering, hashing and metadata reads happen inside the existing extraction
+   job. The handlers only read results.
+6. **Neon.** The 5 s supervisor poll already keeps the compute awake. The new features add queries during working
+   hours, plus about 1–2 KB of `audit_logs` per AI answer. **Check the Neon plan's compute-hour and storage
+   allowance in the console.**
+
+**Rehearsal check (Tue 1 Dec, UAT, needs the deploy approval).** While one scanned document is extracting, ask three
+chat questions and open the Inbox and Insights. Pass lines:
+
+- Render memory peak below 450 MB, and no out-of-memory restart in Render **Events**.
+- Chat answers in ≤ 25 s, or the fallback is shown.
+- The document still meets 20 s at p95.
+
+Record the numbers in `docs/DEPLOY_UAT.md`.
+
+**When to upgrade (not now).** A larger Render plan (paid, **needs Jonathan's approval**) is justified only by:
+
+- semantic RAG with a local model;
+- more than one inline worker;
+- OCR at a larger size (`LITE_OCR_DET_SIDE=960`);
+- an out-of-memory event during the rehearsal.
+
+An alternative that keeps the API small is a **second Render service** just for extraction, using the existing
+Postgres queue (`QUEUE_BACKEND` and `services/queue/` already separate the two roles). That is also paid, so it also
+needs approval.
+
 ---
 
 ## 3. Brainstorm and scoring
