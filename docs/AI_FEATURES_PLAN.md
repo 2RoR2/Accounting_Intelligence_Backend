@@ -176,9 +176,59 @@ Record the numbers in `docs/DEPLOY_UAT.md`.
 - OCR at a larger size (`LITE_OCR_DET_SIDE=960`);
 - an out-of-memory event during the rehearsal.
 
-An alternative that keeps the API small is a **second Render service** just for extraction, using the existing
-Postgres queue (`QUEUE_BACKEND` and `services/queue/` already separate the two roles). That is also paid, so it also
-needs approval.
+An alternative that keeps the API small is a **separate extraction worker**. Today that exists only on the legacy
+Redis/RQ path (`QUEUE_BACKEND=rq`, `services/queue/backend.py`). The default Postgres queue runs only inside the API
+process (`services/queue/inline.py`). A Postgres-only worker needs a small code change: a worker-only entry point
+that runs the supervisor and the executor, and an API mode that only enqueues. It is also paid, so it also needs
+approval.
+
+### 2.5 Hosting options after the demo (prices as published on 26 Nov 2026; nothing bought)
+
+| Option | CPU / RAM | Price | Effort to move | What it unlocks | Main risk |
+|---|---|---|---|---|---|
+| **Stay on Render Starter** (today) | 0.5 / 512 MB | about USD 7/month [H1] | none | The demo set (§2.4) | OOM if OCR settings or workers grow |
+| **Render Standard** | 1 / 2 GB | USD 25/month [H1] | **One setting** (`plan:` in `render.yaml`) | 2 inline workers, OCR at 960 px, local embeddings for semantic RAG | Cost only |
+| **Alibaba Cloud Simple Application Server (SAS)**, Linux, 2 vCPU / 2 GiB | 2 / 2 GiB | USD 8/month (page shown 26 Nov) | **High**: you run the server yourself | 4× the RAM of Starter at a similar price | Ops work and security patching move to the team |
+| Alibaba SAS, 2 vCPU / 4 GiB | 2 / 4 GiB | USD 16/month | High | Room for local embeddings + 2 workers + a small local model for "private mode" demos (slow on CPU) | Same |
+| Alibaba SAS, 2 vCPU / 1 GiB promotion | 2 / 1 GiB | USD 9.9/year, one-time, new users only, no coupons | High | A cheap staging box | Check the renewal price; 1 GiB is only 2× Starter |
+| Split: API on Render Starter + extraction worker on a VM | – | Starter + VM | Medium–high (code change above) | OCR load off the API; chat stays fast | Two deployments to keep in step |
+
+**What a bigger server does *not* fix.** The AI features' tightest limit is the **Groq quota** (§2.3): 200K tokens a
+day per model, 8K tokens a minute on the base table. A bigger server does not raise that. Running our own LLM on a
+2–4 vCPU CPU-only VM is too slow for interactive chat. Competitors' lead (bank feeds, e-invoicing, years of
+production use) is also not about server size. **What a bigger server does help:**
+
+- faster extraction under load (SC3);
+- a larger OCR input, which can fix some degraded-scan misreads (`docs/ACCURACY_LOG.md`);
+- semantic search with a local model, so nothing leaves the server;
+- headroom for night-shift jobs.
+
+**What moving to a self-managed VM (Alibaba SAS or similar) costs the team.** Render does these today:
+
+- HTTPS and certificates. A VM needs **a domain name** plus a reverse proxy with automatic certificates, such as
+  Caddy. The Vercel proxy must reach the backend over HTTPS, because accounting data must not cross the internet
+  unencrypted.
+- Deploy from Git, `preDeployCommand` migrations, rollbacks, health-check restarts, logs and metrics. A VM needs the
+  existing `Dockerfile`, a GitHub Actions deploy over SSH, and a restart policy.
+- OS and Docker security updates, a firewall (open only ports 22, 80 and 443; SSH by key only) and fail2ban. **This
+  overlaps with the cybersecurity teammate's scope.**
+- Region: pick **Singapore**, next to Neon (aws-ap-southeast-1), to keep DB round trips short. Kuala Lumpur is
+  closer to SAIC and is a data-residency talking point, but the database is in Singapore anyway. Check that the
+  chosen plan is sold in that region.
+- Data transfer: SAS bills outbound traffic over the plan's monthly allowance (Singapore USD 0.081/GB, Kuala Lumpur
+  USD 0.077/GB [H2]). Check the plan's allowance on the order page.
+- It is a paid subscription with a card on file and auto-renewal, so it **needs Jonathan's approval**. No one buys
+  anything from this plan.
+
+**Recommendation.**
+
+1. **No hosting move before 2 Dec.** The demo set fits Starter, and a migration in demo week risks the demo itself.
+2. After the demo, run the §2.4 rehearsal check. Upgrade only on evidence: an OOM event, p95 over 20 s, or a decision
+   to build semantic RAG with a local model.
+3. If an upgrade is needed, **Render Standard** is the safe step: one setting, no new ops work.
+4. Alibaba SAS 2–4 GiB is the value step (more RAM per dollar) **if** the team accepts running a server. If so, do
+   it as next semester's infrastructure task: Docker + Caddy + GitHub Actions + hardening, with Render kept as
+   rollback for two weeks.
 
 ---
 
@@ -780,5 +830,7 @@ what the AI does *after* extraction. It works for the accountant, and it never t
 | N1 | Neon, The pgvector extension — https://neon.com/docs/extensions/pgvector ; Postgres extensions — https://neon.com/docs/extensions/pg-extensions | search |
 | F1 | qdrant/fastembed README — https://github.com/qdrant/fastembed | read |
 | F2 | BAAI/bge-small-en-v1.5 model card — https://huggingface.co/BAAI/bge-small-en-v1.5 | read |
+| H1 | Render pricing — https://render.com/pricing ; compute plans — https://render.com/docs/compute-plans | search |
+| H2 | Alibaba Cloud SAS billable items — https://www.alibabacloud.com/help/en/simple-application-server/product-overview/billable-items ; SAS plans as shown on https://www.alibabacloud.com/en/product/swas (screenshot, 26 Nov 2026) | search + screenshot |
 | O1 | OWASP Top 10 for LLM Applications 2025 — https://genai.owasp.org/llm-top-10/ | not fetched (category names from the 2025 list) |
 | R1 | NIST AI Risk Management Framework 1.0 (NIST AI 100-1) — https://www.nist.gov/itl/ai-risk-management-framework | not fetched (core functions Govern, Map, Measure, Manage) |
