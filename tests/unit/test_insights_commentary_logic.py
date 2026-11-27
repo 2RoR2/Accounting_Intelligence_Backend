@@ -310,3 +310,14 @@ def test_commentary_endpoint_settings_win_and_groq_key_is_the_last_resort():
 def test_commentary_flag_is_the_shared_ai_assist_switch():
     assert commentary.ai_enabled({"AI_ASSIST": "on"}) and not commentary.ai_enabled({"AI_ASSIST": "off"})
     assert not commentary.ai_enabled({})
+
+
+@pytest.mark.parametrize("template", ["During {{f1}} so far, sales were {{f5}} compared to {{f2}}.",
+                                      "Sales of {{f5}} were recorded.", "{{f6}} is the sales figure."])
+def test_a_change_fact_written_as_an_amount_is_rejected(template):
+    good = ["Sales were {{f3}}, up {{f5}} ({{f6}}) on {{f2}}.", "Expenses fell by {{f9}}.", "Net result was {{f10}}."]
+    with pytest.raises(BindingError) as error:
+        commentary.bind_answer(answer(template, *good[1:]), table().by_id())
+    assert error.value.code == "CHANGE_AS_AMOUNT"
+    assert len(commentary.bind_answer(answer(*good), table().by_id())) == 3
+
