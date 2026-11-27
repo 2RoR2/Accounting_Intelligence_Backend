@@ -5,6 +5,7 @@ scripts/seed_ai_demo_cases.py) and each proposal, its accept action, read-only b
 """
 import json
 import os
+import sys
 from contextlib import closing
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -80,6 +81,12 @@ def _sessions(connect):
             'accountant': tokens['accountant'], 'other': other_tokens['local_admin']}
 
 
+def _say(text):
+    """Print the measured counts even on a console that cannot show every character."""
+    encoding = sys.stdout.encoding or 'utf-8'
+    print(text.encode(encoding, 'replace').decode(encoding))
+
+
 def _client():
     from fastapi.testclient import TestClient
     return TestClient(main.app, base_url='http://127.0.0.1')
@@ -112,10 +119,10 @@ def test_clean_knt_books_raise_few_false_positives(books, capsys):
     clean = books['clean']
     checked, flags = clean['checkedDocuments'], clean['flags']
     with capsys.disabled():
-        print(f"\n[fraud-shield] clean KNT: {checked} documents checked, {flags} flags, "
+        _say(f"\n[fraud-shield] clean KNT: {checked} documents checked, {flags} flags, "
               f"{clean['flaggedDocuments']} documents flagged, by code {json.dumps(clean['byCode'])}")
-        print(f"[fraud-shield] clean KNT top: {json.dumps(clean['top'])}")
-        print(f"[ai-inbox] clean KNT: {books['clean_inbox']['count']} proposals: "
+        _say(f"[fraud-shield] clean KNT top: {json.dumps(clean['top'])}")
+        _say(f"[ai-inbox] clean KNT: {books['clean_inbox']['count']} proposals: "
               f"{json.dumps([(e['kind'], e['title']) for e in books['clean_inbox']['items']])}")
     assert checked >= 10  # KNT's scanned purchases; its typed ERP documents are not scanned documents.
     assert flags <= max(1, checked // 20), clean['top']  # Target from the plan: at most 1 per 20 clean documents.
@@ -141,10 +148,10 @@ def test_inbox_proposes_each_kind_with_existing_endpoints(books, capsys):
         items = _items(client, books['accountant'])
         summary = _get(client, books['admin'], '/api/insights/fraud/summary')
     with capsys.disabled():
-        print(f"\n[fraud-shield] with demo cases: {summary['checkedDocuments']} checked, by code "
+        _say(f"\n[fraud-shield] with demo cases: {summary['checkedDocuments']} checked, by code "
               f"{json.dumps(summary['byCode'])}")
         for entry in items:
-            print(f"[ai-inbox] {entry['severity']:6} {entry['kind']:20} {entry['title']}  basis={entry['basis']}")
+            _say(f"[ai-inbox] {entry['severity']:6} {entry['kind']:20} {entry['title']}  basis={entry['basis']}")
     kinds = {entry['kind'] for entry in items}
     assert {'FRAUD_SHIELD', 'SUPPLIER_QUERY_DRAFT', 'EXCEPTION_GROUP', 'BANK_MATCH', 'CLOSE_BLOCKER'} <= kinds, kinds
     [draft] = [e for e in items if e['kind'] == 'SUPPLIER_QUERY_DRAFT']

@@ -210,11 +210,14 @@ def fraud_items(db, user, ctx: fraud.Context, *, use_model: bool = False, comple
     return items
 
 
+# Plain wording per rule, following the categories in validation/documents/document_validation.py
+# (MISSING_SOURCE_VALUE, INVALID_FORMAT, ARITHMETIC_FAILURE, POSSIBLE_DUPLICATE, REFERENCE_NOT_FOUND,
+# TRANSACTION_ANOMALY). Any other code uses the stored message.
 EXCEPTION_LABELS = {
-    'EX-001': 'a required value is missing', 'EX-002': 'a date is not valid', 'EX-003': 'the amounts do not add up',
-    'EX-004': 'the line amounts do not add up', 'EX-005': 'the total does not agree', 'EX-006': 'the currency needs checking',
-    'EX-007': 'possible duplicate invoice', 'EX-009': 'the purchase order does not match',
-    'EX-010': 'the amount is unusual for this supplier',
+    'EX-001': 'a required value is missing', 'EX-002': 'a value is not in the expected format',
+    'EX-003': 'the amounts do not add up', 'EX-004': 'the amounts do not add up', 'EX-005': 'the amounts do not add up',
+    'EX-006': 'the amounts do not add up', 'EX-007': 'possible duplicate',
+    'EX-009': 'the purchase order or reference was not found', 'EX-010': 'the amount is unusual',
 }
 
 
@@ -419,10 +422,11 @@ def _bank_item(line: dict, record: dict, rule: dict | None, basis: list[str], am
                 [accept, link('Review on Reconcile page', 'reconciliation?status=unmatched')], basis=basis)
 
 
-STEP_LABELS = {'reviewed': ('documents still to review', 'Review documents'),
-               'matched': ('bank lines to match', 'Match bank lines'),
-               'posted': ('approved records not posted', 'Post records'),
-               'reconciled': ('reconciliation periods not completed', 'Open reconciliation')}
+STEP_LABELS = {'reviewed': ('document still to review', 'documents still to review', 'Review documents'),
+               'matched': ('bank line to match', 'bank lines to match', 'Match bank lines'),
+               'posted': ('approved record not posted', 'approved records not posted', 'Post records'),
+               'reconciled': ('reconciliation period not completed', 'reconciliation periods not completed',
+                              'Open reconciliation')}
 
 
 def _month_key(value: date) -> str:
@@ -447,10 +451,11 @@ def close_items(db, user, ctx: fraud.Context, today: date) -> list[dict]:
         if not step.get('available') or step['done'] >= step['total']:
             continue
         left = step['total'] - step['done']
-        label, button = STEP_LABELS.get(step['key'], (step['key'], 'Open'))
+        one, many, button = STEP_LABELS.get(step['key'], (step['key'], step['key'], 'Open'))
+        label = one if left == 1 else many
         target = step['link']['page'] + (f"?{step['link']['query']}" if step['link'].get('query') else '')
         parts.append(f'{left} {label}')
-        evidence.append(ev(label.capitalize(), f'{left} of {step["total"]} left', target))
+        evidence.append(ev(many.capitalize(), f'{left} of {step["total"]} left', target))
         actions.append(link(button, target))
     start = date.fromisoformat(period['startsOn'])
     end = date.fromisoformat(period['endsOn'])
