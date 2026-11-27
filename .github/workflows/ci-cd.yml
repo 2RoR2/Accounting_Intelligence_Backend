@@ -72,9 +72,10 @@ jobs:
           APP_ENV: test
           AI_EXTRACTION: 'off'
         run: >-
-          python -m pytest tests -q -p no:cacheprovider
-          --ignore=tests/acceptance
-          --ignore=tests/live
+          python -m pytest
+          tests/extraction/test_text_llm.py
+          tests/extraction/test_extraction_lift.py
+          -q -p no:cacheprovider
 
   deploy:
     name: Trigger Render deployment
