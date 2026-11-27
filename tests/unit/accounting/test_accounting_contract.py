@@ -61,7 +61,7 @@ class ContractDatabase:
         self.db.executescript('''
         CREATE TABLE documents (id TEXT PRIMARY KEY, tenant_id TEXT, owner_id TEXT, assigned_to TEXT,
           kind TEXT, category TEXT, status TEXT, content_revision INTEGER,
-          uploaded_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT, processing_started_at TEXT, processing_seconds TEXT, processing_completed_at TEXT);
+          uploaded_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT, processing_started_at TEXT, processing_seconds TEXT, processing_completed_at TEXT, document_code TEXT, excluded_at TEXT);
         CREATE TABLE pending_jobs (id TEXT PRIMARY KEY, tenant_id TEXT, document_id TEXT, status TEXT,
           created_at TEXT DEFAULT CURRENT_TIMESTAMP, finished_at TEXT, last_error TEXT, updated_at TEXT,
           dispatch_token TEXT, claim_token TEXT, dispatch_expires_at TEXT, processing_expires_at TEXT,
