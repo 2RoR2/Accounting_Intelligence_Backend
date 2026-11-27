@@ -4,3 +4,5 @@
 pytest>=8,<10
 fakeredis==2.39.0
 pypdf>=5,<7
+ruff>=0.11,<1
+mypy>=1.15,<2
