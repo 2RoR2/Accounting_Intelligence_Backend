@@ -91,9 +91,11 @@ def detect_transaction_anomalies(
             if reference["transaction_id"] != row["transaction_id"]
         ]
         baseline = None
-        # Five comparable approved records are the minimum baseline. Fewer
-        # rows are reported as NOT_CHECKED rather than treated as evidence.
-        if len(comparable_rows) >= 5:
+        # Five varied comparable approved records are the minimum statistical
+        # baseline. A constant history is also retained with fewer rows so the
+        # caller can report the zero-MAD condition explicitly.
+        if (len(comparable_rows) >= 5
+                or (comparable_rows and len({reference["amount"] for reference in comparable_rows}) == 1)):
             amounts = [reference["amount"] for reference in comparable_rows]
             center = Decimal(str(median(amounts)))
             deviations = [abs(value - center) for value in amounts]
@@ -126,9 +128,17 @@ def detect_transaction_anomalies(
             })
 
             if mad == 0:
-                # A constant approved baseline is still useful: an amount
-                # different from that exact value is an anomaly even though a
-                # modified Z-score cannot be calculated.
+                # A short constant history, or a zero-valued history, cannot
+                # support an automatic decision. Keep it visible as
+                # insufficient baseline; a sufficiently large non-zero
+                # constant history can still identify a different amount.
+                if len(comparable_rows) < 5 or center == 0:
+                    result.update({
+                        "status": "insufficient_baseline",
+                        "reason": f"The {currency} reference baseline has zero MAD; more varied history is needed.",
+                    })
+                    results.append(result)
+                    continue
                 is_anomaly = amount != center
                 result.update({
                     "is_anomaly": is_anomaly,
