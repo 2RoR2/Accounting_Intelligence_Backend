@@ -44,7 +44,7 @@ class OfflineDatabase:
         self.connection.executescript('''
             CREATE TABLE documents (
                 id TEXT PRIMARY KEY, tenant_id TEXT, owner_id TEXT, assigned_to TEXT,
-                content_revision INTEGER, status TEXT, updated_at TEXT
+                content_revision INTEGER, status TEXT, updated_at TEXT, excluded_at TEXT
             );
             CREATE TABLE raw_extractions (
                 id TEXT PRIMARY KEY, document_id TEXT, is_current BOOLEAN
@@ -82,7 +82,7 @@ class OfflineDatabase:
             (DOCUMENT, 'tenant-a', USER['id'], 'current-a'),
             (OTHER_DOCUMENT, 'tenant-b', 'accountant-b', 'current-b'),
         ):
-            self.connection.execute('INSERT INTO documents VALUES (?,?,?,?,?,?,NULL)',
+            self.connection.execute('INSERT INTO documents VALUES (?,?,?,?,?,?,NULL,NULL)',
                                     (doc, tenant, owner, None, 7, 'validated'))
             self.connection.execute('INSERT INTO raw_extractions VALUES (?,?,true)', (extraction, doc))
             self.connection.execute('INSERT INTO field_predictions VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
