@@ -244,7 +244,11 @@ async def protect_requests(request: Request, call_next):
     response = await call_next(request)
     response.headers["Cache-Control"] = "no-store"
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
-    response.headers.setdefault("X-Frame-Options", "DENY")
+    # SAMEORIGIN, not DENY: the review page shows the original PDF in an
+    # <iframe src="/api/documents/{id}/file"> served through the same-origin
+    # frontend proxy. DENY blanks that preview; SAMEORIGIN still blocks
+    # framing by any other site.
+    response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
     response.headers.setdefault("Referrer-Policy", "no-referrer")
     response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
     if is_production():

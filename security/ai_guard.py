@@ -34,8 +34,15 @@ MAX_RESPONSE_CHARS = 1_000_000
 PROMPT_INJECTION_PATTERNS = (
     re.compile(r"\b(ignore|disregard|forget|override)\b.{0,80}\b(previous|prior|system|instructions?)\b", re.I),
     re.compile(r"\b(system prompt|developer message|reveal (?:the )?prompt|jailbreak)\b", re.I),
-    re.compile(r"\b(send|upload|email|forward|publish|share)\b.{0,80}\b(data|document|invoice|records?)\b", re.I),
-    re.compile(r"\b(approve|post|pay|execute|call|run)\b.{0,60}\b(payment|journal|sql|code|command|tool)\b", re.I),
+    # Ordinary invoice wording must not match: "Email: ... TAX INVOICE",
+    # "Post Code: 93350", "Kindly pay within 30 days. Late payment ...",
+    # "Please forward proof of payment with invoice no." A match suppresses
+    # prefill for the whole document, so these rules need an instruction-like
+    # object (all/your data, SQL, a tool) or an explicit "without review".
+    re.compile(r"\b(send|upload|email|forward|publish|share|leak|exfiltrate)\b.{0,40}"
+               r"\b(all|every|entire|your|system|internal)\b.{0,30}\b(data|documents|records|prompts?|instructions|credentials)\b", re.I),
+    re.compile(r"\b(execute|run|call|invoke)\b.{0,40}\b(sql|shell|command|tool|function|script)\b", re.I),
+    re.compile(r"\b(approve|post|pay)\b.{0,40}\b(automatically|without (?:any )?(?:review|approval|checking|verification))\b", re.I),
 )
 
 
@@ -91,12 +98,27 @@ def sanitize_document_text_with_metadata(text: str, *, max_chars: int) -> tuple[
 def _string_or_null(value: Any) -> str | None:
     if value is None:
         return None
+    # Models often answer amounts as JSON numbers ({"value": 2322.6}). The
+    # resolver has always read those as text (structure._text), and a number
+    # cannot carry an instruction, so keep it instead of discarding the answer.
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        value = str(value)
     if not isinstance(value, str):
         raise AIGuardError("AI_RESPONSE_FIELD_TYPE_INVALID")
     if len(value) > MAX_FIELD_VALUE_CHARS:
         raise AIGuardError("AI_RESPONSE_FIELD_TOO_LONG")
     if any(ord(char) < 32 and char not in "\n\r\t" for char in value):
         raise AIGuardError("AI_RESPONSE_CONTROL_CHARACTER")
+    return value
+
+
+def _line_value(value: Any) -> Any:
+    """Line values are plain strings, but models sometimes answer them in the
+    field shape {"value": ..., "raw": ...} (seen on scanned demo invoices).
+    Use the printed text, which the resolver searches for, else the value."""
+    if isinstance(value, dict) and value and not set(value) - {"value", "raw"}:
+        raw = value.get("raw")
+        return raw if isinstance(raw, str) and raw.strip() else value.get("value")
     return value
 
 
@@ -131,6 +153,10 @@ def validate_extraction_response(answer: Any) -> dict[str, Any]:
 
     fields: dict[str, dict[str, str | None]] = {}
     for name, cell in supplied_fields.items():
+        # A bare value ({"total_amount": "10.00"}) was always read as
+        # {value, raw} by the resolver; keep it in the contract shape.
+        if cell is None or isinstance(cell, (str, int, float)) and not isinstance(cell, bool):
+            cell = {"value": cell, "raw": cell}
         if not isinstance(cell, dict):
             raise AIGuardError("AI_RESPONSE_FIELD_SCHEMA_INVALID")
         if set(cell) - {"value", "raw"}:
@@ -146,7 +172,7 @@ def validate_extraction_response(answer: Any) -> dict[str, Any]:
     for item in items:
         if not isinstance(item, dict) or set(item) - ALLOWED_LINE_ITEM_FIELDS:
             raise AIGuardError("AI_RESPONSE_LINE_ITEM_SCHEMA_INVALID")
-        line_items.append({name: _string_or_null(item.get(name)) for name in ALLOWED_LINE_ITEM_FIELDS})
+        line_items.append({name: _string_or_null(_line_value(item.get(name))) for name in ALLOWED_LINE_ITEM_FIELDS})
     return {"document_type": document_type, "fields": fields, "line_items": line_items}
 
 

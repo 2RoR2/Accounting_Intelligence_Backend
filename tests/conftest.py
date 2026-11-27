@@ -58,3 +58,13 @@ def legacy_runtime_defaults(request, monkeypatch):
     import services.queue.backend as backend
     monkeypatch.setattr(lite, 'DEFAULT_ENGINE', 'docling')
     monkeypatch.setattr(backend, 'DEFAULT_BACKEND', 'rq')
+
+
+@pytest.fixture(autouse=True)
+def upload_rate_limit_off(monkeypatch):
+    """The per-user upload limit (main.rate_limit) writes through main.connect, which route tests
+    that patch a module's connect or use a disposable database do not provide. A test of the limit
+    itself sets UPLOAD_RATE_LIMIT explicitly; the shipped default (60 per 10 minutes) is unchanged."""
+    import os
+    if 'UPLOAD_RATE_LIMIT' not in os.environ:
+        monkeypatch.setenv('UPLOAD_RATE_LIMIT', '0')

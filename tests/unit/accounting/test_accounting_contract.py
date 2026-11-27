@@ -129,7 +129,7 @@ class ContractDatabase:
                .replace('now()', 'CURRENT_TIMESTAMP'))
         sql = re.sub(r'EXTRACT\(EPOCH FROM \(CURRENT_TIMESTAMP - uploaded_at\)\)', '0', sql)
         sql = sql.replace('EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - COALESCE(processing_started_at,CURRENT_TIMESTAMP)))', '0')
-        sql = sql.replace('::date', '').replace('::numeric', '').replace('::text', '').replace('RETURNING fp.*', 'RETURNING *')
+        sql = sql.replace('::date', '').replace('::numeric', '').replace('::text', '').replace('::uuid', '').replace('RETURNING fp.*', 'RETURNING *')
         params = [json.dumps(p.obj) if isinstance(p, Jsonb) else str(p) if isinstance(p, (Decimal, UUID))
                   else json.dumps([str(v) for v in p]) if isinstance(p, (list, tuple)) else p for p in params]
         cursor = self.db.execute(sql, params)
