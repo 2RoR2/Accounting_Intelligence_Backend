@@ -118,7 +118,7 @@ class Phase3DMutationTests(unittest.TestCase):
         self.database.db.execute("UPDATE documents SET status='failed'")
         self.database.db.commit()
     def add_open_job(self,status='pending'):
-        job='11111111-1111-4111-8111-111111111113'
+        job='11111111-1111-4111-8111-111111111114'
         future=datetime.now(timezone.utc)+timedelta(hours=1)
         self.database.db.execute("""INSERT INTO pending_jobs(id,tenant_id,document_id,status,
             dispatch_token,dispatch_expires_at,claim_token,processing_expires_at)
