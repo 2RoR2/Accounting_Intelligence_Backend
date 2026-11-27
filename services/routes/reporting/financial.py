@@ -477,9 +477,11 @@ def month_pack(request: Request, period: str | None = None, format: str | None =
         start, end = row["starts_on"], row["ends_on"]
         company = _company_name(db, tenant)
         # The owner's summary is the first page of the pack (it reads this module's reports).
+        from services.insights.commentary import commentary_sheet
         from services.routes.reporting.business_summary import month_pack_summary_sheet
         sheets = [
             month_pack_summary_sheet(db, tenant, start, end),
+            commentary_sheet(db, tenant, start, end),  # F4: AI month-end commentary, or a labelled template
             _profit_and_loss_sheet(_profit_and_loss(db, tenant, start, end)),
             _balance_sheet_sheet(_balance_sheet(db, tenant, end)),
             _trial_balance_sheet(db, tenant, end),
