@@ -34,8 +34,15 @@ MAX_RESPONSE_CHARS = 1_000_000
 PROMPT_INJECTION_PATTERNS = (
     re.compile(r"\b(ignore|disregard|forget|override)\b.{0,80}\b(previous|prior|system|instructions?)\b", re.I),
     re.compile(r"\b(system prompt|developer message|reveal (?:the )?prompt|jailbreak)\b", re.I),
-    re.compile(r"\b(send|upload|email|forward|publish|share)\b.{0,80}\b(data|document|invoice|records?)\b", re.I),
-    re.compile(r"\b(approve|post|pay|execute|call|run)\b.{0,60}\b(payment|journal|sql|code|command|tool)\b", re.I),
+    # Ordinary invoice wording must not match: "Email: ... TAX INVOICE",
+    # "Post Code: 93350", "Kindly pay within 30 days. Late payment ...",
+    # "Please forward proof of payment with invoice no." A match suppresses
+    # prefill for the whole document, so these rules need an instruction-like
+    # object (all/your data, SQL, a tool) or an explicit "without review".
+    re.compile(r"\b(send|upload|email|forward|publish|share|leak|exfiltrate)\b.{0,40}"
+               r"\b(all|every|entire|your|system|internal)\b.{0,30}\b(data|documents|records|prompts?|instructions|credentials)\b", re.I),
+    re.compile(r"\b(execute|run|call|invoke)\b.{0,40}\b(sql|shell|command|tool|function|script)\b", re.I),
+    re.compile(r"\b(approve|post|pay)\b.{0,40}\b(automatically|without (?:any )?(?:review|approval|checking|verification))\b", re.I),
 )
 
 
@@ -91,6 +98,11 @@ def sanitize_document_text_with_metadata(text: str, *, max_chars: int) -> tuple[
 def _string_or_null(value: Any) -> str | None:
     if value is None:
         return None
+    # Models often answer amounts as JSON numbers ({"value": 2322.6}). The
+    # resolver has always read those as text (structure._text), and a number
+    # cannot carry an instruction, so keep it instead of discarding the answer.
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        value = str(value)
     if not isinstance(value, str):
         raise AIGuardError("AI_RESPONSE_FIELD_TYPE_INVALID")
     if len(value) > MAX_FIELD_VALUE_CHARS:
