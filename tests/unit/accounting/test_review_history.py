@@ -100,7 +100,7 @@ class ReviewHistoryTests(unittest.TestCase):
         columns={r[1] for r in self.database.db.execute('PRAGMA table_info(review_decisions)')}
         self.assertIn('reviewed_at',columns)
         self.assertNotIn('created_at',columns)
-        schema=(Path(__file__).parents[2]/'database/PostgreSQL Database schema.sql').read_text()
+        schema=(Path(__file__).parents[3]/'database/PostgreSQL Database schema.sql').read_text()
         definition=schema.split('CREATE TABLE IF NOT EXISTS review_decisions (',1)[1].split(');',1)[0]
         self.assertIn('reviewed_at',definition)
         self.assertNotIn('created_at',definition)
