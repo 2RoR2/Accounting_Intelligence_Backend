@@ -32,12 +32,12 @@ class AttemptProtocolTests(unittest.TestCase):
         # already-processing claim for persistence tests, so reset only this
         # suite's fresh job to the actual pre-dispatch state.
         self.database.db.execute("""UPDATE documents SET status='queued' WHERE id=?""", (D,))
-        self.database.db.execute("ALTER TABLE pending_jobs ADD COLUMN next_attempt_at TEXT")
-        self.database.db.execute("ALTER TABLE pending_jobs ADD COLUMN dispatched_at TEXT")
-        self.database.db.execute("ALTER TABLE pending_jobs ADD COLUMN dispatch_count INTEGER DEFAULT 0")
-        self.database.db.execute("ALTER TABLE pending_jobs ADD COLUMN max_attempts INTEGER DEFAULT 3")
-        self.database.db.execute("ALTER TABLE pending_jobs ADD COLUMN claimed_at TEXT")
-        self.database.db.execute("ALTER TABLE pending_jobs ADD COLUMN heartbeat_at TEXT")
+        existing_job_columns={row[1] for row in self.database.db.execute("PRAGMA table_info(pending_jobs)")}
+        for name, definition in (("next_attempt_at", "TEXT"), ("dispatched_at", "TEXT"),
+                                 ("dispatch_count", "INTEGER DEFAULT 0"), ("max_attempts", "INTEGER DEFAULT 3"),
+                                 ("claimed_at", "TEXT"), ("heartbeat_at", "TEXT")):
+            if name not in existing_job_columns:
+                self.database.db.execute("ALTER TABLE pending_jobs ADD COLUMN "+name+" "+definition)
         self.database.db.execute("UPDATE pending_jobs SET next_attempt_at=CURRENT_TIMESTAMP")
         self.database.db.execute("""UPDATE pending_jobs SET status='pending',
             dispatch_token=NULL, claim_token=NULL, dispatch_expires_at=NULL,
@@ -77,7 +77,7 @@ class AttemptProtocolTests(unittest.TestCase):
         # commit, without discovering workers in an external Redis service.
         def dispatch_pending():
             with self.database as db:
-                pending=db.execute("SELECT * FROM pending_jobs WHERE status='pending'").fetchall()
+                pending=db.execute("SELECT * FROM pending_jobs WHERE status='pending' AND id<>%s",(J,)).fetchall()
                 deliveries=[attempts.reserve_dispatch(db,str(row['document_id']),str(row['tenant_id']),job_id=str(row['id'])) for row in pending]
             for delivery in deliveries: attempts.publish(delivery)
             return len(deliveries)
@@ -609,6 +609,11 @@ class AttemptProtocolTests(unittest.TestCase):
         self.assertEqual(response['jobStatus'],'PENDING')
         self.assertNotEqual(response['jobId'],J)
         self.assertEqual(len(list(Path(self.temp.name).rglob('synthetic.pdf'))),1)
+
+    # Backward-compatible name retained for the schema-remediation upload
+    # contracts, which instantiate this unittest case directly.
+    def test_upload_commits_document_job_and_reservation_before_redis(self):
+        return self.test_upload_commits_document_and_outbox_before_dispatch()
 
     def test_upload_reservation_failure_rolls_back_new_document_and_removes_only_new_file(self):
         before=self.database.snapshot()

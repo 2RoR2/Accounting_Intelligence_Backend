@@ -1,7 +1,15 @@
 from __future__ import annotations
+import main as _security_main
 from main import *
 from main import _lock_upload_identity, _processing_error, _lock_workspace_document, _require_current_extraction, _authorised_document, _bank_row_values, _bank_transaction_dto, _uuid_or_422, _account_dto, _cost_centre_dto
 from security.authentication import revoke_user_sessions
+
+_SECURITY_IMPORTED_CONNECT = connect
+
+
+def _security_connect():
+    """Use the test/runtime database override when the security module was imported first."""
+    return connect if connect is not _SECURITY_IMPORTED_CONNECT else _security_main.connect
 
 def update_profile(data: ProfileInput, request: Request):
     user = require_workspace_user(request)
@@ -77,7 +85,7 @@ def login(data: Credentials, request: Request, response: Response):
     return public_user(user)
 
 def me(request: Request):
-    with connect() as db:
+    with _security_connect() as db:
         return public_user(session_user(db, request))
 
 def generate_backup_codes(request: Request):
@@ -320,6 +328,8 @@ def request_lost_authenticator_recovery(data: dict, request: Request):
 
     This does not reset MFA or grant access. A Super Admin must still approve it.
     """
+    if os.getenv("MFA_RECOVERY_POLICY_APPROVED", "false").strip().lower() != "true":
+        raise HTTPException(403, "MFA recovery requests are not enabled.")
     reason = str(data.get("reason", "")).strip()[:500]
     if not reason:
         raise HTTPException(400, "A recovery reason is required.")

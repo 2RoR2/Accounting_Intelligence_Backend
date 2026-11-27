@@ -66,6 +66,12 @@ def execute_image_extraction(document_id, file_path, project_root=None):
         python = Path(configured)
         if not configured:
             raise ImageExtractionError('IMAGE_OCR_ENVIRONMENT_NOT_CONFIGURED')
+        try:
+            same_interpreter = python.resolve() == Path(sys.executable).resolve()
+        except OSError:
+            same_interpreter = False
+        if same_interpreter:
+            raise ImageExtractionError('IMAGE_OCR_ENVIRONMENT_NOT_CONFIGURED')
         if os.getenv('IMAGE_OCR_MODELS_DIR'):
             models = Path(os.environ['IMAGE_OCR_MODELS_DIR'])
         else:

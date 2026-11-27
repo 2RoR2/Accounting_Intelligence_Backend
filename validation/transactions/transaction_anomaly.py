@@ -91,7 +91,11 @@ def detect_transaction_anomalies(
             if reference["transaction_id"] != row["transaction_id"]
         ]
         baseline = None
-        if comparable_rows:
+        # Five varied comparable approved records are the minimum statistical
+        # baseline. A constant history is also retained with fewer rows so the
+        # caller can report the zero-MAD condition explicitly.
+        if (len(comparable_rows) >= 5
+                or (comparable_rows and len({reference["amount"] for reference in comparable_rows}) == 1)):
             amounts = [reference["amount"] for reference in comparable_rows]
             center = Decimal(str(median(amounts)))
             deviations = [abs(value - center) for value in amounts]
@@ -124,10 +128,28 @@ def detect_transaction_anomalies(
             })
 
             if mad == 0:
-                result["reason"] = (
-                    f"Reference transactions for {currency} have zero MAD, "
-                    "so the modified Z-score is undefined; review manually."
-                )
+                # A short constant history, or a zero-valued history, cannot
+                # support an automatic decision. Keep it visible as
+                # insufficient baseline; a sufficiently large non-zero
+                # constant history can still identify a different amount.
+                if len(comparable_rows) < 5 or center == 0:
+                    result.update({
+                        "status": "insufficient_baseline",
+                        "reason": f"The {currency} reference baseline has zero MAD; more varied history is needed.",
+                    })
+                    results.append(result)
+                    continue
+                is_anomaly = amount != center
+                result.update({
+                    "is_anomaly": is_anomaly,
+                    "status": "anomaly" if is_anomaly else "normal",
+                    "upper_bound": str(center),
+                    "reason": (
+                        f"The amount differs from the constant {currency} reference baseline."
+                        if is_anomaly else
+                        f"The amount matches the constant {currency} reference baseline."
+                    ),
+                })
                 results.append(result)
                 continue
 

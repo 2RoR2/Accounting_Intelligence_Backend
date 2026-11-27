@@ -17,6 +17,7 @@ from urllib.parse import quote
 from fastapi import FastAPI, HTTPException, Request, Response, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
+import psycopg
 import jwt
 from pydantic import BaseModel, Field, StringConstraints, field_validator
 from psycopg.errors import UniqueViolation
@@ -261,19 +262,39 @@ async def unexpected_error(_request: Request, exc: Exception):
     # Never return connection strings, credentials or database details to the browser.
     log.error("API failure at %s: %s", _request.url.path, type(exc).__name__,
               exc_info=(type(exc), exc, exc.__traceback__))
-    return JSONResponse({"detail": "Account service is unavailable. Check the backend configuration."}, status_code=503)
+    return JSONResponse({"detail": "The request could not be completed."}, status_code=500)
+
+
+def database_error(_request: Request, exc: psycopg.Error):
+    """Return stable, non-sensitive categories for database failures."""
+    if isinstance(exc, (psycopg.errors.UniqueViolation, psycopg.errors.ForeignKeyViolation)):
+        status, code = 409, "DATA_CONFLICT"
+    elif isinstance(exc, psycopg.errors.DeadlockDetected):
+        status, code = 409, "CONCURRENT_CHANGE"
+    elif isinstance(exc, psycopg.OperationalError):
+        status, code = 503, "DATA_SERVICE_UNAVAILABLE"
+    elif isinstance(exc, (psycopg.errors.NumericValueOutOfRange,)):
+        status, code = 422, "INVALID_DATA"
+    else:
+        status, code = 500, "DATA_OPERATION_FAILED"
+    return JSONResponse({"code": code, "message": "The database operation could not be completed."}, status_code=status)
+
+
+app.add_exception_handler(psycopg.Error, database_error)
 
 
 def rate_limit(key: str, maximum: int, seconds: int, *, message: str | None = None, code: str | None = None):
     # A separate transaction ensures failures cannot roll back the attempt counter.
+    now_value = utcnow()
+    cutoff = now_value - timedelta(seconds=seconds)
     with connect() as db:
         row = db.execute("""INSERT INTO auth_rate_limits(key) VALUES (%s)
             ON CONFLICT(key) DO UPDATE SET
-              hits = CASE WHEN auth_rate_limits.window_start < now() - %s * interval '1 second'
+              hits = CASE WHEN auth_rate_limits.window_start < %s
                           THEN 1 ELSE auth_rate_limits.hits + 1 END,
-              window_start = CASE WHEN auth_rate_limits.window_start < now() - %s * interval '1 second'
-                                  THEN now() ELSE auth_rate_limits.window_start END
-            RETURNING hits""", (digest(key), seconds, seconds)).fetchone()
+              window_start = CASE WHEN auth_rate_limits.window_start < %s
+                                  THEN %s ELSE auth_rate_limits.window_start END
+            RETURNING hits""", (digest(key), cutoff, cutoff, now_value)).fetchone()
     if row["hits"] > maximum:
         detail = message or "Too many attempts. Please wait and try again."
         if code:
@@ -325,6 +346,66 @@ def public_user(user):
             "status": user["status"].upper(), "mustChangePassword": user["must_change_password"],
             "invitedBy": str(user["invited_by"] or ""),
             "invitedAt": str(user["invited_at"] or ""), "lastLogin": str(user["last_login_at"] or "")}
+
+
+def get_document_detail(document_id: str, request: Request):
+    """Compatibility entrypoint for callers that historically imported this from main."""
+    user = require_workspace_user(request)
+    visibility = " AND (d.owner_id=%s OR d.assigned_to=%s)" if user["role"] == "accountant" else ""
+    params = [document_id, tenant_scope(user), tenant_scope(user)]
+    if user["role"] == "accountant":
+        params.extend([user["id"], user["id"]])
+    with connect() as db:
+        row = db.execute(
+            f"SELECT * FROM documents d WHERE d.id=%s AND (%s IS NULL OR d.tenant_id=%s){visibility}",
+            params,
+        ).fetchone()
+    if not row:
+        raise HTTPException(404, "Document not found.")
+    return {
+        "id": str(row["id"]),
+        "code": row.get("document_code") if hasattr(row, "get") else None,
+        "displayName": row.get("original_filename") if hasattr(row, "get") else None,
+        "name": row.get("original_filename") if hasattr(row, "get") else None,
+        "tenantId": str(row["tenant_id"]),
+        "ownerId": str(row["owner_id"]),
+        "assignedTo": str(row["assigned_to"]) if row.get("assigned_to") else None,
+        "kind": str(row.get("kind") or "").upper(),
+        "category": str(row.get("category") or "").upper(),
+        "status": str(row.get("status") or "").upper(),
+        "mimeType": row.get("mime_type"),
+        "fileSize": row.get("file_size_bytes"),
+        "contentRevision": row.get("content_revision"),
+        "createdAt": str(row.get("uploaded_at")) if row.get("uploaded_at") else None,
+        "updatedAt": str(row.get("updated_at")) if row.get("updated_at") else None,
+    }
+
+
+def get_document_reviews(document_id: str, request: Request):
+    """Read review history using the canonical reviewed_at timestamp."""
+    user = _authorised_document(request, document_id)
+    with connect() as db:
+        submissions = db.execute(
+            "SELECT * FROM review_submissions WHERE document_id=%s AND tenant_id=%s ORDER BY created_at DESC",
+            (document_id, user["tenant_id"]),
+        ).fetchall()
+        decisions = db.execute(
+            "SELECT * FROM review_decisions WHERE document_id=%s AND tenant_id=%s ORDER BY reviewed_at DESC",
+            (document_id, user["tenant_id"]),
+        ).fetchall()
+    return {
+        "submissions": [
+            {"id": str(r["id"]), "submittedBy": str(r["submitted_by"]),
+             "decision": r["decision"].upper(), "note": r["note"] or "",
+             "createdAt": str(r["created_at"])} for r in submissions
+        ],
+        "decisions": [
+            {"id": str(r["id"]), "reviewedBy": str(r["reviewed_by"]),
+             "decision": r["decision"].upper(), "note": r["note"] or "",
+             "approvedRevision": r["approved_content_revision"],
+             "createdAt": str(r["reviewed_at"])} for r in decisions
+        ],
+    }
 
 
 def session_user(db, request):
@@ -679,6 +760,18 @@ def require_workspace_user(request: Request, roles=None):
     if roles and user["role"] not in roles:
         raise HTTPException(403, "You do not have permission for this workspace.")
     return user
+
+
+@app.post("/api/bank-reconciliation")
+def bank_reconciliation(payload: dict, request: Request):
+    """Legacy compare-only bank endpoint retained for older clients.
+
+    It deliberately delegates to the pure matcher and never creates or updates
+    canonical accounting records.
+    """
+    require_workspace_user(request, {"super_admin", "local_admin", "accountant"})
+    from validation.matching.bank_reconciliation import reconcile_records
+    return reconcile_records(payload.get("accounting_records") or [], payload.get("bank_transactions") or [])
 
 
 def api_user(row):

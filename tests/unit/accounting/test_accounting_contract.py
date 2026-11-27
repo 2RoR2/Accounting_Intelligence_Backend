@@ -61,7 +61,7 @@ class ContractDatabase:
         self.db.executescript('''
         CREATE TABLE documents (id TEXT PRIMARY KEY, tenant_id TEXT, owner_id TEXT, assigned_to TEXT,
           kind TEXT, category TEXT, status TEXT, content_revision INTEGER,
-          uploaded_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT, processing_started_at TEXT, processing_seconds TEXT, processing_completed_at TEXT);
+          uploaded_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT, processing_started_at TEXT, processing_seconds TEXT, processing_completed_at TEXT, document_code TEXT, excluded_at TEXT);
         CREATE TABLE pending_jobs (id TEXT PRIMARY KEY, tenant_id TEXT, document_id TEXT, status TEXT,
           created_at TEXT DEFAULT CURRENT_TIMESTAMP, finished_at TEXT, last_error TEXT, updated_at TEXT,
           dispatch_token TEXT, claim_token TEXT, dispatch_expires_at TEXT, processing_expires_at TEXT,
@@ -83,7 +83,7 @@ class ContractDatabase:
         CREATE TABLE review_decisions (document_id TEXT, tenant_id TEXT, decision TEXT, approved_content_revision INTEGER);
         CREATE TABLE validation_rules (tenant_id TEXT, require_supplier BOOLEAN, require_invoice_number_for_invoice BOOLEAN,
           require_reference_for_bill BOOLEAN, require_receipt_identifier BOOLEAN,check_duplicate BOOLEAN DEFAULT TRUE,require_po_for_ap BOOLEAN DEFAULT FALSE);
-        CREATE TABLE exceptions (document_id TEXT, tenant_id TEXT, severity TEXT, status TEXT DEFAULT 'open',
+        CREATE TABLE exceptions (id TEXT DEFAULT (lower(hex(randomblob(16)))), document_id TEXT, tenant_id TEXT, severity TEXT, status TEXT DEFAULT 'open',
           type TEXT, message TEXT, note TEXT, resolved_at TEXT);
         CREATE TABLE validation_results (document_id TEXT, tenant_id TEXT, content_revision INTEGER,
           rule_id TEXT, rule_source TEXT, rule_version TEXT, document_type TEXT, status TEXT,
@@ -150,7 +150,8 @@ class AccountingContractTests(unittest.TestCase):
         self.database.db.executescript('''
           ALTER TABLE audit_logs ADD COLUMN user_id TEXT;
           CREATE TABLE users (id TEXT PRIMARY KEY, tenant_id TEXT, role TEXT);
-          CREATE TABLE notifications (tenant_id TEXT, user_id TEXT, type TEXT, title TEXT, message TEXT, resource TEXT);''')
+          CREATE TABLE notifications (tenant_id TEXT, user_id TEXT, type TEXT, title TEXT, message TEXT, resource TEXT);
+        CREATE TABLE auth_rate_limits (key TEXT PRIMARY KEY, window_start TEXT DEFAULT CURRENT_TIMESTAMP, hits INTEGER DEFAULT 1);''')
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.claim = Claim(Delivery(DOCUMENT, JOB, TENANT, DISPATCH_TOKEN), CLAIM_TOKEN)

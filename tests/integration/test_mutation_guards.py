@@ -21,26 +21,39 @@ class MutationDatabase(ContractDatabase):
         super().__init__()
         self.lock = RLock()
         self.fail_line_audit = False
+        def add_column(table, name, definition):
+            columns = {row[1] for row in self.db.execute('PRAGMA table_info('+table+')')}
+            if name not in columns:
+                self.db.execute('ALTER TABLE '+table+' ADD COLUMN '+name+' '+definition)
         for name, definition in [('document_code', "TEXT DEFAULT 'INVOICE-SYN'"), ('original_filename', "TEXT DEFAULT 'SYN.pdf'"),
                                  ('mime_type', "TEXT DEFAULT 'application/pdf'"), ('file_size_bytes', 'INTEGER DEFAULT 1'),
                                  ('storage_path', "TEXT DEFAULT 'synthetic/no-source-file'"), ('file_hash_sha256', "TEXT DEFAULT 'synthetic-hash'"),
                                  ('excluded_at', 'TEXT')]:  # set aside (excluded_at) is read by every correction
-            self.db.execute('ALTER TABLE documents ADD COLUMN '+name+' '+definition)
+            add_column('documents', name, definition)
         for name in ('id','submission_id','reviewed_by','note','reviewed_at'):
-            self.db.execute('ALTER TABLE review_decisions ADD COLUMN '+name+' TEXT')
-        self.db.execute('ALTER TABLE audit_logs ADD COLUMN user_id TEXT')
+            add_column('review_decisions', name, 'TEXT')
+        add_column('audit_logs', 'user_id', 'TEXT')
         self.db.executescript("""
             CREATE TABLE review_submissions (id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
               document_id TEXT,tenant_id TEXT,submitted_by TEXT,decision TEXT,note TEXT,content_revision INTEGER,
               created_at TEXT DEFAULT CURRENT_TIMESTAMP);
-            CREATE TABLE users (id TEXT PRIMARY KEY,tenant_id TEXT,status TEXT);
+            CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY,tenant_id TEXT,status TEXT);
             CREATE TABLE workload_assignments (id TEXT DEFAULT 'workload-synthetic',tenant_id TEXT,document_id TEXT UNIQUE,
               assigned_to TEXT,assigned_by TEXT,priority TEXT,due_at TEXT,completed_at TEXT);
             CREATE TABLE document_comments (id TEXT DEFAULT 'comment-synthetic',document_id TEXT,tenant_id TEXT,
               author_id TEXT,comment TEXT,page_number INTEGER,field_key TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP);
             CREATE TABLE document_tags (id TEXT,tenant_id TEXT);
             CREATE TABLE document_tag_links (document_id TEXT,tag_id TEXT,created_by TEXT);
+            CREATE TABLE IF NOT EXISTS notifications (tenant_id TEXT,user_id TEXT,type TEXT,title TEXT,message TEXT,resource TEXT);
+            CREATE TABLE IF NOT EXISTS auth_rate_limits (key TEXT PRIMARY KEY,window_start TEXT DEFAULT CURRENT_TIMESTAMP,hits INTEGER DEFAULT 1);
+            CREATE TABLE IF NOT EXISTS benchmark_demo_tenants (tenant_id TEXT PRIMARY KEY,enabled BOOLEAN DEFAULT TRUE);
+            CREATE TABLE IF NOT EXISTS benchmark_demo_documents (tenant_id TEXT,document_id TEXT);
         """)
+        for name, definition in [('next_attempt_at', 'TEXT'), ('dispatched_at', 'TEXT'),
+                                 ('dispatch_count', 'INTEGER DEFAULT 0'), ('max_attempts', 'INTEGER DEFAULT 3'),
+                                 ('claimed_at', 'TEXT'), ('heartbeat_at', 'TEXT')]:
+            add_column('pending_jobs', name, definition)
+        self.db.execute("UPDATE pending_jobs SET next_attempt_at=COALESCE(next_attempt_at,CURRENT_TIMESTAMP), dispatch_count=COALESCE(dispatch_count,0), max_attempts=COALESCE(max_attempts,3), attempt_count=COALESCE(attempt_count,0)")
         self.db.execute('INSERT INTO users VALUES (?,?,?)', (USER['id'],TENANT,'active'))
         self.db.commit()
 
@@ -90,6 +103,19 @@ class Phase3DMutationTests(unittest.TestCase):
         self.user = {**USER,'tenant_code':'TENANT_DISPLAY_ONLY','tenant_name':'Synthetic tenant','name':'Synthetic user',
                      'email':'synthetic@example.invalid','status':'active','must_change_password':False,'invited_by':None,
                      'invited_at':None,'last_login_at':None}
+        def dispatch_pending():
+            with self.database as db:
+                pending = db.execute("SELECT * FROM pending_jobs WHERE status='pending'").fetchall()
+                deliveries = [
+                    attempts.reserve_dispatch(db, str(row['document_id']), str(row['tenant_id']), job_id=str(row['id']))
+                    for row in pending
+                ]
+            for delivery in deliveries:
+                attempts.publish(delivery)
+            return len(deliveries)
+        dispatcher = patch('services.queue.durable.dispatch_due_jobs', side_effect=dispatch_pending)
+        dispatcher.start()
+        self.addCleanup(dispatcher.stop)
         for patcher in (patch.object(attempts,'connect',return_value=self.database),
                         patch('services.queue.config.get_queues',return_value=(Mock(),None)),
                         patch.object(api,'connect',return_value=self.database),
@@ -118,11 +144,15 @@ class Phase3DMutationTests(unittest.TestCase):
         self.database.db.execute("UPDATE documents SET status='failed'")
         self.database.db.commit()
     def add_open_job(self,status='pending'):
-        job='11111111-1111-4111-8111-111111111113'
+        job={'pending':'11111111-1111-4111-8111-111111111114',
+             'dispatched':'11111111-1111-4111-8111-111111111115',
+             'processing':'11111111-1111-4111-8111-111111111116'}.get(status,'11111111-1111-4111-8111-111111111114')
+        self.database.db.execute("DELETE FROM pending_jobs WHERE document_id=? AND status IN ('pending','dispatched','processing')", (DOCUMENT,))
         future=datetime.now(timezone.utc)+timedelta(hours=1)
+        due=datetime.now(timezone.utc)-timedelta(seconds=5)
         self.database.db.execute("""INSERT INTO pending_jobs(id,tenant_id,document_id,status,
-            dispatch_token,dispatch_expires_at,claim_token,processing_expires_at)
-            VALUES (?,?,?,?,?,?,?,?)""",(job,TENANT,DOCUMENT,status,str(uuid4()),future,str(uuid4()),future))
+            dispatch_token,dispatch_expires_at,claim_token,processing_expires_at,next_attempt_at,attempt_count)
+            VALUES (?,?,?,?,?,?,?,?,?,0)""",(job,TENANT,DOCUMENT,status,str(uuid4()),future,str(uuid4()),future,due))
         self.database.db.commit()
         return job
     def calls_for_edit(self):

@@ -74,7 +74,7 @@ def standard_filename(db, document, fields: list[dict[str, Any]], identifier: st
 
 def _rename_after_extraction(db, document, mapped_fields) -> None:
     """Give a captured document the M4 name once extraction found its number (or at least its date and party)."""
-    identifier = _usable_document_identifier(mapped_fields, document["kind"])
+    identifier = _usable_document_identifier(mapped_fields, document.get("kind") or "invoice")
     if not identifier and not (_field_value(mapped_fields, "date") and _field_value(mapped_fields, "supplier", "customer")):
         return
     source = str(document.get('storage_path') or '')
@@ -216,6 +216,8 @@ def persist_extraction_result(document_id: str, result: dict[str, Any], *, claim
 
 
 def mark_extraction_job_failed(document_id: str, message: str = '', *, claim=None) -> bool:
-    if not isinstance(claim,attempts.Claim) or claim.delivery.document_id!=document_id:
-        raise attempts.AttemptRejected('IDENTITY_REQUIRED')
+    # A late/unbound worker failure has no trusted delivery identity and must
+    # not open a database connection or mutate any job.
+    if not isinstance(claim, attempts.Claim) or claim.delivery.document_id != document_id:
+        return False
     return attempts.fail_claim(claim, message)
