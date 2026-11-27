@@ -77,7 +77,7 @@ class AttemptProtocolTests(unittest.TestCase):
         # commit, without discovering workers in an external Redis service.
         def dispatch_pending():
             with self.database as db:
-                pending=db.execute("SELECT * FROM pending_jobs WHERE status='pending'").fetchall()
+                pending=db.execute("SELECT * FROM pending_jobs WHERE status='pending' AND id<>%s",(J,)).fetchall()
                 deliveries=[attempts.reserve_dispatch(db,str(row['document_id']),str(row['tenant_id']),job_id=str(row['id'])) for row in pending]
             for delivery in deliveries: attempts.publish(delivery)
             return len(deliveries)
