@@ -109,3 +109,29 @@ def test_ordinary_invoice_wording_is_not_an_injection_signal(line):
 ])
 def test_instruction_like_text_is_still_flagged(line):
     assert sanitize_document_text(line, max_chars=500)[1] == ["PROMPT_INJECTION_SIGNAL"]
+
+
+def test_model_contract_unwraps_line_values_given_in_the_field_shape():
+    """Seen live on the C5 demo scan: line values as {"value", "raw"} objects. Base dropped only the
+    line; the guard must not discard the whole answer (and with it every field)."""
+    result = validate_extraction_response({
+        "document_type": "invoice",
+        "fields": {"total_amount": {"value": "2322.60", "raw": "2,322.60"}},
+        "line_items": [{"description": {"value": "Steel bar", "raw": "Steel bar 12mm"},
+                        "quantity": {"value": "4", "raw": None},
+                        "unit_price": {"value": "553.00", "raw": "553.00"},
+                        "line_total": {"value": "2212.00", "raw": "2,212.00"}}],
+    })
+    assert result["fields"]["total_amount"]["value"] == "2322.60"
+    assert result["line_items"][0] == {"description": "Steel bar 12mm", "quantity": "4",
+                                       "unit_price": "553.00", "line_total": "2,212.00"}
+    with pytest.raises(AIGuardError):  # Other nested objects are still refused.
+        validate_extraction_response({"document_type": "invoice", "fields": {},
+                                      "line_items": [{"description": {"cmd": "x"}}]})
+
+
+def test_model_contract_accepts_a_bare_field_value_like_the_resolver_did():
+    result = validate_extraction_response({"document_type": "invoice", "fields": {"total_amount": "10.00",
+                                                                                  "due_date": None}})
+    assert result["fields"]["total_amount"] == {"value": "10.00", "raw": "10.00"}
+    assert result["fields"]["due_date"] == {"value": None, "raw": None}

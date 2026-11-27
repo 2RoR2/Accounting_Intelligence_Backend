@@ -167,9 +167,14 @@ def execute_lite_extraction(document_id, file_path, project_root=None, *, provid
                 ai_record = structured['ai']
             except text_llm.TextModelError as error:
                 # The document is unaffected: it falls back to rules and human review.
-                logger.warning('Text model unavailable for %s: %s', document_id, error.code)
+                # The guard's own reason (e.g. AI_RESPONSE_FIELD_TYPE_INVALID) is a code, never
+                # document text; keep it so a discarded answer can be diagnosed.
+                guard_code = getattr(error.__cause__, 'code', None)
+                logger.warning('Text model unavailable for %s: %s %s', document_id, error.code, guard_code or '')
                 ai_record = {'mode': 'text', 'image_sent': False, 'error': error.code,
                              'failed': list(getattr(error, 'failures', []))}
+                if guard_code:
+                    ai_record['guard_code'] = guard_code
                 issue_code = error.code if error.code in {'AI_SCHEMA_INVALID', 'AI_DAILY_LIMIT_REACHED'} else 'AI_UNAVAILABLE'
                 issues.append({'code': issue_code,
                                'detail': ('The AI response did not pass the schema and was discarded.'

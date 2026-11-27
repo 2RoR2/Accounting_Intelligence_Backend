@@ -112,6 +112,16 @@ def _string_or_null(value: Any) -> str | None:
     return value
 
 
+def _line_value(value: Any) -> Any:
+    """Line values are plain strings, but models sometimes answer them in the
+    field shape {"value": ..., "raw": ...} (seen on scanned demo invoices).
+    Use the printed text, which the resolver searches for, else the value."""
+    if isinstance(value, dict) and value and not set(value) - {"value", "raw"}:
+        raw = value.get("raw")
+        return raw if isinstance(raw, str) and raw.strip() else value.get("value")
+    return value
+
+
 def validate_extraction_response(answer: Any) -> dict[str, Any]:
     """Validate and normalise the only model contract used by lite extraction."""
     if not isinstance(answer, dict):
@@ -143,6 +153,10 @@ def validate_extraction_response(answer: Any) -> dict[str, Any]:
 
     fields: dict[str, dict[str, str | None]] = {}
     for name, cell in supplied_fields.items():
+        # A bare value ({"total_amount": "10.00"}) was always read as
+        # {value, raw} by the resolver; keep it in the contract shape.
+        if cell is None or isinstance(cell, (str, int, float)) and not isinstance(cell, bool):
+            cell = {"value": cell, "raw": cell}
         if not isinstance(cell, dict):
             raise AIGuardError("AI_RESPONSE_FIELD_SCHEMA_INVALID")
         if set(cell) - {"value", "raw"}:
@@ -158,7 +172,7 @@ def validate_extraction_response(answer: Any) -> dict[str, Any]:
     for item in items:
         if not isinstance(item, dict) or set(item) - ALLOWED_LINE_ITEM_FIELDS:
             raise AIGuardError("AI_RESPONSE_LINE_ITEM_SCHEMA_INVALID")
-        line_items.append({name: _string_or_null(item.get(name)) for name in ALLOWED_LINE_ITEM_FIELDS})
+        line_items.append({name: _string_or_null(_line_value(item.get(name))) for name in ALLOWED_LINE_ITEM_FIELDS})
     return {"document_type": document_type, "fields": fields, "line_items": line_items}
 
 
