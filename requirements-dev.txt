@@ -1,6 +1,7 @@
 # Development and test dependencies. The legacy queue tests exercise RQ with fakeredis;
 # pypdf builds small PDF fixtures (it used to arrive indirectly through Docling).
 -r requirements-rq.txt
+-r requirements-docling.txt
 pytest>=8,<10
 fakeredis==2.39.0
 pypdf>=5,<7
