@@ -115,7 +115,8 @@ class Phase3DMutationTests(unittest.TestCase):
             return len(deliveries)
         dispatcher = patch('services.queue.durable.dispatch_due_jobs', side_effect=dispatch_pending)
         dispatcher.start()
-        self.addCleanup(dispatcher.stop)        for patcher in (patch.object(attempts,'connect',return_value=self.database),
+        self.addCleanup(dispatcher.stop)
+        for patcher in (patch.object(attempts,'connect',return_value=self.database),
                         patch('services.queue.config.get_queues',return_value=(Mock(),None)),
                         patch.object(api,'connect',return_value=self.database),
                         patch.object(persistence,'connect',return_value=self.database),
