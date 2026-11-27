@@ -244,6 +244,97 @@ class TextModelProvider:
                         'prompt_tokens': usage.get('prompt_tokens'),
                         'completion_tokens': usage.get('completion_tokens')}
 
+    def chat(self, messages, *, tools=None, tool_choice='auto', response_format=None, max_tokens=1200):
+        """One Chat Completions call with optional tools (Ask AccordAI). Additive: complete_json is unchanged.
+
+        Returns (message, call record). The message is {'content': str | None, 'tool_calls': [...]} where each tool
+        call is {'id', 'name', 'arguments'} with the arguments still a JSON string (the caller validates them).
+        response_format is passed through, e.g. {'type': 'json_schema', ...}; providers do not allow it with tools.
+        The record holds no content.
+        """
+        if not isinstance(messages, list) or not messages:
+            raise TextModelError('AI_BAD_REQUEST')
+        body = {'temperature': 0, 'max_tokens': max_tokens,
+                **({'reasoning_effort': self.reasoning_effort} if self.reasoning_effort else {}), **self.extra_body,
+                'model': self.model, 'stream': False, 'messages': messages}
+        if tools:
+            body['tools'] = tools
+            body['tool_choice'] = tool_choice
+        if response_format is not None:
+            body['response_format'] = response_format
+        data = json.dumps(body, ensure_ascii=False).encode('utf-8')
+        if len(data) > MAX_REQUEST_BYTES:
+            raise TextModelError('AI_REQUEST_TOO_LARGE')
+        status, payload, attempts, seconds = self._post(data)
+        try:
+            envelope = json.loads(payload)
+            choice = envelope['choices'][0]
+            message = choice['message']
+        except (ValueError, KeyError, IndexError, TypeError):
+            raise TextModelError('AI_RESPONSE_MALFORMED') from None
+        if not isinstance(message, dict):
+            raise TextModelError('AI_RESPONSE_MALFORMED')
+        if choice.get('finish_reason') == 'length':
+            raise TextModelError('AI_RESPONSE_TRUNCATED')
+        content = message.get('content')
+        if content is not None and not isinstance(content, str):
+            raise TextModelError('AI_RESPONSE_MALFORMED')
+        calls = []
+        for call in message.get('tool_calls') or []:
+            function = call.get('function') if isinstance(call, dict) else None
+            if not isinstance(function, dict) or not isinstance(function.get('name'), str):
+                raise TextModelError('AI_RESPONSE_MALFORMED')
+            arguments = function.get('arguments')
+            if isinstance(arguments, dict):
+                arguments = json.dumps(arguments)
+            calls.append({'id': str(call.get('id') or f'call_{len(calls) + 1}'), 'name': function['name'],
+                          'arguments': arguments if isinstance(arguments, str) else '{}'})
+        usage = envelope.get('usage') if isinstance(envelope.get('usage'), dict) else {}
+        return {'content': content, 'tool_calls': calls}, {
+            'provider': self.name, 'model': self.model, 'local': self.local, 'status': status,
+            'attempts': attempts, 'seconds': seconds,
+            'prompt_tokens': usage.get('prompt_tokens'), 'completion_tokens': usage.get('completion_tokens')}
+
+    def _post(self, data):
+        """POST to /chat/completions with the same retry rules as complete_json. Returns (status, payload, attempts,
+        seconds). A separate copy so that complete_json, which extraction depends on, is not touched."""
+        headers = {'Content-Type': 'application/json', 'Accept': 'application/json',
+                   'User-Agent': 'accounting-assistant/1'}
+        if self._api_key:
+            headers['Authorization'] = 'Bearer ' + self._api_key
+        started = time.perf_counter()
+        attempts, status = 0, None
+        while True:
+            attempts += 1
+            request = Request(self.base + '/chat/completions', data=data, headers=headers, method='POST')
+            try:
+                with self.opener.open(request, timeout=self.timeout) as response:
+                    status = getattr(response, 'status', 200)
+                    payload = response.read(MAX_RESPONSE_BYTES + 1)
+                break
+            except HTTPError as error:
+                status = error.code
+                retry_after = error.headers.get('Retry-After') if error.headers else None
+                error.close()
+                budget = self.server_retries if status in SERVER_ERROR_STATUS else self.max_retries
+                if status in RETRYABLE_STATUS and attempts <= budget and not exhausted_limit(status, retry_after):
+                    self._sleep(retry_delay(status, retry_after, attempts))
+                    continue
+                code = {400: 'AI_BAD_REQUEST', 401: 'AI_AUTH_REJECTED', 402: 'AI_BILLING_REQUIRED',
+                        403: 'AI_AUTH_REJECTED', 404: 'AI_MODEL_OR_ENDPOINT_NOT_FOUND', 413: 'AI_REQUEST_TOO_LARGE',
+                        429: 'AI_RATE_LIMITED'}.get(status)
+                if code is None:
+                    code = 'AI_PROVIDER_SERVER_ERROR' if status in SERVER_ERROR_STATUS else 'AI_HTTP_ERROR'
+                raise TextModelError(code, status) from None
+            except (URLError, TimeoutError, OSError):
+                if attempts <= self.max_retries:
+                    self._sleep(min(20.0, 1.5 * 2 ** (attempts - 1)))
+                    continue
+                raise TextModelError('AI_UNREACHABLE') from None
+        if len(payload) > MAX_RESPONSE_BYTES:
+            raise TextModelError('AI_RESPONSE_TOO_LARGE')
+        return status, payload, attempts, round(time.perf_counter() - started, 3)
+
 
 RATE_LIMIT_MAX_WAIT_SECONDS = 60.0
 
@@ -334,6 +425,29 @@ def complete_json(system, user, *, providers=None, max_tokens=4000):
                     break
                 record['failed_before'] = failures
                 return answer, record
+    final_error = TextModelError(failures[-1]['error'] if failures else 'AI_NO_PROVIDER')
+    final_error.failures = failures
+    raise final_error
+
+
+def chat(messages, *, providers, tools=None, tool_choice='auto', response_format=None, max_tokens=1200):
+    """Ask each provider in turn for one chat turn (Ask AccordAI). Returns (message, call record).
+
+    Unlike complete_json the caller always passes the providers (the assistant has its own model setting), and an
+    unreadable answer is not retried here: the assistant's own validation decides what to do with it.
+    """
+    failures = []
+    with _request_slots():
+        for provider in providers:
+            try:
+                message, record = provider.chat(messages, tools=tools, tool_choice=tool_choice,
+                                                response_format=response_format, max_tokens=max_tokens)
+            except TextModelError as error:
+                failures.append({'provider': provider.name, 'error': error.code,
+                                 **({'status': error.status} if getattr(error, 'status', None) else {})})
+                continue
+            record['failed_before'] = failures
+            return message, record
     final_error = TextModelError(failures[-1]['error'] if failures else 'AI_NO_PROVIDER')
     final_error.failures = failures
     raise final_error
