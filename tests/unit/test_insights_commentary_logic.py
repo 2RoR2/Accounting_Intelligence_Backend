@@ -274,3 +274,39 @@ def test_the_comparison_is_the_same_days_of_the_previous_month():
     assert commentary.is_partial(date(2026, 11, 1), date(2026, 11, 23)) and not commentary.is_partial(
         date(2026, 10, 1), date(2026, 10, 31))
     assert commentary.period_label(date(2026, 11, 1), date(2026, 11, 23)) == "November 2026"
+
+
+# ---------------------------------------------------------------- integration: shared guard and providers
+
+@pytest.mark.parametrize("template", ["Sales rose by thousands on {{f2}}.", "Payables reached a million ringgit."])
+def test_binding_uses_the_assistant_guard_for_number_words(template):
+    with pytest.raises(BindingError) as error:
+        commentary.bind_paragraph(template, table().by_id())
+    assert error.value.code == "NUMBER_WORD"
+
+
+KEY = "k" * 24
+
+
+def test_commentary_uses_the_assistant_providers_when_no_commentary_endpoint_is_set():
+    env = {"AI_ASSIST": "on", "AI_PROVIDERS": "custom", "AI_BASE_URL": "https://api.groq.com/openai/v1",
+           "AI_MODEL": "openai/gpt-oss-120b",
+           "AI_API_KEY": KEY}
+    providers = commentary.commentary_providers(env)
+    assert [p.name for p in providers] == ["custom"]
+    assert providers[0].model == "openai/gpt-oss-20b" and providers[0].max_retries == 1
+
+
+def test_commentary_endpoint_settings_win_and_groq_key_is_the_last_resort():
+    explicit = commentary.commentary_providers({"AI_ASSIST_API_KEY": KEY, "AI_PROVIDERS": "gemini",
+                                                "GEMINI_API_KEY": "g" * 24})
+    assert explicit[0].base == commentary.DEFAULT_BASE_URL
+    fallback = commentary.commentary_providers({"AI_PROVIDERS": "gemini", "GROQ_API_KEY": KEY})
+    assert fallback[0].base == commentary.DEFAULT_BASE_URL and fallback[0].model == commentary.DEFAULT_MODEL
+    with pytest.raises(TextModelError):
+        commentary.commentary_providers({"AI_PROVIDERS": "gemini"})
+
+
+def test_commentary_flag_is_the_shared_ai_assist_switch():
+    assert commentary.ai_enabled({"AI_ASSIST": "on"}) and not commentary.ai_enabled({"AI_ASSIST": "off"})
+    assert not commentary.ai_enabled({})

@@ -23,6 +23,8 @@ from decimal import Decimal
 from difflib import SequenceMatcher
 from typing import Any
 
+from security.assistant_guard import AIGuardError
+from security.assistant_guard import bind_numbers as guard_bind_numbers
 from services.insights import fraud
 from services.insights.fraud import Doc, ev, money
 from services.routes.home.lanes import (
@@ -84,21 +86,27 @@ def short(text: str | None, limit: int = 120) -> str:
 
 
 # ---------------------------------------------------------------------------------------------------------------
-# Number binding (stub with the same signature BE-A's guard will provide)
+# Number binding (Ask AccordAI's guard, security/assistant_guard.bind_numbers)
 # ---------------------------------------------------------------------------------------------------------------
 
 PLACEHOLDER = re.compile(r'\{\{\s*([a-z_][a-z0-9_]*)\s*\}\}')
 
 
 def bind_numbers(template: str, facts: dict[str, str]) -> str:
-    """Fill {{name}} placeholders from server facts. Raises ValueError when the template has a digit outside a
-    placeholder or names a fact that does not exist, so a model can never introduce a number."""
-    if re.search(r'\d', PLACEHOLDER.sub('', template)):
-        raise ValueError('DIGIT_OUTSIDE_PLACEHOLDER')
-    unknown = {name for name in PLACEHOLDER.findall(template) if name not in facts}
+    """Fill {{name}} placeholders from server facts through the assistant's number guard.
+
+    The draft uses readable placeholder names; they are mapped to the guard's {{fN}} ids, so the same rules apply as
+    for Ask AccordAI answers: no digit, number word, link or markup outside a placeholder and no unknown fact. Raises
+    ValueError (AIGuardError) otherwise, so a model can never introduce a number. Values are already formatted text.
+    """
+    names = list(dict.fromkeys(PLACEHOLDER.findall(template)))
+    unknown = [name for name in names if name not in facts]
     if unknown:
-        raise ValueError('UNKNOWN_PLACEHOLDER')
-    return PLACEHOLDER.sub(lambda match: facts[match.group(1)], template)
+        raise AIGuardError('UNKNOWN_PLACEHOLDER')
+    ids = {name: f'f{index}' for index, name in enumerate(names, start=1)}
+    mapped = PLACEHOLDER.sub(lambda match: '{{' + ids[match.group(1)] + '}}', template)
+    bound = {ids[name]: {'value': str(facts[name]), 'unit': 'plain'} for name in names}
+    return guard_bind_numbers(mapped, bound)[0]
 
 
 # ---------------------------------------------------------------------------------------------------------------

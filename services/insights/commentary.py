@@ -295,8 +295,30 @@ def build_facts(db, tenant, start: date, end: date) -> FactTable:
 
 # --------------------------------------------------------------------------------------------- number binding
 
+# Ask AccordAI's guard codes, as this module's BindingError codes (kept so logs and audit rows read the same).
+GUARD_CODES = {
+    "AI_ANSWER_EMPTY": "TEMPLATE_INVALID",
+    "AI_ANSWER_CONTROL_CHARACTER": "TEMPLATE_INVALID",
+    "AI_ANSWER_TOO_LONG": "TEMPLATE_TOO_LONG",
+    "AI_ANSWER_PLACEHOLDER_INVALID": "STRAY_BRACE",
+    "AI_ANSWER_DIGIT": "STRAY_DIGIT",
+    "AI_ANSWER_NUMBER_WORD": "NUMBER_WORD",
+    "AI_ANSWER_LINK": "MARKUP",
+    "AI_ANSWER_MARKUP": "MARKUP",
+    "AI_ANSWER_UNKNOWN_FACT": "UNKNOWN_FACT",
+}
+
+
 def bind_paragraph(template: Any, facts: Mapping[str, Mapping[str, Any]]) -> tuple[str, list[str]]:
-    """Fill ``{{fN}}`` placeholders from the fact table; refuse any text that carries a number of its own."""
+    """Fill ``{{fN}}`` placeholders from the fact table; refuse any text that carries a number of its own.
+
+    The number rules are Ask AccordAI's (``security/assistant_guard.bind_numbers``): no digit, number word, link,
+    markup or stray brace outside a placeholder and no unknown fact. Commentary adds a shorter length cap and refuses
+    any mention of tax. Each fact prints as its ``display`` text.
+    """
+    from security.ai_guard import AIGuardError
+    from security.assistant_guard import bind_numbers
+
     if not isinstance(template, str) or not template.strip():
         raise BindingError("TEMPLATE_INVALID")
     if len(template) > MAX_TEMPLATE_CHARS:
@@ -304,23 +326,16 @@ def bind_paragraph(template: Any, facts: Mapping[str, Mapping[str, Any]]) -> tup
     wording = PLACEHOLDER.sub(" ", template)
     if any(char.isdigit() for char in wording):
         raise BindingError("STRAY_DIGIT")
-    if "{" in wording or "}" in wording:
-        raise BindingError("STRAY_BRACE")
     if TAX_WORDS.search(wording):
         raise BindingError("TAX_MENTION")
     if MARKUP.search(wording):
         raise BindingError("MARKUP")
-    used: list[str] = []
-
-    def fill(match: re.Match[str]) -> str:
-        fact = facts.get(match.group(1))
-        if fact is None:
-            raise BindingError("UNKNOWN_FACT")
-        if match.group(1) not in used:
-            used.append(match.group(1))
-        return str(fact["display"])
-
-    text = " ".join(PLACEHOLDER.sub(fill, template).split())
+    shown = {fact_id: {"value": str(fact["display"]), "unit": "display"} for fact_id, fact in facts.items()}
+    try:
+        text, used = bind_numbers(template, shown)
+    except AIGuardError as error:
+        raise BindingError(GUARD_CODES.get(error.code, "TEMPLATE_INVALID")) from None
+    text = " ".join(text.split())
     if len(text) > MAX_TEXT_CHARS:
         raise BindingError("TEXT_TOO_LONG")
     return text, used
@@ -421,24 +436,45 @@ def template_paragraphs(table: FactTable) -> list[dict[str, Any]]:
 # --------------------------------------------------------------------------------------------- model and cache
 
 def ai_enabled(environ: Mapping[str, str] | None = None) -> bool:
-    env = os.environ if environ is None else environ
-    return env.get("AI_ASSIST", "off").strip().lower() in {"on", "1", "true", "yes"}
+    from services.assistant import config
+
+    return config.enabled(environ)
+
+
+def commentary_providers(environ: Mapping[str, str] | None = None) -> list[Any]:
+    """The providers for the commentary call, in fallback order.
+
+    ``AI_ASSIST_BASE_URL`` or ``AI_ASSIST_API_KEY``, when set, pick one OpenAI-compatible endpoint for the commentary
+    alone. Otherwise the commentary uses Ask AccordAI's providers (``AI_ASSIST_PROVIDERS`` / ``AI_PROVIDERS`` and
+    their ``AI_<NAME>_*`` settings, with ``AI_ASSIST_MODEL``), so one configuration turns on both. If neither is
+    usable, Groq with ``GROQ_API_KEY`` is tried. Raises ``TextModelError`` when nothing is configured.
+    """
+    from services.assistant import config
+    from services.extraction.ai import text_llm
+
+    env = dict(os.environ if environ is None else environ)
+    env.update({"AI_MAX_RETRIES": "1", "AI_SERVER_RETRIES": "1",
+                "AI_TIMEOUT_SECONDS": env.get("AI_ASSIST_TIMEOUT_SECONDS", "25")})
+    explicit = bool(env.get("AI_ASSIST_BASE_URL", "").strip() or env.get("AI_ASSIST_API_KEY", "").strip())
+    if not explicit:
+        try:
+            return config.assistant_providers(env)
+        except text_llm.TextModelError:
+            pass
+    provider_env = {
+        "AI_CUSTOM_BASE_URL": env.get("AI_ASSIST_BASE_URL") or DEFAULT_BASE_URL,
+        "AI_CUSTOM_MODEL": env.get("AI_ASSIST_MODEL") or DEFAULT_MODEL,
+        "AI_CUSTOM_API_KEY": env.get("AI_ASSIST_API_KEY") or env.get("GROQ_API_KEY", ""),
+        "AI_TIMEOUT_SECONDS": env["AI_TIMEOUT_SECONDS"], "AI_MAX_RETRIES": "1", "AI_SERVER_RETRIES": "1",
+    }
+    return [text_llm.TextModelProvider("custom", environ=provider_env)]
 
 
 def call_model(system: str, user: str) -> tuple[dict[str, Any], dict[str, Any]]:
     """One JSON completion on the commentary model. Raises ``TextModelError`` (an operator-safe code) on failure."""
     from services.extraction.ai import text_llm
 
-    env = os.environ
-    provider_env = {
-        "AI_CUSTOM_BASE_URL": env.get("AI_ASSIST_BASE_URL", DEFAULT_BASE_URL),
-        "AI_CUSTOM_MODEL": env.get("AI_ASSIST_MODEL", DEFAULT_MODEL),
-        "AI_CUSTOM_API_KEY": env.get("AI_ASSIST_API_KEY") or env.get("GROQ_API_KEY", ""),
-        "AI_TIMEOUT_SECONDS": env.get("AI_ASSIST_TIMEOUT_SECONDS", "25"),
-        "AI_MAX_RETRIES": "1", "AI_SERVER_RETRIES": "1",
-    }
-    provider = text_llm.TextModelProvider("custom", environ=provider_env)
-    return text_llm.complete_json(system, user, providers=[provider], max_tokens=1200)
+    return text_llm.complete_json(system, user, providers=commentary_providers(), max_tokens=1200)
 
 
 _cache: OrderedDict[tuple[str, str, str], tuple[float | None, dict[str, Any]]] = OrderedDict()

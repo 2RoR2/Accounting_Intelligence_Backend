@@ -84,3 +84,15 @@ def test_ids_are_stable_hex_and_the_flag_defaults_off():
     assert not ai_assist_enabled({}) and not ai_assist_enabled({'AI_ASSIST': 'off'})
     assert ai_assist_enabled({'AI_ASSIST': 'on'}) and ai_assist_enabled({'AI_ASSIST': 'TRUE'})
     assert inbox.short('a' + chr(0x200B) + 'b' + chr(0x202E) + ' c' + chr(10) + 'x' * 200, 10) == 'a b c xxx…'
+
+
+@pytest.mark.parametrize('template', ['Pay thousands for {{number}}', 'See https://x.test for {{number}}',
+                                      'Pay <b>{{amount}}</b>', 'Pay {{Amount}}'])
+def test_bind_numbers_applies_the_assistant_guard(template):
+    with pytest.raises(ValueError):
+        inbox.bind_numbers(template, {'amount': 'MYR 462.00', 'number': 'BL-0098'})
+
+
+def test_bind_numbers_keeps_values_unquoted_and_line_breaks():
+    assert inbox.bind_numbers('Dear {{supplier}},\n\nRe {{number}}', {'supplier': 'Seladah', 'number': 'BL-0098'}) == \
+        'Dear Seladah,\n\nRe BL-0098'

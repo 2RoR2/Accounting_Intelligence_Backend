@@ -7,22 +7,21 @@ row (an "approve anyway" reason, or a dismissal) and nothing else.
 from __future__ import annotations
 
 import json
-import os
 import uuid
 
 from fastapi import Depends
 from pydantic import BaseModel, Field
 
 from main import *
+from services.assistant import config as assistant_config
 from services.insights import fraud, inbox
 
 ROLES = {'local_admin', 'accountant'}
-ENABLED_VALUES = {'on', 'true', '1', 'yes'}
 
 
 def ai_assist_enabled(environ=None) -> bool:
-    env = os.environ if environ is None else environ
-    return env.get('AI_ASSIST', 'off').strip().lower() in ENABLED_VALUES
+    """The one AI_ASSIST switch, shared with Ask AccordAI (services/assistant/config.enabled)."""
+    return assistant_config.enabled(environ)
 
 
 def require_ai_assist():

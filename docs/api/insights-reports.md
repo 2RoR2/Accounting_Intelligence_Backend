@@ -157,7 +157,8 @@ exports use the cache.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `AI_ASSIST` | off | `on` / `1` / `true` turns AI commentary on. Chart data does not need it. |
-| `AI_ASSIST_MODEL` | `openai/gpt-oss-20b` | Model for the commentary call. |
-| `AI_ASSIST_BASE_URL` | `https://api.groq.com/openai/v1` | OpenAI-compatible endpoint. |
-| `AI_ASSIST_API_KEY` | falls back to `GROQ_API_KEY` | Provider key. Never logged or returned. |
+| `AI_ASSIST_PROVIDERS` / `AI_PROVIDERS` + `AI_<NAME>_*` | as Ask AccordAI | By default the commentary uses Ask AccordAI's providers (docs/api/assistant.md), so one configuration turns on both. |
+| `AI_ASSIST_MODEL` | `openai/gpt-oss-20b` | Model for the first provider (and for the endpoint below). |
+| `AI_ASSIST_BASE_URL` | unset | Optional: a separate OpenAI-compatible endpoint for the commentary only. When this or `AI_ASSIST_API_KEY` is set it wins. |
+| `AI_ASSIST_API_KEY` | unset; last resort `GROQ_API_KEY` | Key for that endpoint. If the assistant providers are not usable, Groq with `GROQ_API_KEY` is tried. Never logged or returned. |
 | `AI_ASSIST_COMMENTARY_PER_HOUR` | 12 | Fresh model calls per workspace per hour; above it the template is used. |
