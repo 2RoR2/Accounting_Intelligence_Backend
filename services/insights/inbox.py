@@ -289,7 +289,9 @@ def exception_items(db, user, ctx: fraud.Context) -> list[dict]:
         label = EXCEPTION_LABELS.get(code) or short(members[0][1]['message'].split(':', 1)[-1], 80)
         severity = 'high' if any(row['severity'] == 'high' for _, row in members) else 'medium'
         items.append(item('EXCEPTION_GROUP', code, severity, f'{noun}: {label}',
-                          f'{noun} share the same open exception ({code}). Fix them together from the Exceptions page.',
+                          (f'{noun} share the same open exception ({code}). Fix them together from the Exceptions page.'
+                           if len(docs) > 1 else
+                           f'{noun} has this open exception ({code}). Fix it from the Exceptions page.'),
                           evidence, [link('Open exceptions', 'exceptions'),
                                      link('Open first document', fraud.doc_href(docs[0]))]))
     return items
