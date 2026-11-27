@@ -64,9 +64,9 @@ def test_upload_creates_document_and_pending_job(tmp_path):
     fake_db = FakeDB()
     user = {"id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "tenant_id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "role": "accountant"}
     with patch.object(app, "require_workspace_user", return_value=user), \
-         patch.object(app, "connect", return_value=fake_db),
+         patch.object(app, "connect", return_value=fake_db), \
          patch.object(document_routes, "connect", return_value=fake_db), \
-             patch.object(app, "check_schema_compatibility", return_value=None), \
+         patch.object(app, "check_schema_compatibility", return_value=None), \
          patch.dict("os.environ", {"DOCUMENT_STORAGE_PATH": str(tmp_path)}), \
          patch("services.queue.config.get_queues", side_effect=RuntimeError("redis unavailable")):
         with TestClient(app.app) as client:
@@ -83,8 +83,11 @@ def test_upload_creates_document_and_pending_job(tmp_path):
 def test_upload_rejects_unsupported_type_without_database_write(tmp_path):
     user = {"id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "tenant_id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "role": "accountant"}
     fake_db = FakeDB()
-    with patch.object(app, "require_workspace_user", return_value=user), patch.object(app, "connect", return_value=fake_db),
-         patch.object(document_routes, "connect", return_value=fake_db), patch.object(app, "check_schema_compatibility", return_value=None), patch.dict("os.environ", {"DOCUMENT_STORAGE_PATH": str(tmp_path)}):
+    with patch.object(app, "require_workspace_user", return_value=user), \
+         patch.object(app, "connect", return_value=fake_db), \
+         patch.object(document_routes, "connect", return_value=fake_db), \
+         patch.object(app, "check_schema_compatibility", return_value=None), \
+         patch.dict("os.environ", {"DOCUMENT_STORAGE_PATH": str(tmp_path)}):
         with TestClient(app.app) as client:
             response = client.post("/api/documents", headers=request_headers(), files={"file": ("invoice.exe", b"not an invoice", "application/octet-stream")})
     assert response.status_code == 422
