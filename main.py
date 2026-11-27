@@ -258,7 +258,7 @@ async def unexpected_error(_request: Request, exc: Exception):
     # Never return connection strings, credentials or database details to the browser.
     log.error("API failure at %s: %s", _request.url.path, type(exc).__name__,
               exc_info=(type(exc), exc, exc.__traceback__))
-    return JSONResponse({"detail": "Account service is unavailable. Check the backend configuration."}, status_code=503)
+    return JSONResponse({"detail": "The request could not be completed."}, status_code=500)
 
 
 def database_error(_request: Request, exc: psycopg.Error):
@@ -346,14 +346,62 @@ def public_user(user):
 
 def get_document_detail(document_id: str, request: Request):
     """Compatibility entrypoint for callers that historically imported this from main."""
-    from services.routes.documents import routes as document_routes
-    return document_routes.get_document_detail(document_id, request)
+    user = require_workspace_user(request)
+    visibility = " AND (d.owner_id=%s OR d.assigned_to=%s)" if user["role"] == "accountant" else ""
+    params = [document_id, tenant_scope(user), tenant_scope(user)]
+    if user["role"] == "accountant":
+        params.extend([user["id"], user["id"]])
+    with connect() as db:
+        row = db.execute(
+            f"SELECT * FROM documents d WHERE d.id=%s AND (%s IS NULL OR d.tenant_id=%s){visibility}",
+            params,
+        ).fetchone()
+    if not row:
+        raise HTTPException(404, "Document not found.")
+    return {
+        "id": str(row["id"]),
+        "code": row.get("document_code") if hasattr(row, "get") else None,
+        "displayName": row.get("original_filename") if hasattr(row, "get") else None,
+        "name": row.get("original_filename") if hasattr(row, "get") else None,
+        "tenantId": str(row["tenant_id"]),
+        "ownerId": str(row["owner_id"]),
+        "assignedTo": str(row["assigned_to"]) if row.get("assigned_to") else None,
+        "kind": str(row.get("kind") or "").upper(),
+        "category": str(row.get("category") or "").upper(),
+        "status": str(row.get("status") or "").upper(),
+        "mimeType": row.get("mime_type"),
+        "fileSize": row.get("file_size_bytes"),
+        "contentRevision": row.get("content_revision"),
+        "createdAt": str(row.get("uploaded_at")) if row.get("uploaded_at") else None,
+        "updatedAt": str(row.get("updated_at")) if row.get("updated_at") else None,
+    }
 
 
 def get_document_reviews(document_id: str, request: Request):
-    """Compatibility entrypoint for callers that historically imported this from main."""
-    from services.routes.documents import routes as document_routes
-    return document_routes.get_document_reviews(document_id, request)
+    """Read review history using the canonical reviewed_at timestamp."""
+    user = _authorised_document(request, document_id)
+    with connect() as db:
+        submissions = db.execute(
+            "SELECT * FROM review_submissions WHERE document_id=%s AND tenant_id=%s ORDER BY created_at DESC",
+            (document_id, user["tenant_id"]),
+        ).fetchall()
+        decisions = db.execute(
+            "SELECT * FROM review_decisions WHERE document_id=%s AND tenant_id=%s ORDER BY reviewed_at DESC",
+            (document_id, user["tenant_id"]),
+        ).fetchall()
+    return {
+        "submissions": [
+            {"id": str(r["id"]), "submittedBy": str(r["submitted_by"]),
+             "decision": r["decision"].upper(), "note": r["note"] or "",
+             "createdAt": str(r["created_at"])} for r in submissions
+        ],
+        "decisions": [
+            {"id": str(r["id"]), "reviewedBy": str(r["reviewed_by"]),
+             "decision": r["decision"].upper(), "note": r["note"] or "",
+             "approvedRevision": r["approved_content_revision"],
+             "createdAt": str(r["reviewed_at"])} for r in decisions
+        ],
+    }
 
 
 def session_user(db, request):
@@ -708,6 +756,18 @@ def require_workspace_user(request: Request, roles=None):
     if roles and user["role"] not in roles:
         raise HTTPException(403, "You do not have permission for this workspace.")
     return user
+
+
+@app.post("/api/bank-reconciliation")
+def bank_reconciliation(payload: dict, request: Request):
+    """Legacy compare-only bank endpoint retained for older clients.
+
+    It deliberately delegates to the pure matcher and never creates or updates
+    canonical accounting records.
+    """
+    require_workspace_user(request, {"super_admin", "local_admin", "accountant"})
+    from validation.matching.bank_reconciliation import reconcile_records
+    return reconcile_records(payload.get("accounting_records") or [], payload.get("bank_transactions") or [])
 
 
 def api_user(row):
