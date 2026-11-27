@@ -337,9 +337,11 @@ class PartyFieldCompatibilityTests(unittest.TestCase):
         from tests.extraction.test_multidocument import contract
         self.db=ContractDatabase()
         self.addCleanup(self.db.db.close)
-        # The currency review reads and writes the audit log, as production does.
-        self.db.db.execute('ALTER TABLE audit_logs ADD COLUMN user_id TEXT')
-        self.db.db.execute('ALTER TABLE audit_logs ADD COLUMN created_at TEXT')
+        # The shared contract fixture may already provide these canonical columns.
+        existing_audit={row[1] for row in self.db.db.execute("PRAGMA table_info(audit_logs)")}
+        for column in ('user_id','created_at'):
+            if column not in existing_audit:
+                self.db.db.execute('ALTER TABLE audit_logs ADD COLUMN '+column+' TEXT')
         self.user=copy.deepcopy(actor)
         self.tenant=TENANT
         self.values={'supplier_address':'10 Source Street\nExample City 10000',
@@ -349,8 +351,10 @@ class PartyFieldCompatibilityTests(unittest.TestCase):
             (key.replace('_',' ')+': '+value,20,60+i*70,550,110+i*70)
             for i,(key,value) in enumerate(self.values.items())]))
         self.raw.update(document_id=DOCUMENT,provenance={'service_run_id':'synthetic-party-run'})
+        existing_corrections={row[1] for row in self.db.db.execute("PRAGMA table_info(line_item_corrections)")}
         for column in ('line_item_id','field_key','old_value','new_value','corrected_by','corrected_at'):
-            self.db.db.execute('ALTER TABLE line_item_corrections ADD COLUMN '+column+' TEXT')
+            if column not in existing_corrections:
+                self.db.db.execute('ALTER TABLE line_item_corrections ADD COLUMN '+column+' TEXT')
         self.db.db.executescript('''
             CREATE TABLE field_corrections(old_value TEXT,new_value TEXT,corrected_by TEXT,corrected_at TEXT);
             CREATE TRIGGER party_history AFTER UPDATE ON field_predictions
