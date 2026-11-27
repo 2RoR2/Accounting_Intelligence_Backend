@@ -101,7 +101,7 @@ def _number(env, name, default, low, high, kind=float):
 
 
 def _private_host(host):
-    if host == 'localhost' or host.endswith('.local') or host.endswith('.internal'):
+    if host == 'localhost' or host.endswith(('.local', '.internal')):
         return True
     try:
         address = ipaddress.ip_address(host)
@@ -137,7 +137,7 @@ class TextModelProvider:
         try:
             url = urlsplit(self.base)
             host = (url.hostname or '').lower()
-            url.port  # Raises ValueError for a malformed port.
+            _ = url.port  # Raises ValueError for a malformed port.
         except ValueError:
             raise TextModelError('AI_BASE_URL_INVALID') from None
         if not host or url.username or url.password or url.query or url.fragment:
@@ -283,7 +283,7 @@ def parse_json_object(content):
     if not isinstance(content, str):
         raise TextModelError('AI_RESPONSE_MALFORMED')
     text = content.strip()
-    fenced = re.fullmatch(r'```(?:json)?\s*(.*?)\s*```', text, re.S)
+    fenced = re.fullmatch(r'```(?:json)?\s*(.*?)\s*```', text, re.DOTALL)
     if fenced:
         text = fenced.group(1)
     try:
@@ -334,6 +334,6 @@ def complete_json(system, user, *, providers=None, max_tokens=4000):
                     break
                 record['failed_before'] = failures
                 return answer, record
-    error = TextModelError(failures[-1]['error'] if failures else 'AI_NO_PROVIDER')
-    error.failures = failures
-    raise error
+    final_error = TextModelError(failures[-1]['error'] if failures else 'AI_NO_PROVIDER')
+    final_error.failures = failures
+    raise final_error
