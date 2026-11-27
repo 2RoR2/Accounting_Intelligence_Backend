@@ -20,7 +20,11 @@ class FakeDB:
     def execute(self, query, params=()):
         self.calls.append((query, params))
         result = MagicMock()
-        if "file_hash_sha256" in query and query.lstrip().startswith("SELECT"):
+        if "auth_rate_limits" in query:
+            result.fetchone.return_value = {"hits": 1}
+        elif "pg_advisory_xact_lock" in query:
+            result.fetchone.return_value = {"isolation": "read committed"}
+        elif "file_hash_sha256" in query and query.lstrip().startswith("SELECT"):
             result.fetchone.return_value = self.duplicate
         elif "INSERT INTO documents" in query:
             result.fetchone.return_value = {
