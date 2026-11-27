@@ -33,8 +33,9 @@ COMMENTARY = "/api/insights/commentary"
 PACK = "/api/reports/month-pack"
 AI_ANSWER = {"paragraphs": [
     {"template": "Sales for {{f1}} were {{f3}}, compared with {{f4}} in {{f2}}.", "factIds": ["f3", "f4"]},
-    {"template": "Expenses were {{f8}} against {{f9}}.", "factIds": ["f8", "f9"]},
-    {"template": "The net result was {{f13}}.", "factIds": ["f13"]}]}
+    # f7/f8 are this and last period's expenses, f11 the net result (f9 and f13 are changes, not totals).
+    {"template": "Expenses were {{f7}} against {{f8}}.", "factIds": ["f7", "f8"]},
+    {"template": "The net result was {{f11}}, up {{f13}}.", "factIds": ["f11", "f13"]}]}
 
 
 @pytest.fixture(scope="module")
