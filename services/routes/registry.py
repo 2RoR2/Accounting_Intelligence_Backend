@@ -21,6 +21,7 @@ from .home.routes import register as register_home
 from .search.routes import register as register_search
 from .trace.routes import register as register_trace
 from .assistant.routes import register as register_assistant
+from .insights.routes import register as register_insights
 
 def register_component_routes(router, handlers):
     register_accounting(router, handlers)
@@ -46,3 +47,4 @@ def register_component_routes(router, handlers):
     register_search(router, handlers)
     register_trace(router, handlers)
     register_assistant(router, handlers)
+    register_insights(router, handlers)
