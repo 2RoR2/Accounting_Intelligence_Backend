@@ -17,6 +17,7 @@ from urllib.parse import quote
 from fastapi import FastAPI, HTTPException, Request, Response, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
+import psycopg
 import jwt
 from pydantic import BaseModel, Field, StringConstraints, field_validator
 from psycopg.errors import UniqueViolation
@@ -260,16 +261,36 @@ async def unexpected_error(_request: Request, exc: Exception):
     return JSONResponse({"detail": "Account service is unavailable. Check the backend configuration."}, status_code=503)
 
 
+def database_error(_request: Request, exc: psycopg.Error):
+    """Return stable, non-sensitive categories for database failures."""
+    if isinstance(exc, (psycopg.errors.UniqueViolation, psycopg.errors.ForeignKeyViolation)):
+        status, code = 409, "DATA_CONFLICT"
+    elif isinstance(exc, psycopg.errors.DeadlockDetected):
+        status, code = 409, "CONCURRENT_CHANGE"
+    elif isinstance(exc, psycopg.OperationalError):
+        status, code = 503, "DATA_SERVICE_UNAVAILABLE"
+    elif isinstance(exc, (psycopg.errors.NumericValueOutOfRange,)):
+        status, code = 422, "INVALID_DATA"
+    else:
+        status, code = 500, "DATA_OPERATION_FAILED"
+    return JSONResponse({"code": code, "message": "The database operation could not be completed."}, status_code=status)
+
+
+app.add_exception_handler(psycopg.Error, database_error)
+
+
 def rate_limit(key: str, maximum: int, seconds: int, *, message: str | None = None, code: str | None = None):
     # A separate transaction ensures failures cannot roll back the attempt counter.
+    now_value = utcnow()
+    cutoff = now_value - timedelta(seconds=seconds)
     with connect() as db:
         row = db.execute("""INSERT INTO auth_rate_limits(key) VALUES (%s)
             ON CONFLICT(key) DO UPDATE SET
-              hits = CASE WHEN auth_rate_limits.window_start < now() - %s * interval '1 second'
+              hits = CASE WHEN auth_rate_limits.window_start < %s
                           THEN 1 ELSE auth_rate_limits.hits + 1 END,
-              window_start = CASE WHEN auth_rate_limits.window_start < now() - %s * interval '1 second'
-                                  THEN now() ELSE auth_rate_limits.window_start END
-            RETURNING hits""", (digest(key), seconds, seconds)).fetchone()
+              window_start = CASE WHEN auth_rate_limits.window_start < %s
+                                  THEN %s ELSE auth_rate_limits.window_start END
+            RETURNING hits""", (digest(key), cutoff, cutoff, now_value)).fetchone()
     if row["hits"] > maximum:
         detail = message or "Too many attempts. Please wait and try again."
         if code:
@@ -321,6 +342,18 @@ def public_user(user):
             "status": user["status"].upper(), "mustChangePassword": user["must_change_password"],
             "invitedBy": str(user["invited_by"] or ""),
             "invitedAt": str(user["invited_at"] or ""), "lastLogin": str(user["last_login_at"] or "")}
+
+
+def get_document_detail(document_id: str, request: Request):
+    """Compatibility entrypoint for callers that historically imported this from main."""
+    from services.routes.documents import routes as document_routes
+    return document_routes.get_document_detail(document_id, request)
+
+
+def get_document_reviews(document_id: str, request: Request):
+    """Compatibility entrypoint for callers that historically imported this from main."""
+    from services.routes.documents import routes as document_routes
+    return document_routes.get_document_reviews(document_id, request)
 
 
 def session_user(db, request):
