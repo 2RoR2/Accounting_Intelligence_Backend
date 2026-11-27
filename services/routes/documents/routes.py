@@ -255,6 +255,8 @@ def list_documents(
     clauses = ["(%s::uuid IS NULL OR d.tenant_id=%s::uuid)", "d.excluded_at IS NULL"]  # Plan M B1: excluded own-sales captures
     params: list[object] = [scope, scope]
     if user["role"] == "accountant":
+        # Keep this predicate text aligned with services.routes.review.lanes.
+        # (d.owner_id=%s OR d.assigned_to=%s OR EXISTS (SELECT 1 FROM benchmark_demo_documents bd JOIN benchmark_demo_tenants bt ON bt.tenant_id=bd.tenant_id AND bt.enabled=true WHERE bd.tenant_id=d.tenant_id AND bd.document_id=d.id))
         clauses.append("((d.owner_id=%s OR d.assigned_to=%s) OR EXISTS (SELECT 1 FROM benchmark_demo_documents bd JOIN benchmark_demo_tenants bt ON bt.tenant_id=bd.tenant_id AND bt.enabled=true WHERE bd.tenant_id=d.tenant_id AND bd.document_id=d.id))")
         params.extend([user["id"], user["id"]])
     if q:
@@ -393,8 +395,15 @@ class _ReadableNames:
         from services import naming
         from services.company_identity import company_identity
         self.naming = naming
-        self.book = naming.CodeBook(db, user["tenant_id"]) if user.get("tenant_id") else None
-        self.identity = company_identity(db, user["tenant_id"]) if user.get("tenant_id") else None
+        self.book = None
+        self.identity = None
+        if user.get("tenant_id"):
+            try:
+                self.book = naming.CodeBook(db, user["tenant_id"])
+                self.identity = company_identity(db, user["tenant_id"])
+            except Exception as exc:
+                if type(exc).__name__ not in {"OperationalError", "ProgrammingError"}:
+                    raise
 
     def of(self, r) -> dict:
         from services.company_identity import direction, direction_warning
@@ -415,7 +424,7 @@ def get_document_detail(document_id: str, request: Request):
     user = _runtime_require_workspace_user(request)
     with connect() as db:
         readable = _readable_detail(db, document_id, user)
-        visibility = " AND (d.owner_id=%s OR d.assigned_to=%s OR EXISTS (SELECT 1 FROM benchmark_demo_documents bd JOIN benchmark_demo_tenants bt ON bt.tenant_id=bd.tenant_id AND bt.enabled=true WHERE bd.tenant_id=d.tenant_id AND bd.document_id=d.id))" if user["role"] == "accountant" else ""
+        visibility = " AND ((d.owner_id=%s OR d.assigned_to=%s) OR EXISTS (SELECT 1 FROM benchmark_demo_documents bd JOIN benchmark_demo_tenants bt ON bt.tenant_id=bd.tenant_id AND bt.enabled=true WHERE bd.tenant_id=d.tenant_id AND bd.document_id=d.id))" if user["role"] == "accountant" else ""
         params = [document_id, tenant_scope(user), tenant_scope(user)]
         if user["role"] == "accountant":
             params.extend([user["id"], user["id"]])
@@ -431,7 +440,7 @@ def _readable_detail(db, document_id, user) -> dict:
     """Plan M4/M2 fields for one document of the user's company: display name and direction. Display-only: on any
     lookup problem the caller keeps the stored file name."""
     try:
-        visibility = " AND (d.owner_id=%s OR d.assigned_to=%s OR EXISTS (SELECT 1 FROM benchmark_demo_documents bd JOIN benchmark_demo_tenants bt ON bt.tenant_id=bd.tenant_id AND bt.enabled=true WHERE bd.tenant_id=d.tenant_id AND bd.document_id=d.id))" if user["role"] == "accountant" else ""
+        visibility = " AND ((d.owner_id=%s OR d.assigned_to=%s) OR EXISTS (SELECT 1 FROM benchmark_demo_documents bd JOIN benchmark_demo_tenants bt ON bt.tenant_id=bd.tenant_id AND bt.enabled=true WHERE bd.tenant_id=d.tenant_id AND bd.document_id=d.id))" if user["role"] == "accountant" else ""
         params = [document_id, tenant_scope(user), tenant_scope(user)]
         if user["role"] == "accountant":
             params.extend([user["id"], user["id"]])
@@ -911,7 +920,12 @@ def standardise_document(document_id: str, request: Request):
             from security.supplier_memory import lookup as lookup_supplier_memory
             vendors = db.execute("SELECT id,vendor_name FROM vendors WHERE tenant_id=%s ORDER BY id",
                                  (user["tenant_id"],)).fetchall()
-            remembered = lookup_supplier_memory(db, user['tenant_id'], values['supplier'])
+            try:
+                remembered = lookup_supplier_memory(db, user['tenant_id'], values['supplier'])
+            except Exception as exc:
+                if type(exc).__name__ not in {'OperationalError', 'ProgrammingError'}:
+                    raise
+                remembered = None
             matched_vendor = ({'status': 'ACCEPT', 'vendor_id': remembered['vendor_id'],
                                'confidence': 1.0} if remembered else
                               (find_vendor_match(values['supplier'], vendors) if vendors else None))
@@ -1766,7 +1780,9 @@ def list_customer_matches(document_id: str, request: Request):
 def create_document_version(document_id: str, data: VersionInput, request: Request):
     user = require_workspace_user(request, {"local_admin", "accountant"})
     with connect() as db:
-        source = db.execute("SELECT storage_path,file_hash_sha256,file_size_bytes FROM documents WHERE id=%s AND tenant_id=%s", (document_id, user["tenant_id"])).fetchone()
+        ownership = " AND (owner_id=%s OR assigned_to=%s)" if user["role"] == "accountant" else ""
+        params = [document_id, user["tenant_id"]] + ([user["id"], user["id"]] if ownership else [])
+        source = db.execute("SELECT storage_path,file_hash_sha256,file_size_bytes FROM documents WHERE id=%s AND tenant_id=%s" + ownership, params).fetchone()
         if not source: raise HTTPException(404, "Document not found.")
         supplied = Path(data.storagePath).resolve()
         if local_storage_root() not in supplied.parents or not supplied.is_file():
