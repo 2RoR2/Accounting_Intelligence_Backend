@@ -320,6 +320,8 @@ def request_lost_authenticator_recovery(data: dict, request: Request):
 
     This does not reset MFA or grant access. A Super Admin must still approve it.
     """
+    if os.getenv("MFA_RECOVERY_POLICY_APPROVED", "false").strip().lower() != "true":
+        raise HTTPException(403, "MFA recovery requests are not enabled.")
     reason = str(data.get("reason", "")).strip()[:500]
     if not reason:
         raise HTTPException(400, "A recovery reason is required.")
