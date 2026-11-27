@@ -91,7 +91,9 @@ def detect_transaction_anomalies(
             if reference["transaction_id"] != row["transaction_id"]
         ]
         baseline = None
-        if comparable_rows:
+        # Five comparable approved records are the minimum baseline. Fewer
+        # rows are reported as NOT_CHECKED rather than treated as evidence.
+        if len(comparable_rows) >= 5:
             amounts = [reference["amount"] for reference in comparable_rows]
             center = Decimal(str(median(amounts)))
             deviations = [abs(value - center) for value in amounts]
@@ -124,10 +126,20 @@ def detect_transaction_anomalies(
             })
 
             if mad == 0:
-                result["reason"] = (
-                    f"Reference transactions for {currency} have zero MAD, "
-                    "so the modified Z-score is undefined; review manually."
-                )
+                # A constant approved baseline is still useful: an amount
+                # different from that exact value is an anomaly even though a
+                # modified Z-score cannot be calculated.
+                is_anomaly = amount != center
+                result.update({
+                    "is_anomaly": is_anomaly,
+                    "status": "anomaly" if is_anomaly else "normal",
+                    "upper_bound": str(center),
+                    "reason": (
+                        f"The amount differs from the constant {currency} reference baseline."
+                        if is_anomaly else
+                        f"The amount matches the constant {currency} reference baseline."
+                    ),
+                })
                 results.append(result)
                 continue
 
