@@ -60,6 +60,10 @@ def execute(tool: Tool, args: Args, ctx: ToolContext, *, connect_fn) -> list[str
     The first statement of the transaction makes it read-only, so a bug or an injected call cannot write: PostgreSQL
     refuses any INSERT, UPDATE or DELETE (ReadOnlySqlTransaction). Facts from a failed run are discarded.
     """
+    # The report modules a tool imports do `from main import ...`, and main imports every route module. Importing the
+    # app first (a no-op once it is loaded, as it always is under uvicorn) keeps a script or worker caller from
+    # hitting that import cycle halfway through a tool.
+    import main  # noqa: F401
     before = set(ctx.facts.items)
     try:
         with connect_fn() as db:

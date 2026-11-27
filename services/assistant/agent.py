@@ -267,10 +267,13 @@ def ask(user: dict, question: str, context: dict | None = None, *, environ=None,
             audit_id = write_audit(db, user, details)
     except Exception as error:  # noqa: BLE001 - the answer is still returned; the failure is logged by type only
         log.error('Assistant audit write failed: %s', type(error).__name__)
+    # A model answer that names things without a placeholder ("our top suppliers are ...") still shows the figures
+    # behind it, so the person can check them and open the source.
+    shown = used if used or refused else list(facts.items)[:config.FALLBACK_FACTS]
     return {
         'answer': answer_text,
-        'facts': facts.public(used),
-        'citations': facts.citations(used),
+        'facts': facts.public(shown),
+        'citations': facts.citations(shown),
         'refused': refused,
         'fallback': fallback,
         'suggestions': suggestions_for(context.get('page'), exclude=question),

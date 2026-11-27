@@ -179,7 +179,7 @@ def render_table(tool_titles: list[str], ids: list[str], facts: FactBook, notes:
     lines = [f'Here are the figures from {title}:']
     for fact_id in ids[:FALLBACK_LINES]:
         fact = facts.items[fact_id]
-        lines.append(f'• {fact.label}: {format_value(fact.value, fact.unit)}')
+        lines.append(f'- {fact.label}: {format_value(fact.value, fact.unit)}')
     if len(ids) > FALLBACK_LINES:
         lines.append('More figures are listed below.')
     lines.extend(notes[:2])

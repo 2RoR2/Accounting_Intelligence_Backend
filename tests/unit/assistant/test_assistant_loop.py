@@ -58,8 +58,16 @@ def test_a_stray_digit_rejects_the_answer_and_shows_the_fact_table(fake_tools):
         answer('Three bills are due, totalling RM 4,210.00.', ['f2']))
     assert result['fallback'] is True and result['refused'] is False and result['model'] is None
     assert result['answer'].startswith('Here are the figures from the ageing report by due date:')
-    assert '• Total of bills due in the next 7 days: RM 4,210.00' in result['answer']
+    assert '- Total of bills due in the next 7 days: RM 4,210.00' in result['answer']
     assert connect.audit()['fallbackReason'] == 'AI_ANSWER_DIGIT'
+
+
+def test_an_answer_without_placeholders_still_shows_the_figures_behind_it(fake_tools):
+    result, _, _ = _ask('Who are our top suppliers?',
+                        reply(calls=[tool_call('due_soon', {'kind': 'bills'})]),
+                        answer('Our main suppliers are the ones listed below.', []))
+    assert result['fallback'] is False and [fact['id'] for fact in result['facts']] == ['f1', 'f2']
+    assert result['citations'] and result['answer'] == 'Our main suppliers are the ones listed below.'
 
 
 def test_unknown_fact_id_is_rejected(fake_tools):

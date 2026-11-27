@@ -88,3 +88,28 @@ def test_facts_keep_ids_links_and_citations():
     assert FactBook('local_admin').link('today') == '/company/today'
     with pytest.raises(ValueError):
         facts.add('Bad', 1, 'percent', source='x')
+
+
+def test_a_tool_runs_in_a_fresh_process_without_the_app_imported_first():
+    """Regression: a script or worker that has not imported main must not hit the main <-> registry import cycle."""
+    import subprocess
+    import sys
+    code = ("import os; os.environ.setdefault('AUTH_SECRET', 'x' * 40)\n"
+            "from services.assistant.runner import parse_call, execute\n"
+            "from services.assistant.tools import ToolContext\n"
+            "from services.assistant.facts import FactBook\n"
+            "import datetime\n"
+            "class DB:\n"
+            "    def execute(self, sql, params=None): return self\n"
+            "    def fetchall(self): return []\n"
+            "class C:\n"
+            "    def __enter__(self): return DB()\n"
+            "    def __exit__(self, *a): return False\n"
+            "tool, args = parse_call('top_contacts', {'kind': 'suppliers', 'from_date': '2026-11-01', 'to_date': '2026-11-30'})\n"
+            "ctx = ToolContext(user={'id': 'u', 'tenant_id': 't', 'role': 'accountant', 'name': 'n'},\n"
+            "                  today=datetime.date(2026, 11, 27), facts=FactBook('accountant'))\n"
+            "print(execute(tool, args, ctx, connect_fn=C))\n")
+    done = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=120,
+                          env={**__import__('os').environ, 'DATABASE_URL': '', 'TEST_DATABASE_URL': ''})
+    assert done.returncode == 0, done.stderr[-2000:]
+    assert done.stdout.strip() == "['f1']"
