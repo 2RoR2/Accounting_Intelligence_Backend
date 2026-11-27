@@ -984,7 +984,12 @@ def _user_names(db, tenant_id, ids) -> dict:
     wanted = sorted({str(value) for value in ids if value is not None})
     if not wanted:
         return {}
-    rows = db.execute('SELECT id,name FROM users WHERE tenant_id=%s AND id::text = ANY(%s)', (tenant_id, wanted)).fetchall()
+    try:
+        rows = db.execute('SELECT id,name FROM users WHERE tenant_id=%s AND id::text = ANY(%s)', (tenant_id, wanted)).fetchall()
+    except Exception as exc:
+        if type(exc).__name__ in {'OperationalError', 'ProgrammingError'}:
+            return {}
+        raise
     return {str(row['id']): row['name'] for row in rows}
 
 def get_document_reviews(document_id: str, request: Request):
