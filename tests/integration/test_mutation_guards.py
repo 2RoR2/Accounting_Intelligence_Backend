@@ -134,10 +134,12 @@ class Phase3DMutationTests(unittest.TestCase):
         job={'pending':'11111111-1111-4111-8111-111111111114',
              'dispatched':'11111111-1111-4111-8111-111111111115',
              'processing':'11111111-1111-4111-8111-111111111116'}.get(status,'11111111-1111-4111-8111-111111111114')
+        self.database.db.execute("DELETE FROM pending_jobs WHERE document_id=? AND status IN ('pending','dispatched','processing')", (DOCUMENT,))
         future=datetime.now(timezone.utc)+timedelta(hours=1)
+        due=datetime.now(timezone.utc)-timedelta(seconds=5)
         self.database.db.execute("""INSERT INTO pending_jobs(id,tenant_id,document_id,status,
             dispatch_token,dispatch_expires_at,claim_token,processing_expires_at,next_attempt_at,attempt_count)
-            VALUES (?,?,?,?,?,?,?,?,?,0)""",(job,TENANT,DOCUMENT,status,str(uuid4()),future,str(uuid4()),future,datetime.now(timezone.utc)))
+            VALUES (?,?,?,?,?,?,?,?,?,0)""",(job,TENANT,DOCUMENT,status,str(uuid4()),future,str(uuid4()),future,due))
         self.database.db.commit()
         return job
     def calls_for_edit(self):
