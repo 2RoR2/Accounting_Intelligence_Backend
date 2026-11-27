@@ -7,6 +7,7 @@ from .queue.routes import register as register_queue
 from .reporting.routes import register as register_reporting
 from .reporting.financial import register as register_financial_reporting
 from .reporting.business_summary import register as register_business_summary
+from .insights.reports import register as register_insights_reports
 from .reporting.statement import register as register_statement
 from .reporting.evaluation import register as register_evaluation
 from .reporting.workload import register as register_workload
@@ -20,6 +21,8 @@ from .imports.routes import register as register_imports
 from .home.routes import register as register_home
 from .search.routes import register as register_search
 from .trace.routes import register as register_trace
+from .assistant.routes import register as register_assistant
+from .insights.routes import register as register_insights
 
 def register_component_routes(router, handlers):
     register_accounting(router, handlers)
@@ -31,6 +34,7 @@ def register_component_routes(router, handlers):
     register_reporting(router, handlers)
     register_financial_reporting(router)
     register_business_summary(router)
+    register_insights_reports(router)
     register_statement(router)
     register_evaluation(router)
     register_workload(router)
@@ -44,3 +48,5 @@ def register_component_routes(router, handlers):
     register_home(router, handlers)
     register_search(router, handlers)
     register_trace(router, handlers)
+    register_assistant(router, handlers)
+    register_insights(router, handlers)
