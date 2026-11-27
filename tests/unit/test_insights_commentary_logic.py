@@ -336,3 +336,25 @@ def test_a_failure_that_finishes_after_a_concurrent_success_keeps_the_ai_answer(
     assert result["fallback"] is False and result["paragraphs"][0]["text"] == "AI text."
     again = commentary.resolve_commentary(table(), tenant="t1", period="2026-11")
     assert again["fallback"] is False and again["cached"] is True
+
+
+@pytest.mark.parametrize("template,code", [
+    ("Expenses rose by {{f9}}.", "CHANGE_DIRECTION"),          # f9: expenses fell
+    ("Sales were {{f3}} which fell by {{f5}}.", "CHANGE_DIRECTION"),  # f5: sales rose
+    ("Expenses were {{f8}}, an increase of {{f9}}.", "CHANGE_DIRECTION")])
+def test_a_change_read_the_wrong_way_is_rejected(template, code):
+    with pytest.raises(BindingError) as error:
+        commentary.check_changes(template, table().by_id())
+    assert error.value.code == code
+
+
+@pytest.mark.parametrize("template", ["Expenses fell by {{f9}}.", "Sales were {{f3}}, up {{f5}}.",
+                                      "Net result was {{f10}}, a change of {{f12}}.", "Expenses dropped {{f9}}."])
+def test_a_change_read_the_right_way_or_neutrally_passes(template):
+    commentary.check_changes(template, table().by_id())
+
+
+def test_the_model_payload_says_which_words_fit_each_change():
+    rows = {row["id"]: row for row in json.loads(table().prompt_payload())["facts"]}
+    assert rows["f5"]["writeAs"] == "rose by / up" and rows["f9"]["writeAs"] == "fell by / down"
+    assert "writeAs" not in rows["f3"]

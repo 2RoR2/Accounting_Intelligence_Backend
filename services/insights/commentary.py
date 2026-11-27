@@ -160,6 +160,8 @@ class FactTable:
             row = {"id": fact["id"], "label": fact["label"], "value": fact["display"]}
             if "direction" in fact:
                 row["direction"] = fact["direction"]
+                # Small models ignore "direction"; the words to use next to this placeholder are explicit.
+                row["writeAs"] = {"up": "rose by / up", "down": "fell by / down", "flat": "unchanged"}[fact["direction"]]
             rows.append(row)
         return json.dumps({"partialPeriod": self.partial, "facts": rows}, ensure_ascii=False)
 
@@ -350,16 +352,32 @@ CHANGE_WORDS = re.compile(
     re.IGNORECASE)
 
 
+UP_WORDS = {"up", "rose", "rise", "risen", "increase", "increased", "increases", "gain", "gained", "higher", "more",
+            "grew", "grow", "growth", "jump", "jumped"}
+DOWN_WORDS = {"down", "fell", "fall", "fallen", "decrease", "decreased", "decreases", "drop", "dropped", "lost",
+              "lower", "less", "decline", "declined", "slipped"}
+
+
 def check_changes(template: str, facts: Mapping[str, Mapping[str, Any]]) -> None:
-    """A change fact (one with a direction) must follow a change word, so a model cannot print a difference as if it
-    were the total ("sales were {{f2}}" where f2 is the change in sales). Raises ``BindingError``."""
+    """Change facts (those with a direction) in a model answer must read the right way. Raises ``BindingError``.
+
+    * A change must follow a change word, so a difference is not printed as if it were the total ("sales were
+      {{f2}}" where f2 is the change in sales): CHANGE_AS_AMOUNT.
+    * The nearest up or down word before it must match the fact's direction ("sales rose by {{f5}}" when sales
+      fell): CHANGE_DIRECTION. Neutral words ("by", "a change of") are allowed either way.
+    """
     for match in PLACEHOLDER.finditer(template):
         fact = facts.get(match.group(1))
         if fact is None or "direction" not in fact:
             continue
         before = PLACEHOLDER.sub(" ", template[max(0, match.start() - 40):match.start()])
-        if not CHANGE_WORDS.search(before):
+        words = [found.group(1).lower() for found in CHANGE_WORDS.finditer(before)]
+        if not words:
             raise BindingError("CHANGE_AS_AMOUNT")
+        said = next((("up" if word in UP_WORDS else "down") for word in reversed(words)
+                     if word in UP_WORDS or word in DOWN_WORDS), None)
+        if said is not None and said != fact["direction"]:
+            raise BindingError("CHANGE_DIRECTION")
 
 
 def bind_answer(answer: Any, facts: Mapping[str, Mapping[str, Any]]) -> list[dict[str, Any]]:
