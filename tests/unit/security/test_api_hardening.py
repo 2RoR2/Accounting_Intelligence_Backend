@@ -116,6 +116,8 @@ def test_document_preview_uses_file_signature(monkeypatch, tmp_path, content, mi
     assert response.headers["content-type"] == mime
     assert response.headers["content-disposition"].startswith(f'{disposition};')
     assert response.headers["x-content-type-options"] == "nosniff"
+    # The review page frames this file (same-origin proxy); DENY would blank the preview.
+    assert response.headers["x-frame-options"] == "SAMEORIGIN"
     assert response.headers.get("content-security-policy") == (None if mime == "application/pdf" else "sandbox")
     assert path.exists() == (not remote)
 
