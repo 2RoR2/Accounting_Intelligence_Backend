@@ -53,3 +53,26 @@ def test_periods():
     assert compare_months('expenses higher in November than October', TODAY) == ('2026-10', '2026-11')
     assert compare_months('compare January and February', TODAY) == ('2026-01', '2026-02')
     assert compare_months('why did expenses rise in March', TODAY) == ('2026-02', '2026-03')
+
+
+@pytest.mark.parametrize('context,tool,args', [
+    ({'page': 'insights', 'period': '2026-11'}, 'compare_periods', {'period_a': '2026-10', 'period_b': '2026-11'}),
+    ({'page': 'reports', 'reportType': 'profit-and-loss', 'period': '2026-01'}, 'compare_periods',
+     {'period_a': '2025-12', 'period_b': '2026-01'}),
+    ({'page': 'reports', 'reportType': 'balance-sheet', 'period': '2026-10'}, 'balance_sheet', {'as_of': '2026-10-31'}),
+    ({'page': 'reports', 'reportType': 'ageing'}, 'due_soon', {'kind': 'bills', 'include_overdue': True}),
+])
+def test_explain_this_report_reads_the_report_on_screen(context, tool, args):
+    """The Insights and report "Explain this" buttons send "Explain this report" with the page context."""
+    routed = route_question('Explain this report', context, TODAY)
+    assert routed is not None and routed[0].name == tool
+    dumped = routed[1].model_dump(mode='json')
+    assert {key: dumped[key] for key in args} == args
+
+
+def test_explain_without_a_report_context_is_not_taken_as_a_report():
+    assert route_question('Explain this report', {'page': 'contacts'}, TODAY) is None
+    routed = route_question('Why is this document flagged?', {'page': 'insights',
+                                                               'documentId': '00000000-0000-4000-8000-000000000001'},
+                            TODAY)
+    assert routed[0].name == 'explain_document'

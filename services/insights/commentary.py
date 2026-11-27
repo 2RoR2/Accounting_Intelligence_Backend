@@ -69,7 +69,8 @@ SYSTEM_PROMPT = (
     '- Reply with JSON only: {"paragraphs": [{"template": "...", "factIds": ["f1"]}]}. Write 3 to 5 paragraphs of one '
     "or two short sentences each.\n"
     "- Refer to every figure, amount, percentage, count, date, month, period and name ONLY by a placeholder such as "
-    "{{f3}}, which the server replaces with the real value. Never write a digit. Write wording around placeholders only.\n"
+    "{{f3}}, which the server replaces with the real value. Never write a digit or a number in words. Write wording around "
+    "placeholders only.\n"
     '- Use a fact\'s "direction" (up, down, flat) to choose words such as rose, fell or was unchanged.\n'
     '- A fact with a "direction" is a difference between two periods, never an amount itself. Write it only right after '
     'words such as "rose by", "fell by", "up", "down", "an increase of" or "a drop of"; never as "sales were {{f3}}".\n'

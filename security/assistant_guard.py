@@ -34,8 +34,14 @@ MAX_TEMPLATE_CHARS = 1200
 MAX_AUDIT_QUESTION_CHARS = 300
 MAX_UNTRUSTED_CHARS = 160
 PLACEHOLDER = re.compile(r'\{\{\s*(f\d{1,3})\s*\}\}')
-# Spelled-out magnitudes would let a model state an amount without a digit ("one million").
-NUMBER_WORDS = re.compile(r'\b(hundreds?|thousands?|millions?|billions?|trillions?|ribu|juta|bilion)\b', re.IGNORECASE)
+# Spelled-out numbers would let a model state an amount or count without a digit ("one million", "fifteen out of
+# twenty-two"). "one" itself is left out: it is too common in plain English ("no one", "one of the bills").
+NUMBER_WORDS = re.compile(
+    r'\b(hundreds?|thousands?|millions?|billions?|trillions?|dozens?|zero|two|three|four|five|six|seven|eight|nine|'
+    r'ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|'
+    r'sixty|seventy|eighty|ninety|ribu|juta|bilion|ratus|puluh|belas|dua|tiga|empat|lima|enam|tujuh|lapan|sembilan|'
+    r'sepuluh|sebelas|seratus|seribu)\b',
+    re.IGNORECASE)
 LINK = re.compile(r'(https?:|www\.|\]\()', re.IGNORECASE)
 MARKUP = re.compile(r'(```|\*\*|__|^\s*#{1,6}\s|<|>)', re.MULTILINE)
 UNITS = frozenset({'MYR', 'count', 'date', 'text'})

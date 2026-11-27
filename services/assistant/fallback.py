@@ -116,6 +116,30 @@ def _contact_name(text: str) -> str | None:
     return None
 
 
+EXPLAIN = re.compile(r'\b(explain|summar\w*|walk me through|what does .* (show|mean))\b')
+REPORT_PAGES = {'insights', 'reports', 'dashboard'}
+
+
+def explain_report(lowered: str, context: dict, today: date) -> tuple[str, dict] | None:
+    """ "Explain this report" from a report or the Insights page (an "Explain this" button): the tool that reads that
+    report for the context's month. Profit and loss, business summary and Insights compare the month with the one
+    before, which is what explains the figures; the balance sheet reads its month end; ageing reads what is due."""
+    if not EXPLAIN.search(lowered) or re.search(r'\bdocument\b', lowered) or context.get('documentId'):
+        return None
+    report, page = context.get('reportType'), (context.get('page') or '').lower()
+    if not report and page not in REPORT_PAGES:
+        return None
+    month = context.get('period')
+    first = date(int(month[:4]), int(month[5:7]), 1) if month and re.fullmatch(r'\d{4}-\d{2}', month) else \
+        _month_start(today)
+    if report == 'balance-sheet':
+        return 'balance_sheet', {'as_of': min(_month_end(first), today)}
+    if report == 'ageing':
+        return 'due_soon', {'kind': 'bills', 'days': 30, 'include_overdue': True}
+    before = _month_start(first - timedelta(days=1))
+    return 'compare_periods', {'period_a': before.strftime('%Y-%m'), 'period_b': first.strftime('%Y-%m')}
+
+
 def route_question(question: str, context: dict, today: date) -> tuple[Tool, Args] | None:
     """Keyword router: the one tool (with arguments) that best fits the question, or None."""
     text = ' '.join((question or '').split())
@@ -125,6 +149,9 @@ def route_question(question: str, context: dict, today: date) -> tuple[Tool, Arg
         tool = TOOLS[name]
         return tool, tool.args.model_validate(arguments)
 
+    explained = explain_report(lowered, context or {}, today)
+    if explained:
+        return pick(explained[0], **explained[1])
     document_id = (context or {}).get('documentId')
     if document_id and re.search(r'\b(why|explain|flag\w*|wrong|check\w*|problem|issue|exception|blocked|this document)\b',
                                  lowered):
