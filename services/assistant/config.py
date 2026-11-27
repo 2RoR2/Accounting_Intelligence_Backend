@@ -5,7 +5,11 @@ import os
 import re
 from urllib.parse import urlsplit
 
-from services.extraction.ai.text_llm import TextModelError, configured_providers
+from services.extraction.ai.text_llm import (
+    TextModelError,
+    TextModelProvider,
+    configured_providers,
+)
 
 DEFAULT_GROQ_MODEL = 'openai/gpt-oss-20b'
 GROQ_HOST = 'api.groq.com'
@@ -50,6 +54,26 @@ def max_tool_result_chars(environ=None) -> int:
     return int_setting('AI_ASSIST_MAX_TOOL_RESULT_CHARS', 6000, 1000, 20_000, environ)
 
 
+def usable_providers(env, error: TextModelError, **kwargs):
+    """The providers in AI_PROVIDERS order that can be built; re-raise ``error`` when none can.
+
+    Returns (providers, whether the listed first provider is among them).
+    """
+    names = [name.strip().lower() for name in env.get('AI_PROVIDERS', 'gemini').split(',') if name.strip()]
+    if not names or len(names) > 4 or len(set(names)) != len(names):
+        raise error
+    providers, first_kept = [], False
+    for index, name in enumerate(names):
+        try:
+            providers.append(TextModelProvider(name, first=index == 0, environ=env, **kwargs))
+        except TextModelError:
+            continue
+        first_kept = first_kept or index == 0
+    if not providers:
+        raise error
+    return providers, first_kept
+
+
 def assistant_providers(environ=None, **kwargs):
     """Providers for the assistant, in fallback order.
 
@@ -62,9 +86,17 @@ def assistant_providers(environ=None, **kwargs):
     order = env.get('AI_ASSIST_PROVIDERS', '').strip()
     if order:
         env['AI_PROVIDERS'] = order
-    providers = configured_providers(env, **kwargs)
+    try:
+        providers = configured_providers(env, **kwargs)
+        first_kept = True
+    except TextModelError as error:
+        # One fallback provider without a key (e.g. AI_PROVIDERS=custom,gemini,qwen and no Qwen key) must not turn
+        # the assistant off while the others work: keep the usable ones, in order, and raise only if none is usable.
+        providers, first_kept = usable_providers(env, error, **kwargs)
     model = env.get('AI_ASSIST_MODEL', '').strip()
     first = providers[0]
+    if not first_kept:
+        return providers  # AI_ASSIST_MODEL names the listed first provider's model; do not move it to a fallback.
     if not model and (urlsplit(first.base).hostname or '').lower() == GROQ_HOST:
         model = DEFAULT_GROQ_MODEL
     if model:

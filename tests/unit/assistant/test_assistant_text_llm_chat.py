@@ -114,3 +114,23 @@ def test_complete_json_is_unchanged_for_extraction():
     answer, _ = provider.complete_json('system', 'user')
     assert answer == {'fields': {}} and opener.bodies[0]['model'] == 'openai/gpt-oss-120b'
     assert opener.bodies[0]['response_format'] == {'type': 'json_object'} and 'tools' not in opener.bodies[0]
+
+
+GROQ = {'AI_BASE_URL': 'https://api.groq.com/openai/v1', 'AI_MODEL': 'openai/gpt-oss-120b', 'AI_API_KEY': 'k' * 24}
+
+
+def test_a_fallback_provider_without_a_key_does_not_turn_the_assistant_off():
+    providers = assistant_providers({**GROQ, 'AI_PROVIDERS': 'custom,gemini,qwen', 'GEMINI_API_KEY': 'g' * 24})
+    assert [p.name for p in providers] == ['custom', 'gemini']
+    assert providers[0].model == 'openai/gpt-oss-20b'
+
+
+def test_when_the_first_provider_is_unusable_the_next_keeps_its_own_model():
+    providers = assistant_providers({'AI_PROVIDERS': 'custom,gemini', 'GEMINI_API_KEY': 'g' * 24,
+                                     'AI_ASSIST_MODEL': 'openai/gpt-oss-20b'})
+    assert [(p.name, p.model) for p in providers] == [('gemini', 'gemini-3.5-flash-lite')]
+
+
+def test_no_usable_provider_still_raises():
+    with pytest.raises(text_llm.TextModelError):
+        assistant_providers({'AI_PROVIDERS': 'custom,qwen'})
