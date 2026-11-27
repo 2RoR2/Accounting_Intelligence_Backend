@@ -5,9 +5,25 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 from main import *
+import main as _main_module
 from services.set_aside import record_not_set_aside, refuse_set_aside
 
 review_logger = logging.getLogger(__name__)
+
+_IMPORTED_CONNECT = connect
+_IMPORTED_REQUIRE_WORKSPACE_USER = require_workspace_user
+
+
+def _runtime_connect():
+    """Use a component patch when present, otherwise honor main's legacy patch point."""
+    return connect if connect is not _IMPORTED_CONNECT else _main_module.connect
+
+
+def _runtime_require_workspace_user(request, roles=None):
+    checker = (require_workspace_user
+               if require_workspace_user is not _IMPORTED_REQUIRE_WORKSPACE_USER
+               else _main_module.require_workspace_user)
+    return checker(request, roles) if roles is not None else checker(request)
 
 def _notify_tenant_users(db, tenant_id, actor_id, title, message, resource, roles=('local_admin', 'accountant')):
     try:
@@ -118,6 +134,15 @@ def _display_filename(original_filename, detected_identifier=None, party=None):
 
 
 from main import _lock_upload_identity, _processing_error, _lock_workspace_document, _require_current_extraction, _authorised_document, _bank_row_values, _bank_transaction_dto, _uuid_or_422, _account_dto, _cost_centre_dto
+
+_IMPORTED_AUTHORISED_DOCUMENT = _authorised_document
+
+
+def _runtime_authorised_document(request, document_id):
+    checker = (_authorised_document
+               if _authorised_document is not _IMPORTED_AUTHORISED_DOCUMENT
+               else _main_module._authorised_document)
+    return checker(request, document_id)
 from validation.matching.vendor_matching import find_vendor_match
 from database.object_storage.object_store import local_storage_root, document_key, safe_component
 from validation.documents.document_validation import validation_outcome
@@ -377,8 +402,8 @@ class _ReadableNames:
 
 
 def get_document_detail(document_id: str, request: Request):
-    user = require_workspace_user(request)
-    with connect() as db:
+    user = _runtime_require_workspace_user(request)
+    with _runtime_connect() as db:
         readable = _readable_detail(db, document_id, user)
         visibility = " AND (d.owner_id=%s OR d.assigned_to=%s OR EXISTS (SELECT 1 FROM benchmark_demo_documents bd JOIN benchmark_demo_tenants bt ON bt.tenant_id=bd.tenant_id AND bt.enabled=true WHERE bd.tenant_id=d.tenant_id AND bd.document_id=d.id))" if user["role"] == "accountant" else ""
         params = [document_id, tenant_scope(user), tenant_scope(user)]
@@ -701,7 +726,7 @@ def support_view(record_id: str, data: CompanyReviewInput, request: Request):
     return {"id": str(row["id"]), "documentId": str(row["document_id"]), "tenantId": str(row["tenant_id"]), "snapshot": row["snapshot"], "status": "COMPLETED"}
 
 async def upload_document(request: Request, file: UploadFile = File(...), kind: str = "invoice", category: str = "accounts_payable"):
-    user = require_workspace_user(request, {"local_admin", "accountant"})
+    user = _runtime_require_workspace_user(request, {"local_admin", "accountant"})
     try:
         upload_limit = int(os.getenv('UPLOAD_RATE_LIMIT', '60'))
     except ValueError:
@@ -751,7 +776,7 @@ async def upload_document(request: Request, file: UploadFile = File(...), kind: 
         storage_value = str(storage_path)
     from services.queue import attempts
     try:
-        with connect() as db:
+        with _runtime_connect() as db:
             _lock_upload_identity(db,tenant_id,file_hash)
             duplicate = db.execute("SELECT id,document_code,original_filename FROM documents WHERE tenant_id=%s AND file_hash_sha256=%s ORDER BY uploaded_at,id LIMIT 1", (tenant_id, file_hash)).fetchone()
             if duplicate:
@@ -953,8 +978,8 @@ def _user_names(db, tenant_id, ids) -> dict:
     return {str(row['id']): row['name'] for row in rows}
 
 def get_document_reviews(document_id: str, request: Request):
-    user = _authorised_document(request, document_id)
-    with connect() as db:
+    user = _runtime_authorised_document(request, document_id)
+    with _runtime_connect() as db:
         submissions = db.execute("SELECT * FROM review_submissions WHERE document_id=%s AND tenant_id=%s ORDER BY created_at DESC", (document_id, user["tenant_id"])).fetchall()
         decisions = db.execute("SELECT * FROM review_decisions WHERE document_id=%s AND tenant_id=%s ORDER BY reviewed_at DESC", (document_id, user["tenant_id"])).fetchall()
     return {"submissions": [{"id": str(r["id"]), "submittedBy": str(r["submitted_by"]), "decision": r["decision"].upper(), "note": r["note"] or "", "createdAt": str(r["created_at"])} for r in submissions], "decisions": [{"id": str(r["id"]), "reviewedBy": str(r["reviewed_by"]), "decision": r["decision"].upper(), "note": r["note"] or "", "approvedRevision": r["approved_content_revision"], "createdAt": str(r["reviewed_at"])} for r in decisions]}
@@ -1071,7 +1096,8 @@ def correct_extracted_field(document_id: str, field_key: str, data: FieldCorrect
         refuse_set_aside(document)
         if document['content_revision'] != data.expectedContentRevision:
             raise HTTPException(409, "The document changed. Refresh it before correcting this field.")
-        if document['status'] in {'completed', 'standardised'}:
+        if document['status'] in {'completed', 'standardised'} or db.execute(
+                'SELECT 1 FROM standardised_records WHERE document_id=%s LIMIT 1', (document_id,)).fetchone():
             raise HTTPException(409, "Standardised documents require an amendment.")
         decision = None
         if field_key == 'currency':
