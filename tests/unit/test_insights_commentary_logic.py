@@ -358,3 +358,11 @@ def test_the_model_payload_says_which_words_fit_each_change():
     rows = {row["id"]: row for row in json.loads(table().prompt_payload())["facts"]}
     assert rows["f5"]["writeAs"] == "rose by / up" and rows["f9"]["writeAs"] == "fell by / down"
     assert "writeAs" not in rows["f3"]
+
+
+def test_a_rejected_ai_draft_is_labelled_as_rejected_not_as_unavailable(monkeypatch):
+    monkeypatch.setattr(commentary, "call_model", lambda s, u: (answer(
+        "Expenses rose by {{f9}}.", "Sales were {{f3}}.", "Net result was {{f10}}."), {}))
+    result = commentary.resolve_commentary(table(), tenant="t1", period="2026-11")
+    assert result["fallbackReason"] == "invalid_answer"
+    assert "did not pass the figure checks" in result["label"] and "not available" not in result["label"]

@@ -55,6 +55,9 @@ DEFAULT_CALLS_PER_HOUR = 12
 
 LABEL_AI = "AI draft commentary. Check it against the figures before you send it."
 LABEL_FALLBACK = {
+    "invalid_answer": "Template commentary: the AI draft did not pass the figure checks, so this is written from the "
+                      "books. Every figure comes from the books.",
+    "budget": "Template commentary: the hourly AI limit for this company is reached. Every figure comes from the books.",
     "ai_disabled": "Template commentary: the AI assistant is off. Every figure comes from the books.",
 }
 LABEL_FALLBACK_OTHER = "Template commentary: the AI assistant was not available. Every figure comes from the books."
