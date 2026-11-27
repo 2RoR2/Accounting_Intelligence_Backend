@@ -453,8 +453,8 @@ def test_csv_and_month_pack(workspace, monkeypatch):
     assert response.status_code == 200, response.text
     assert response.headers["content-disposition"] == 'attachment; filename="monthly-accounting-pack-2026-08.xlsx"'
     book = load_workbook(BytesIO(response.content), data_only=True)
-    assert book.sheetnames == ["Business summary", "Profit and loss", "Balance sheet", "Trial balance", "General ledger",
-                               "Receivables ageing", "Payables ageing", "Tax summary", "Open exceptions"]
+    assert book.sheetnames == ["Business summary", "Commentary", "Profit and loss", "Balance sheet", "Trial balance",
+                               "General ledger", "Receivables ageing", "Payables ageing", "Tax summary", "Open exceptions"]
     summary = book["Business summary"]
     assert summary["A1"].value == "Financial Test Co. | Business summary | 2026-08-01 to 2026-08-31"
     assert summary["A2"].value == "Recorded tax, not a tax return. Profit figures exclude recorded tax."
