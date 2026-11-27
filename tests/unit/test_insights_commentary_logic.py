@@ -321,3 +321,18 @@ def test_a_change_fact_written_as_an_amount_is_rejected(template):
     assert error.value.code == "CHANGE_AS_AMOUNT"
     assert len(commentary.bind_answer(answer(*good), table().by_id())) == 3
 
+
+
+def test_a_failure_that_finishes_after_a_concurrent_success_keeps_the_ai_answer(monkeypatch):
+    """Two pages asked at once: one got an AI answer, the other a rejected answer. The AI answer stays cached."""
+    def model(system, user):
+        # While this request waits for the model, another request for the same period caches an AI answer.
+        commentary._cache_put(("t1", "2026-11", table().version()),
+                              commentary._result([{"text": "AI text.", "factIds": []}], fallback=False, reason=None,
+                                                 label=commentary.LABEL_AI))
+        return answer("Sales were {{f5}}.", "Expenses fell by {{f9}}.", "Net result was {{f10}}."), {}
+    monkeypatch.setattr(commentary, "call_model", model)
+    result = commentary.resolve_commentary(table(), tenant="t1", period="2026-11")
+    assert result["fallback"] is False and result["paragraphs"][0]["text"] == "AI text."
+    again = commentary.resolve_commentary(table(), tenant="t1", period="2026-11")
+    assert again["fallback"] is False and again["cached"] is True

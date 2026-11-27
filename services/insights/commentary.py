@@ -523,6 +523,10 @@ def _cache_get(key: tuple[str, str, str]) -> dict[str, Any] | None:
 
 def _cache_put(key: tuple[str, str, str], value: dict[str, Any], ttl: float | None = None) -> None:
     with _cache_lock:
+        current = _cache.get(key)
+        if ttl is not None and current is not None and current[0] is None:
+            # A failed attempt (short TTL) never replaces an AI answer another request cached meanwhile.
+            return
         _cache[key] = (None if ttl is None else time.monotonic() + ttl, value)
         _cache.move_to_end(key)
         while len(_cache) > CACHE_ENTRIES:
@@ -602,6 +606,11 @@ def resolve_commentary(table: FactTable, *, tenant, period: str, user: Mapping[s
         body = _fallback(table, "invalid_answer")
         _cache_put(key, body, ttl=FAILURE_TTL_SECONDS)
     _audit(tenant, user, period, audit_details)
+    if body["fallback"]:
+        cached = _cache_get(key)
+        if cached is not None and not cached["fallback"]:
+            # Another request for the same period got an AI answer while this one failed: show that one.
+            return {**cached, "facts": table.public(), "cached": True, "partialPeriod": table.partial}
     return {**body, "facts": table.public(), "cached": False, "partialPeriod": table.partial}
 
 
