@@ -33,6 +33,8 @@ class FakeDB:
                                            "document_status": "queued"}
         elif "pending_jobs" in query and query.lstrip().startswith("SELECT"):
             result.fetchone.return_value = None
+        elif "file_hash_sha256" in query and query.lstrip().startswith("SELECT"):
+            result.fetchone.return_value = self.duplicate
         elif "FROM documents" in query and query.lstrip().startswith("SELECT"):
             result.fetchone.return_value = {
                 "id": "11111111-1111-1111-1111-111111111111",
@@ -41,8 +43,6 @@ class FakeDB:
                 "status": "uploaded",
                 "content_revision": 1,
             }
-        elif "file_hash_sha256" in query and query.lstrip().startswith("SELECT"):
-            result.fetchone.return_value = self.duplicate
         elif "INSERT INTO documents" in query:
             result.fetchone.return_value = {
                 "id": "11111111-1111-1111-1111-111111111111",
