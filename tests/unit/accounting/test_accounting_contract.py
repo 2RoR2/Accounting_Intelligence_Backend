@@ -150,7 +150,8 @@ class AccountingContractTests(unittest.TestCase):
         self.database.db.executescript('''
           ALTER TABLE audit_logs ADD COLUMN user_id TEXT;
           CREATE TABLE users (id TEXT PRIMARY KEY, tenant_id TEXT, role TEXT);
-          CREATE TABLE notifications (tenant_id TEXT, user_id TEXT, type TEXT, title TEXT, message TEXT, resource TEXT);''')
+          CREATE TABLE notifications (tenant_id TEXT, user_id TEXT, type TEXT, title TEXT, message TEXT, resource TEXT);
+        CREATE TABLE auth_rate_limits (key TEXT PRIMARY KEY, window_start TEXT DEFAULT CURRENT_TIMESTAMP, hits INTEGER DEFAULT 1);''')
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.claim = Claim(Delivery(DOCUMENT, JOB, TENANT, DISPATCH_TOKEN), CLAIM_TOKEN)
