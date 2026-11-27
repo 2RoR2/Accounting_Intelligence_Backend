@@ -61,6 +61,7 @@ def test_production_upload_cannot_fall_back_to_disk(monkeypatch, tmp_path):
     monkeypatch.setenv("DOCUMENT_STORAGE_PATH", str(tmp_path))
     monkeypatch.delenv("S3_BUCKET", raising=False)
     monkeypatch.setattr(documents, "require_workspace_user", lambda *_: USER)
+    monkeypatch.setenv("UPLOAD_RATE_LIMIT", "0")  # the per-user limit needs a database; not under test here
     database = MagicMock()
     monkeypatch.setattr(documents, "connect", database)
     upload = UploadFile(BytesIO(b"%PDF-1.7\n"), filename="scan.pdf")
@@ -138,6 +139,7 @@ def test_admin_password_reset_revokes_target_sessions(monkeypatch):
 
 def test_document_upload_bounds_file_read(monkeypatch):
     monkeypatch.setattr(documents, "require_workspace_user", lambda *_: USER)
+    monkeypatch.setenv("UPLOAD_RATE_LIMIT", "0")  # the per-user limit needs a database; not under test here
     limit = 20 * 1024 * 1024
     upload = SimpleNamespace(read=AsyncMock(return_value=b"x" * (limit + 1)))
 
