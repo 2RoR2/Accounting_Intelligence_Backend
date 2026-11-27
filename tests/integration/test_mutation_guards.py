@@ -103,7 +103,19 @@ class Phase3DMutationTests(unittest.TestCase):
         self.user = {**USER,'tenant_code':'TENANT_DISPLAY_ONLY','tenant_name':'Synthetic tenant','name':'Synthetic user',
                      'email':'synthetic@example.invalid','status':'active','must_change_password':False,'invited_by':None,
                      'invited_at':None,'last_login_at':None}
-        for patcher in (patch.object(attempts,'connect',return_value=self.database),
+        def dispatch_pending():
+            with self.database as db:
+                pending = db.execute("SELECT * FROM pending_jobs WHERE status='pending'").fetchall()
+                deliveries = [
+                    attempts.reserve_dispatch(db, str(row['document_id']), str(row['tenant_id']), job_id=str(row['id']))
+                    for row in pending
+                ]
+            for delivery in deliveries:
+                attempts.publish(delivery)
+            return len(deliveries)
+        dispatcher = patch('services.queue.durable.dispatch_due_jobs', side_effect=dispatch_pending)
+        dispatcher.start()
+        self.addCleanup(dispatcher.stop)        for patcher in (patch.object(attempts,'connect',return_value=self.database),
                         patch('services.queue.config.get_queues',return_value=(Mock(),None)),
                         patch.object(api,'connect',return_value=self.database),
                         patch.object(persistence,'connect',return_value=self.database),
