@@ -255,7 +255,7 @@ def list_documents(
     clauses = ["(%s::uuid IS NULL OR d.tenant_id=%s::uuid)", "d.excluded_at IS NULL"]  # Plan M B1: excluded own-sales captures
     params: list[object] = [scope, scope]
     if user["role"] == "accountant":
-        clauses.append("(d.owner_id=%s OR d.assigned_to=%s OR EXISTS (SELECT 1 FROM benchmark_demo_documents bd JOIN benchmark_demo_tenants bt ON bt.tenant_id=bd.tenant_id AND bt.enabled=true WHERE bd.tenant_id=d.tenant_id AND bd.document_id=d.id))")
+        clauses.append("((d.owner_id=%s OR d.assigned_to=%s) OR EXISTS (SELECT 1 FROM benchmark_demo_documents bd JOIN benchmark_demo_tenants bt ON bt.tenant_id=bd.tenant_id AND bt.enabled=true WHERE bd.tenant_id=d.tenant_id AND bd.document_id=d.id))")
         params.extend([user["id"], user["id"]])
     if q:
         pattern = f"%{q.strip()}%"
@@ -413,7 +413,7 @@ class _ReadableNames:
 
 def get_document_detail(document_id: str, request: Request):
     user = _runtime_require_workspace_user(request)
-    with _runtime_connect() as db:
+    with connect() as db:
         readable = _readable_detail(db, document_id, user)
         visibility = " AND (d.owner_id=%s OR d.assigned_to=%s OR EXISTS (SELECT 1 FROM benchmark_demo_documents bd JOIN benchmark_demo_tenants bt ON bt.tenant_id=bd.tenant_id AND bt.enabled=true WHERE bd.tenant_id=d.tenant_id AND bd.document_id=d.id))" if user["role"] == "accountant" else ""
         params = [document_id, tenant_scope(user), tenant_scope(user)]
@@ -786,7 +786,7 @@ async def upload_document(request: Request, file: UploadFile = File(...), kind: 
         storage_value = str(storage_path)
     from services.queue import attempts
     try:
-        with _runtime_connect() as db:
+        with connect() as db:
             _lock_upload_identity(db,tenant_id,file_hash)
             duplicate = db.execute("SELECT id,document_code,original_filename FROM documents WHERE tenant_id=%s AND file_hash_sha256=%s ORDER BY uploaded_at,id LIMIT 1", (tenant_id, file_hash)).fetchone()
             if duplicate:
@@ -1137,11 +1137,14 @@ def correct_extracted_field(document_id: str, field_key: str, data: FieldCorrect
              *owner_params, field_key]).fetchone()
         if not row:
             raise HTTPException(404, "Extraction field not found.")
-        revision = db.execute(f"""UPDATE documents AS d
-            SET content_revision=content_revision+1,status='corrected',updated_at=now()
-            WHERE d.id=%s AND d.tenant_id=%s AND d.content_revision=%s{ownership}
-            RETURNING content_revision""",
-            [document_id, user['tenant_id'], data.expectedContentRevision, *owner_params]).fetchone()
+        try:
+            revision = db.execute(f"""UPDATE documents AS d
+                SET content_revision=content_revision+1,status='corrected',updated_at=now()
+                WHERE d.id=%s AND d.tenant_id=%s AND d.content_revision=%s{ownership}
+                RETURNING content_revision""",
+                [document_id, user['tenant_id'], data.expectedContentRevision, *owner_params]).fetchone()
+        except RuntimeError as exc:
+            raise HTTPException(503, "The document revision could not be saved.") from exc
         if not revision:
             raise HTTPException(409, "The document changed. Refresh it before correcting this field.")
         if decision:
@@ -1408,6 +1411,7 @@ def accept_validation_review(document_id: str, data: ValidationReviewInput, requ
 def revalidate_document(document_id: str, request: Request):
     user = require_workspace_user(request, {"local_admin", "accountant"})
     with connect() as db:
+        _lock_workspace_document(db, document_id, user)
         return validate_document(db, document_id, user)
 
 
@@ -1618,6 +1622,7 @@ def list_document_comments(document_id: str, request: Request):
 def add_document_comment(document_id: str, data: CommentInput, request: Request):
     user = require_workspace_user(request, {"accountant", "local_admin"})
     with connect() as db:
+        _lock_workspace_document(db, document_id, user)
         row = db.execute("INSERT INTO document_comments(document_id,tenant_id,author_id,comment,page_number,field_key) SELECT id,tenant_id,%s,%s,%s,%s FROM documents WHERE id=%s AND tenant_id=%s RETURNING *", (user["id"], data.comment, data.pageNumber, data.fieldKey, document_id, user["tenant_id"])).fetchone()
     if not row: raise HTTPException(404, "Document not found.")
     return {"id": str(row["id"]), "comment": row["comment"], "createdAt": str(row["created_at"])}
