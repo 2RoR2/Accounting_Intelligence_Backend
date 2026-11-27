@@ -113,3 +113,23 @@ def test_a_tool_runs_in_a_fresh_process_without_the_app_imported_first():
                           env={**__import__('os').environ, 'DATABASE_URL': '', 'TEST_DATABASE_URL': ''})
     assert done.returncode == 0, done.stderr[-2000:]
     assert done.stdout.strip() == "['f1']"
+
+
+def test_compare_periods_always_reads_earlier_to_later(monkeypatch):
+    """A model that passes the months the wrong way round must not turn a fall into a rise."""
+    from decimal import Decimal
+
+    from services.assistant import tools as tool_module
+    from services.routes.reporting import financial
+
+    totals = {'2026-10': {'totalIncome': '44707.00', 'totalExpenses': '33037.00', 'netProfit': '11670.00'},
+              '2026-11': {'totalIncome': '42506.30', 'totalExpenses': '30237.00', 'netProfit': '12269.30'}}
+    monkeypatch.setattr(financial, '_profit_and_loss', lambda db, tenant, start, end: totals[start.strftime('%Y-%m')])
+    monkeypatch.setattr(tool_module, '_expense_accounts', lambda db, tenant, start, end: {})
+    ctx = _ctx()
+    tool, args = parse_call('compare_periods', {'period_a': '2026-11', 'period_b': '2026-10'})
+    tool.run(None, ctx, args)
+    facts = {fact.label: fact for fact in ctx.facts.items.values()}
+    assert facts['First period'].value == '2026-10'
+    assert Decimal(facts['Change in expenses, 2026-10 to 2026-11'].value) == Decimal('-2800.00')
+    assert Decimal(facts['Change in net profit, 2026-10 to 2026-11'].value) == Decimal('599.30')

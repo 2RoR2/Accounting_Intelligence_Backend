@@ -15,7 +15,9 @@ Rules:
 
 Call tools one at a time. Dates in tool arguments are YYYY-MM-DD and months are YYYY-MM.
 To explain the report or page the person is on (page_context page "insights" or "reports", or a reportType), compare
-page_context.period with the month before using compare_periods; for a balance-sheet reportType use balance_sheet.
+page_context.period with the month before using compare_periods (period_a the month before, period_b
+page_context.period); for a balance-sheet reportType use balance_sheet. A "Change in" fact is the later month minus
+the earlier one: a negative change fell, a positive change rose.
 When you have what you need, reply with only this JSON object:
 {"answer_template": "<sentences using {{fN}} placeholders>", "fact_ids_used": ["fN"], "refusal": null}
 To refuse, reply with {"answer_template": "", "fact_ids_used": [], "refusal": "<one short sentence, no digits>"}."""

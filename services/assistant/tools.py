@@ -360,6 +360,10 @@ def balance_sheet(db, ctx: ToolContext, args: BalanceSheetArgs) -> None:
 def compare_periods(db, ctx: ToolContext, args: ComparePeriodsArgs) -> None:
     from services.routes.reporting.financial import _profit_and_loss
 
+    if args.period_a > args.period_b:
+        # Always earlier -> later, so every "change" fact is the later month minus the earlier one. A model that
+        # passed the months the other way round otherwise read "expenses rose" for a month in which they fell.
+        args = args.model_copy(update={'period_a': args.period_b, 'period_b': args.period_a})
     a_start, a_end = _month_bounds(args.period_a)
     b_start, b_end = _month_bounds(args.period_b)
     a = _profit_and_loss(db, ctx.tenant, a_start, a_end)
