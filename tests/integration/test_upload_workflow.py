@@ -24,6 +24,22 @@ class FakeDB:
             result.fetchone.return_value = {"hits": 1}
         elif "pg_advisory_xact_lock" in query:
             result.fetchone.return_value = {"isolation": "read committed"}
+        elif any(table in query for table in ("standardised_records", "review_decisions", "field_predictions", "line_item_corrections")) and "SELECT 1" in query:
+            result.fetchone.return_value = None
+        elif "pending_jobs" in query and query.lstrip().startswith("SELECT"):
+            result.fetchone.return_value = None
+        elif "SELECT j.id,j.dispatch_token" in query:
+            result.fetchone.return_value = {"id": "22222222-2222-2222-2222-222222222222",
+                                           "dispatch_token": None, "job_status": "pending",
+                                           "document_status": "queued"}
+        elif "FROM documents" in query and query.lstrip().startswith("SELECT"):
+            result.fetchone.return_value = {
+                "id": "11111111-1111-1111-1111-111111111111",
+                "tenant_id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+                "owner_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                "status": "uploaded",
+                "content_revision": 1,
+            }
         elif "file_hash_sha256" in query and query.lstrip().startswith("SELECT"):
             result.fetchone.return_value = self.duplicate
         elif "INSERT INTO documents" in query:
