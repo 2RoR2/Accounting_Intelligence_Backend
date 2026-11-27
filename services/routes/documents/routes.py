@@ -34,9 +34,19 @@ def _notify_tenant_users(db, tenant_id, actor_id, title, message, resource, role
         # effort preserves the document mutation when an old fixture is used.
         if type(exc).__name__ not in {'OperationalError', 'ProgrammingError'}:
             raise
-        users = db.execute("SELECT id FROM users WHERE tenant_id=%s AND id<>%s", (tenant_id, actor_id)).fetchall()
+        try:
+            users = db.execute("SELECT id FROM users WHERE tenant_id=%s AND id<>%s", (tenant_id, actor_id)).fetchall()
+        except Exception as fallback_exc:
+            if type(fallback_exc).__name__ in {'OperationalError', 'ProgrammingError'}:
+                return
+            raise
     for recipient in users:
-        db.execute("INSERT INTO notifications(tenant_id,user_id,type,title,message,resource) VALUES (%s,%s,%s,%s,%s,%s)", (tenant_id, recipient['id'], 'document_workflow', title, message, resource))
+        try:
+            db.execute("INSERT INTO notifications(tenant_id,user_id,type,title,message,resource) VALUES (%s,%s,%s,%s,%s,%s)", (tenant_id, recipient['id'], 'document_workflow', title, message, resource))
+        except Exception as notification_exc:
+            if type(notification_exc).__name__ in {'OperationalError', 'ProgrammingError'}:
+                continue
+            raise
 
 
 def _document_action(db, user, document_id, action, details):
