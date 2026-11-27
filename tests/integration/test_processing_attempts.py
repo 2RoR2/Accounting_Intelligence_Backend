@@ -32,12 +32,12 @@ class AttemptProtocolTests(unittest.TestCase):
         # already-processing claim for persistence tests, so reset only this
         # suite's fresh job to the actual pre-dispatch state.
         self.database.db.execute("""UPDATE documents SET status='queued' WHERE id=?""", (D,))
-        self.database.db.execute("ALTER TABLE pending_jobs ADD COLUMN next_attempt_at TEXT")
-        self.database.db.execute("ALTER TABLE pending_jobs ADD COLUMN dispatched_at TEXT")
-        self.database.db.execute("ALTER TABLE pending_jobs ADD COLUMN dispatch_count INTEGER DEFAULT 0")
-        self.database.db.execute("ALTER TABLE pending_jobs ADD COLUMN max_attempts INTEGER DEFAULT 3")
-        self.database.db.execute("ALTER TABLE pending_jobs ADD COLUMN claimed_at TEXT")
-        self.database.db.execute("ALTER TABLE pending_jobs ADD COLUMN heartbeat_at TEXT")
+        existing_job_columns={row[1] for row in self.database.db.execute("PRAGMA table_info(pending_jobs)")}
+        for name, definition in (("next_attempt_at", "TEXT"), ("dispatched_at", "TEXT"),
+                                 ("dispatch_count", "INTEGER DEFAULT 0"), ("max_attempts", "INTEGER DEFAULT 3"),
+                                 ("claimed_at", "TEXT"), ("heartbeat_at", "TEXT")):
+            if name not in existing_job_columns:
+                self.database.db.execute("ALTER TABLE pending_jobs ADD COLUMN "+name+" "+definition)
         self.database.db.execute("UPDATE pending_jobs SET next_attempt_at=CURRENT_TIMESTAMP")
         self.database.db.execute("""UPDATE pending_jobs SET status='pending',
             dispatch_token=NULL, claim_token=NULL, dispatch_expires_at=NULL,
