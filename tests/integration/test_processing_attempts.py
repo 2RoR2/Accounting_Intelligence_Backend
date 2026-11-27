@@ -610,6 +610,11 @@ class AttemptProtocolTests(unittest.TestCase):
         self.assertNotEqual(response['jobId'],J)
         self.assertEqual(len(list(Path(self.temp.name).rglob('synthetic.pdf'))),1)
 
+    # Backward-compatible name retained for the schema-remediation upload
+    # contracts, which instantiate this unittest case directly.
+    def test_upload_commits_document_job_and_reservation_before_redis(self):
+        return self.test_upload_commits_document_and_outbox_before_dispatch()
+
     def test_upload_reservation_failure_rolls_back_new_document_and_removes_only_new_file(self):
         before=self.database.snapshot()
         with patch.object(attempts,'schedule_document',side_effect=RuntimeError('synthetic reservation failure')):
