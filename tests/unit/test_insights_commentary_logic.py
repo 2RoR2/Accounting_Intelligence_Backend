@@ -312,14 +312,32 @@ def test_commentary_flag_is_the_shared_ai_assist_switch():
     assert not commentary.ai_enabled({})
 
 
-@pytest.mark.parametrize("template", ["During {{f1}} so far, sales were {{f5}} compared to {{f2}}.",
-                                      "Sales of {{f5}} were recorded.", "{{f6}} is the sales figure."])
-def test_a_change_fact_written_as_an_amount_is_rejected(template):
-    good = ["Sales were {{f3}}, up {{f5}} ({{f6}}) on {{f2}}.", "Expenses fell by {{f9}}.", "Net result was {{f10}}."]
-    with pytest.raises(BindingError) as error:
-        commentary.bind_answer(answer(template, *good[1:]), table().by_id())
-    assert error.value.code == "CHANGE_AS_AMOUNT"
-    assert len(commentary.bind_answer(answer(*good), table().by_id())) == 3
+@pytest.mark.parametrize("template,text", [
+    ("During {{f1}} so far, sales were {{f5}} compared to {{f2}}.",
+     "During November 2026 so far, sales were up RM 3,000.00 compared to October 2026."),
+    ("Expenses were {{f9}} on {{f2}}.", "Expenses were down RM 1,750.00 on October 2026."),
+    ("Sales {{f5}} to {{f3}}.", "Sales up RM 3,000.00 to RM 52,000.00."),
+    ("Expenses rose, and sales were {{f6}}.", "Expenses rose, and sales were up 6.1%."),
+    ("Sales were {{f3}}, up {{f5}} ({{f6}}) on {{f2}}.", "Sales were RM 52,000.00, up RM 3,000.00 (up 6.1%) on October 2026.")])
+def test_a_change_written_alone_prints_with_its_own_direction(template, text):
+    """A change is never shown as a bare amount where it could read as the total, or the wrong way round."""
+    rest = ["Expenses fell by {{f9}}.", "Net result was {{f10}}."]
+    paragraphs = commentary.bind_answer(answer(template, *rest), table().by_id())
+    assert paragraphs[0]["text"] == text
+    assert paragraphs[1]["text"] == "Expenses fell by RM 1,750.00."
+
+
+def test_a_paragraph_without_a_full_stop_gets_one():
+    paragraphs = commentary.bind_answer(answer("Sales were {{f5}}", "Expenses fell by {{f9}}!", "Net result was {{f10}}."),
+                                        table().by_id())
+    assert [p["text"] for p in paragraphs] == ["Sales were up RM 3,000.00.", "Expenses fell by RM 1,750.00!",
+                                               "Net result was RM 33,750.00."]
+
+
+def test_an_unchanged_figure_reads_unchanged():
+    facts = table(sales="49000.00").by_id()
+    assert commentary.bind_answer(answer("Sales were {{f5}}.", "Net result was {{f10}}.", "Expenses were {{f7}}."),
+                                  facts)[0]["text"] == "Sales were unchanged."
 
 
 
@@ -330,7 +348,7 @@ def test_a_failure_that_finishes_after_a_concurrent_success_keeps_the_ai_answer(
         commentary._cache_put(("t1", "2026-11", table().version()),
                               commentary._result([{"text": "AI text.", "factIds": []}], fallback=False, reason=None,
                                                  label=commentary.LABEL_AI))
-        return answer("Sales were {{f5}}.", "Expenses fell by {{f9}}.", "Net result was {{f10}}."), {}
+        return answer("Sales fell by {{f5}}.", "Expenses fell by {{f9}}.", "Net result was {{f10}}."), {}  # f5 rose
     monkeypatch.setattr(commentary, "call_model", model)
     result = commentary.resolve_commentary(table(), tenant="t1", period="2026-11")
     assert result["fallback"] is False and result["paragraphs"][0]["text"] == "AI text."
@@ -344,20 +362,25 @@ def test_a_failure_that_finishes_after_a_concurrent_success_keeps_the_ai_answer(
     ("Expenses were {{f8}}, an increase of {{f9}}.", "CHANGE_DIRECTION")])
 def test_a_change_read_the_wrong_way_is_rejected(template, code):
     with pytest.raises(BindingError) as error:
-        commentary.check_changes(template, table().by_id())
+        commentary.change_displays(template, table().by_id())
     assert error.value.code == code
+    with pytest.raises(BindingError):
+        commentary.bind_answer(answer(template, "Sales were {{f3}}.", "Net result was {{f10}}."), table().by_id())
 
 
 @pytest.mark.parametrize("template", ["Expenses fell by {{f9}}.", "Sales were {{f3}}, up {{f5}}.",
                                       "Net result was {{f10}}, a change of {{f12}}.", "Expenses dropped {{f9}}."])
-def test_a_change_read_the_right_way_or_neutrally_passes(template):
-    commentary.check_changes(template, table().by_id())
+def test_a_change_read_the_right_way_or_neutrally_prints_as_the_plain_amount(template):
+    assert set(commentary.change_displays(template, table().by_id())) == {None}
 
 
-def test_the_model_payload_says_which_words_fit_each_change():
+def test_the_model_payload_shows_each_change_with_its_direction():
     rows = {row["id"]: row for row in json.loads(table().prompt_payload())["facts"]}
-    assert rows["f5"]["writeAs"] == "rose by / up" and rows["f9"]["writeAs"] == "fell by / down"
-    assert "writeAs" not in rows["f3"]
+    assert rows["f5"]["value"] == "up RM 3,000.00" and rows["f9"]["value"] == "down RM 1,750.00"
+    assert rows["f6"]["value"] == "up 6.1%" and rows["f9"]["direction"] == "down"
+    assert rows["f3"]["value"] == "RM 52,000.00" and "direction" not in rows["f3"]
+    # The public facts and the template commentary keep the plain amount.
+    assert table().get("sales_change")["display"] == "RM 3,000.00"
 
 
 def test_a_rejected_ai_draft_is_labelled_as_rejected_not_as_unavailable(monkeypatch):
